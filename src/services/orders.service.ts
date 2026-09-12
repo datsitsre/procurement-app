@@ -1,13 +1,17 @@
-import { delay, fail, ok } from './base';
+import { assertPermission, delay, fail, ok } from './base';
 import { demoOrders } from '@/lib/demo-data/orders';
 import { demoOrderTimelineEvents, demoShipments, demoDeliveries } from '@/lib/demo-data/order-tracking';
+import { Permission, type Role } from '@/config/rbac';
 import type { ServiceResult, UUID } from '@/types/common';
 import type { Delivery, Order, OrderTimelineEvent, PaymentMethod, Shipment } from '@/types/orders';
 import type { PurchaseOrder } from '@/types/procurement';
 
 const ORDERS_STORE_KEY = 'procurement.orders.v1.list';
+const ORDER_OVERRIDE_KEY = 'procurement.orders.v1.overrides';
 const TIMELINE_STORE_KEY = 'procurement.order-timeline.v1.list';
 const SHIPMENTS_STORE_KEY = 'procurement.shipments.v1.list';
+const SHIPMENT_OVERRIDE_KEY = 'procurement.shipments.v1.overrides';
+const DELIVERIES_STORE_KEY = 'procurement.deliveries.v1.list';
 
 function newId(prefix: string): UUID {
   return `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
@@ -31,8 +35,29 @@ function appendToList<T>(key: string, item: T) {
   window.localStorage.setItem(key, JSON.stringify(list));
 }
 
+function readOverrideStore<T>(key: string): Record<UUID, T> {
+  if (typeof window === 'undefined') return {};
+  const raw = window.localStorage.getItem(key);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<UUID, T>;
+  } catch {
+    return {};
+  }
+}
+
+function writeOverride<T extends { id: UUID }>(key: string, value: T) {
+  if (typeof window === 'undefined') return;
+  const store = readOverrideStore<T>(key);
+  store[value.id] = value;
+  window.localStorage.setItem(key, JSON.stringify(store));
+}
+
 function allOrders(): Order[] {
-  return [...demoOrders, ...readList<Order>(ORDERS_STORE_KEY)];
+  const overrides = readOverrideStore<Order>(ORDER_OVERRIDE_KEY);
+  const seeded = demoOrders.map((o) => overrides[o.id] ?? o);
+  const created = readList<Order>(ORDERS_STORE_KEY).map((o) => overrides[o.id] ?? o);
+  return [...seeded, ...created];
 }
 
 function allTimelineEvents(): OrderTimelineEvent[] {
@@ -40,16 +65,33 @@ function allTimelineEvents(): OrderTimelineEvent[] {
 }
 
 function allShipments(): Shipment[] {
-  return [...demoShipments, ...readList<Shipment>(SHIPMENTS_STORE_KEY)];
+  const overrides = readOverrideStore<Shipment>(SHIPMENT_OVERRIDE_KEY);
+  const seeded = demoShipments.map((s) => overrides[s.id] ?? s);
+  const created = readList<Shipment>(SHIPMENTS_STORE_KEY).map((s) => overrides[s.id] ?? s);
+  return [...seeded, ...created];
 }
 
-/** Every order status the timeline should pass through, in order, once payment succeeds -
- *  the freshly-checked-out order starts at the first two and advances no further until a
- *  (currently out of scope - Phase 5) supplier or logistics action moves it along. */
+function allDeliveries(): Delivery[] {
+  return [...demoDeliveries, ...readList<Delivery>(DELIVERIES_STORE_KEY)];
+}
+
+/** Every order status the timeline should pass through, in order, once payment succeeds - the
+ *  freshly-checked-out order starts at the first two; the rest are added by the supplier's own
+ *  fulfillment actions (markProcessing/dispatchOrder/markDelivered) below. */
 const INITIAL_TIMELINE_LABELS: { status: OrderTimelineEvent['status']; label: string }[] = [
   { status: 'PENDING', label: 'Order placed' },
   { status: 'PAYMENT_CONFIRMED', label: 'Payment confirmed' },
 ];
+
+function addTimelineEvent(orderId: UUID, status: OrderTimelineEvent['status'], label: string) {
+  appendToList<OrderTimelineEvent>(TIMELINE_STORE_KEY, {
+    id: newId('ote'),
+    orderId,
+    status,
+    label,
+    occurredAt: new Date().toISOString(),
+  });
+}
 
 export interface OrdersService {
   listOrders(companyId: UUID): Promise<ServiceResult<Order[]>>;
@@ -62,6 +104,18 @@ export interface OrdersService {
    *  step) - called by the checkout flow once payment succeeds. Credit-terms checkouts pass
    *  paymentStatus: 'PENDING' since the invoice stays due rather than being paid up front. */
   createFromPurchaseOrder(po: PurchaseOrder, method: PaymentMethod, paymentStatus: Order['paymentStatus']): Promise<Order>;
+
+  /** Orders a supplier needs to fulfill (section 44) - the supplier-workspace counterpart to
+   *  `listOrders`, which is keyed by the *buyer's* company id instead. */
+  listOrdersForSupplier(supplierId: UUID): Promise<ServiceResult<Order[]>>;
+  /** CONFIRMED -> PROCESSING: the supplier has started preparing the order. */
+  markProcessing(orderId: UUID, callerRole: Role): Promise<ServiceResult<Order>>;
+  /** PROCESSING -> SHIPPED: hands the order to a driver, moving its shipment to IN_TRANSIT. */
+  dispatchOrder(orderId: UUID, driverName: string, callerRole: Role): Promise<ServiceResult<Order>>;
+  /** SHIPPED -> DELIVERED: records a full delivery for every line and closes out the
+   *  shipment. Partial delivery (section 29) is modeled in the type but not yet exposed as a
+   *  supplier action here - a future refinement, not a gap in what's demoed today. */
+  markDelivered(orderId: UUID, callerRole: Role): Promise<ServiceResult<Order>>;
 }
 
 class MockOrdersService implements OrdersService {
@@ -94,7 +148,7 @@ class MockOrdersService implements OrdersService {
 
   async listDeliveries(orderId: UUID): Promise<ServiceResult<Delivery[]>> {
     await delay(200);
-    return ok(demoDeliveries.filter((d) => d.orderId === orderId));
+    return ok(allDeliveries().filter((d) => d.orderId === orderId));
   }
 
   async createFromPurchaseOrder(po: PurchaseOrder, method: PaymentMethod, paymentStatus: Order['paymentStatus']): Promise<Order> {
@@ -148,6 +202,78 @@ class MockOrdersService implements OrdersService {
     });
 
     return order;
+  }
+
+  async listOrdersForSupplier(supplierId: UUID): Promise<ServiceResult<Order[]>> {
+    await delay(250);
+    return ok(allOrders().filter((o) => o.supplierId === supplierId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
+  }
+
+  async markProcessing(orderId: UUID, callerRole: Role): Promise<ServiceResult<Order>> {
+    await delay(300);
+    const permissionError = assertPermission(callerRole, Permission.ORDERS_FULFILL);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+
+    const order = allOrders().find((o) => o.id === orderId);
+    if (!order) return fail('NOT_FOUND', 'That order could not be found.');
+    if (order.status !== 'CONFIRMED') return fail('INVALID_STATE', 'Only a confirmed order can start processing.');
+
+    const updated: Order = { ...order, status: 'PROCESSING' };
+    writeOverride(ORDER_OVERRIDE_KEY, updated);
+    addTimelineEvent(orderId, 'PROCESSING', 'Preparing shipment');
+    return ok(updated);
+  }
+
+  async dispatchOrder(orderId: UUID, driverName: string, callerRole: Role): Promise<ServiceResult<Order>> {
+    await delay(300);
+    const permissionError = assertPermission(callerRole, Permission.ORDERS_FULFILL);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+
+    const order = allOrders().find((o) => o.id === orderId);
+    if (!order) return fail('NOT_FOUND', 'That order could not be found.');
+    if (order.status !== 'PROCESSING') return fail('INVALID_STATE', 'Only a processing order can be dispatched.');
+
+    const shipment = allShipments().find((s) => s.orderId === orderId);
+    if (shipment) {
+      writeOverride(SHIPMENT_OVERRIDE_KEY, { ...shipment, status: 'IN_TRANSIT', driverName: driverName || undefined, dispatchedAt: new Date().toISOString() });
+    }
+
+    const updated: Order = { ...order, status: 'SHIPPED' };
+    writeOverride(ORDER_OVERRIDE_KEY, updated);
+    addTimelineEvent(orderId, 'SHIPPED', 'Shipped, on the way');
+    return ok(updated);
+  }
+
+  async markDelivered(orderId: UUID, callerRole: Role): Promise<ServiceResult<Order>> {
+    await delay(300);
+    const permissionError = assertPermission(callerRole, Permission.ORDERS_FULFILL);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+
+    const order = allOrders().find((o) => o.id === orderId);
+    if (!order) return fail('NOT_FOUND', 'That order could not be found.');
+    if (order.status !== 'SHIPPED') return fail('INVALID_STATE', 'Only a shipped order can be marked delivered.');
+
+    const shipment = allShipments().find((s) => s.orderId === orderId);
+    const now = new Date().toISOString();
+    if (shipment) {
+      writeOverride(SHIPMENT_OVERRIDE_KEY, { ...shipment, status: 'DELIVERED' });
+      for (const item of order.items) {
+        appendToList<Delivery>(DELIVERIES_STORE_KEY, {
+          id: newId('del'),
+          orderId,
+          shipmentId: shipment.id,
+          orderItemId: item.id,
+          orderedQty: item.quantity,
+          deliveredQty: item.quantity,
+          deliveredAt: now,
+        });
+      }
+    }
+
+    const updated: Order = { ...order, status: 'DELIVERED' };
+    writeOverride(ORDER_OVERRIDE_KEY, updated);
+    addTimelineEvent(orderId, 'DELIVERED', 'Delivered');
+    return ok(updated);
   }
 }
 

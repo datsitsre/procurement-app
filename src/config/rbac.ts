@@ -50,6 +50,8 @@ export const Permission = {
   ORDERS_CREATE: 'orders.create',
   ORDERS_APPROVE: 'orders.approve',
   ORDERS_CANCEL: 'orders.cancel',
+  /** Supplier-side: advance an order through processing/dispatch/delivery (section 29/44). */
+  ORDERS_FULFILL: 'orders.fulfill',
 
   // RFQs
   RFQ_CREATE: 'rfq.create',
@@ -154,6 +156,7 @@ export const RolePermissions: Record<Role, Permission[]> = {
   ],
   [Role.SUPPLIER_ADMIN]: [
     Permission.ORDERS_READ,
+    Permission.ORDERS_FULFILL,
     Permission.RFQ_RESPOND,
     Permission.PRODUCTS_READ,
     Permission.PRODUCTS_MANAGE,
@@ -165,6 +168,7 @@ export const RolePermissions: Record<Role, Permission[]> = {
   ],
   [Role.SUPPLIER_STAFF]: [
     Permission.ORDERS_READ,
+    Permission.ORDERS_FULFILL,
     Permission.RFQ_RESPOND,
     Permission.PRODUCTS_READ,
     Permission.PRODUCTS_MANAGE,

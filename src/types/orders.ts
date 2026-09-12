@@ -97,6 +97,9 @@ export type PaymentMethod =
 export interface Payment {
   id: UUID;
   companyId: UUID;
+  /** Who was paid - set directly at charge time so supplier payment history doesn't depend on
+   *  an invoice/order having been created yet (checkout charges before either exists). */
+  supplierId?: UUID;
   invoiceId?: UUID;
   orderId?: UUID;
   amount: number;

@@ -1,11 +1,12 @@
 'use client';
 
-import { useActiveCompany, useActiveMembership } from '@/hooks/useAuth';
+import { useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { RoleLabels } from '@/config/rbac';
 import { formatMoney } from '@/utils/format';
 
 export default function SettingsPage() {
+  const workspace = useWorkspace();
   const company = useActiveCompany();
   const membership = useActiveMembership();
 
@@ -22,11 +23,11 @@ export default function SettingsPage() {
             <Field label="Company name" value={company?.name} />
             <Field label="Country" value={company?.country} />
             <Field label="Currency" value={company?.currency} />
-            <Field label="Payment terms" value={company?.creditTerms.replace('_', ' ')} />
-            {company?.creditLimit !== undefined && (
+            {workspace === 'buyer' && <Field label="Payment terms" value={company?.creditTerms.replace('_', ' ')} />}
+            {workspace === 'buyer' && company?.creditLimit !== undefined && (
               <Field label="Credit limit" value={formatMoney(company.creditLimit, company.currency)} />
             )}
-            {company?.creditAvailable !== undefined && (
+            {workspace === 'buyer' && company?.creditAvailable !== undefined && (
               <Field label="Credit available" value={formatMoney(company.creditAvailable, company.currency)} />
             )}
           </dl>

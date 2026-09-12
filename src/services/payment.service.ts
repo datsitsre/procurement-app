@@ -30,6 +30,7 @@ function appendPayment(payment: Payment) {
 
 export interface ChargeInput {
   companyId: UUID;
+  supplierId?: UUID;
   amount: number;
   currency: string;
   method: PaymentMethod;
@@ -40,6 +41,9 @@ export interface ChargeInput {
 
 export interface PaymentService {
   listPayments(companyId: UUID): Promise<ServiceResult<Payment[]>>;
+  /** Payments a supplier has received (section 44) - the supplier-workspace counterpart to
+   *  `listPayments`, which is keyed by the *buyer's* company id instead. */
+  listPaymentsForSupplier(supplierId: UUID): Promise<ServiceResult<Payment[]>>;
   charge(input: ChargeInput): Promise<ServiceResult<Payment>>;
 }
 
@@ -47,6 +51,11 @@ class MockPaymentService implements PaymentService {
   async listPayments(companyId: UUID): Promise<ServiceResult<Payment[]>> {
     await delay(200);
     return ok(readPayments().filter((p) => p.companyId === companyId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
+  }
+
+  async listPaymentsForSupplier(supplierId: UUID): Promise<ServiceResult<Payment[]>> {
+    await delay(200);
+    return ok(readPayments().filter((p) => p.supplierId === supplierId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
   }
 
   async charge(input: ChargeInput): Promise<ServiceResult<Payment>> {
@@ -64,6 +73,7 @@ class MockPaymentService implements PaymentService {
     const payment: Payment = {
       id: newId('payment'),
       companyId: input.companyId,
+      supplierId: input.supplierId,
       invoiceId: input.invoiceId,
       orderId: input.orderId,
       amount: input.amount,

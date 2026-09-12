@@ -4,9 +4,10 @@ import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Printer } from 'lucide-react';
-import { useActiveCompany } from '@/hooks/useAuth';
+import { useActiveCompany, useWorkspace } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { invoicesService } from '@/services/invoices.service';
+import { allCompanies } from '@/services/auth.service';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Button } from '@/components/ui/Button';
@@ -21,6 +22,7 @@ import type { Invoice, PaymentMethod } from '@/types/orders';
 export default function InvoiceDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const workspace = useWorkspace();
   const company = useActiveCompany();
   const { data: invoice, loading, error, reload } = useAsyncData<Invoice>(params.id, () => invoicesService.getInvoice(params.id));
 
@@ -101,7 +103,7 @@ export default function InvoiceDetailPage() {
         <div className="mb-6 grid gap-6 sm:grid-cols-2">
           <div>
             <p className="text-metadata mb-1">Billed to</p>
-            <p className="text-sm font-medium">{company?.name}</p>
+            <p className="text-sm font-medium">{allCompanies().find((c) => c.id === invoice.companyId)?.name ?? '—'}</p>
           </div>
           <div>
             <p className="text-metadata mb-1">Supplier</p>
@@ -154,7 +156,7 @@ export default function InvoiceDetailPage() {
         </div>
       </div>
 
-      {invoice.status !== 'PAID' && (
+      {invoice.status !== 'PAID' && workspace === 'buyer' && (
         <div className="rounded-lg border border-border bg-surface p-6 print:hidden">
           {!paying ? (
             <Button onClick={() => setPaying(true)}>Pay invoice</Button>

@@ -60,6 +60,9 @@ export interface InvoicesService {
   listInvoices(companyId: UUID): Promise<ServiceResult<Invoice[]>>;
   getInvoice(id: UUID): Promise<ServiceResult<Invoice>>;
   getInvoiceForOrder(orderId: UUID): Promise<ServiceResult<Invoice | null>>;
+  /** Invoices a supplier has issued (section 44) - the supplier-workspace counterpart to
+   *  `listInvoices`, which is keyed by the *buyer's* company id instead. */
+  listInvoicesForSupplier(supplierId: UUID): Promise<ServiceResult<Invoice[]>>;
   /** Raises an invoice for a newly-checked-out order (section 30) - due immediately for a
    *  prepaid checkout, or dated out per the company's credit term when paid on terms. */
   createForOrder(order: Order): Promise<Invoice>;
@@ -84,6 +87,11 @@ class MockInvoicesService implements InvoicesService {
   async getInvoiceForOrder(orderId: UUID): Promise<ServiceResult<Invoice | null>> {
     await delay(150);
     return ok(allInvoices().find((i) => i.orderId === orderId) ?? null);
+  }
+
+  async listInvoicesForSupplier(supplierId: UUID): Promise<ServiceResult<Invoice[]>> {
+    await delay(250);
+    return ok(allInvoices().filter((i) => i.supplierId === supplierId).sort((a, b) => (a.issuedAt < b.issuedAt ? 1 : -1)));
   }
 
   async createForOrder(order: Order): Promise<Invoice> {
@@ -121,6 +129,7 @@ class MockInvoicesService implements InvoicesService {
     const amountDue = invoice.total - invoice.amountPaid;
     const result = await paymentService.charge({
       companyId: invoice.companyId,
+      supplierId: invoice.supplierId,
       amount: amountDue,
       currency: 'GHS',
       method,

@@ -94,6 +94,7 @@ export default function CheckoutPage() {
     const { paymentService } = await import('@/services/payment.service');
     const result = await paymentService.charge({
       companyId: company.id,
+      supplierId: po.supplierId,
       amount: po.total,
       currency: company.currency,
       method,

@@ -1,27 +1,40 @@
 'use client';
 
+import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Check, MapPin, Truck } from 'lucide-react';
+import { useActiveMembership, useWorkspace } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { ordersService } from '@/services/orders.service';
 import { invoicesService } from '@/services/invoices.service';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
 import { formatDate, formatDateTime } from '@/utils/format';
+import { hasPermission, Permission, type Role } from '@/config/rbac';
 import type { Delivery, Invoice, Order, OrderTimelineEvent, Shipment } from '@/types/orders';
 
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { data: order, loading, error } = useAsyncData<Order>(params.id, () => ordersService.getOrder(params.id));
-  const { data: timeline } = useAsyncData<OrderTimelineEvent[]>(params.id, () => ordersService.listTimeline(params.id));
-  const { data: shipments } = useAsyncData<Shipment[]>(params.id, () => ordersService.listShipments(params.id));
-  const { data: deliveries } = useAsyncData<Delivery[]>(params.id, () => ordersService.listDeliveries(params.id));
+  const workspace = useWorkspace();
+  const membership = useActiveMembership();
+  const { data: order, loading, error, reload: reloadOrder } = useAsyncData<Order>(params.id, () => ordersService.getOrder(params.id));
+  const { data: timeline, reload: reloadTimeline } = useAsyncData<OrderTimelineEvent[]>(params.id, () => ordersService.listTimeline(params.id));
+  const { data: shipments, reload: reloadShipments } = useAsyncData<Shipment[]>(params.id, () => ordersService.listShipments(params.id));
+  const { data: deliveries, reload: reloadDeliveries } = useAsyncData<Delivery[]>(params.id, () => ordersService.listDeliveries(params.id));
   const { data: invoice } = useAsyncData<Invoice | null>(params.id, () => invoicesService.getInvoiceForOrder(params.id));
+
+  function reloadAll() {
+    reloadOrder();
+    reloadTimeline();
+    reloadShipments();
+    reloadDeliveries();
+  }
 
   if (loading) {
     return (
@@ -109,6 +122,10 @@ export default function OrderDetailPage() {
         </div>
 
         <div className="flex flex-col gap-6">
+          {workspace === 'supplier' && membership && hasPermission(membership.role, Permission.ORDERS_FULFILL) && (
+            <FulfillmentPanel order={order} shipment={(shipments ?? [])[0]} callerRole={membership.role} onChanged={reloadAll} />
+          )}
+
           <div className="rounded-lg border border-border bg-surface p-5">
             <p className="mb-4 text-h3">Tracking</p>
             <ol className="flex flex-col gap-4">
@@ -177,6 +194,82 @@ function Row({ label, amount }: { label: string; amount: number }) {
     <div className="flex items-center justify-between text-text-secondary">
       <span>{label}</span>
       <PriceDisplay amount={amount} size="sm" />
+    </div>
+  );
+}
+
+function FulfillmentPanel({
+  order,
+  shipment,
+  callerRole,
+  onChanged,
+}: {
+  order: Order;
+  shipment: Shipment | undefined;
+  callerRole: Role;
+  onChanged: () => void;
+}) {
+  const [driverName, setDriverName] = useState('');
+  const [showDispatchForm, setShowDispatchForm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(action: () => Promise<{ ok: boolean; error?: { message: string } }>) {
+    setSubmitting(true);
+    setError(null);
+    const result = await action();
+    setSubmitting(false);
+    if (!result.ok) {
+      setError(result.error?.message ?? 'Something went wrong.');
+      return;
+    }
+    setShowDispatchForm(false);
+    onChanged();
+  }
+
+  if (order.status === 'DELIVERED' || order.status === 'CANCELLED') {
+    return null;
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-surface p-5">
+      <p className="mb-3 text-h3">Fulfillment</p>
+
+      {error && <p className="mb-3 rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
+
+      {order.status === 'CONFIRMED' && (
+        <Button className="w-full" loading={submitting} onClick={() => run(() => ordersService.markProcessing(order.id, callerRole))}>
+          Start processing
+        </Button>
+      )}
+
+      {order.status === 'PROCESSING' && !showDispatchForm && (
+        <Button className="w-full" onClick={() => setShowDispatchForm(true)}>
+          Dispatch order
+        </Button>
+      )}
+
+      {order.status === 'PROCESSING' && showDispatchForm && (
+        <div className="flex flex-col gap-3">
+          <Input label="Driver name (optional)" value={driverName} onChange={(e) => setDriverName(e.target.value)} />
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={() => setShowDispatchForm(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button className="flex-1" loading={submitting} onClick={() => run(() => ordersService.dispatchOrder(order.id, driverName, callerRole))}>
+              Confirm dispatch
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {order.status === 'SHIPPED' && (
+        <Button className="w-full" loading={submitting} onClick={() => run(() => ordersService.markDelivered(order.id, callerRole))}>
+          Mark delivered
+        </Button>
+      )}
+
+      {shipment && <p className="mt-3 text-caption">Tracking: {shipment.trackingNumber}</p>}
     </div>
   );
 }

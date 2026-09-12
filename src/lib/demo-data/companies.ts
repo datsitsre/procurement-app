@@ -26,6 +26,32 @@ export const demoUsers: User[] = [
     email: 'michael.doe@acmetech.example',
     createdAt: '2025-02-01T09:00:00Z',
   },
+  // Supplier-side users (Phase 5) - one admin per demoSuppliers entry in lib/demo-data/catalog.ts,
+  // so every supplier a buyer can see already has a real company + login behind it.
+  {
+    id: 'user-adwoa-mensah',
+    name: 'Adwoa Mensah',
+    email: 'adwoa.mensah@abctech.example',
+    createdAt: '2024-06-01T09:00:00Z',
+  },
+  {
+    id: 'user-kofi-boateng',
+    name: 'Kofi Boateng',
+    email: 'kofi.boateng@primeoffice.example',
+    createdAt: '2024-07-15T09:00:00Z',
+  },
+  {
+    id: 'user-yaw-darko',
+    name: 'Yaw Darko',
+    email: 'yaw.darko@accraindustrial.example',
+    createdAt: '2024-05-20T09:00:00Z',
+  },
+  {
+    id: 'user-chidi-okafor',
+    name: 'Chidi Okafor',
+    email: 'chidi.okafor@waelectronics.example',
+    createdAt: '2024-08-10T09:00:00Z',
+  },
 ];
 
 export const demoCompanyGroups: CompanyGroup[] = [
@@ -115,6 +141,70 @@ export const demoCompanies: Company[] = [
     parentGroupId: 'group-acme',
     createdAt: '2025-03-18T09:00:00Z',
   },
+  // Supplier-side companies (Phase 5) - id matches the `companyId` each SupplierProfile in
+  // lib/demo-data/catalog.ts already points to, so switching into the supplier workspace
+  // resolves the right SupplierProfile without any new lookup table.
+  {
+    id: 'supplier-company-abc',
+    name: 'ABC Technology Solutions',
+    legalName: 'ABC Technology Solutions Ltd.',
+    country: 'GH',
+    currency: 'GHS',
+    taxId: 'GH-TIN-011932',
+    addresses: [
+      { id: 'addr-abc-accra', label: 'Accra Warehouse', line1: '3 Spintex Road', city: 'Accra', country: 'GH', isDefault: true },
+    ],
+    creditTerms: 'PREPAID',
+    isBuyer: false,
+    isSupplier: true,
+    createdAt: '2024-06-01T09:00:00Z',
+  },
+  {
+    id: 'supplier-company-prime',
+    name: 'Prime Office Supplies',
+    legalName: 'Prime Office Supplies Ltd.',
+    country: 'GH',
+    currency: 'GHS',
+    taxId: 'GH-TIN-018204',
+    addresses: [
+      { id: 'addr-prime-accra', label: 'Accra Warehouse', line1: '18 Ring Road East', city: 'Accra', country: 'GH', isDefault: true },
+    ],
+    creditTerms: 'PREPAID',
+    isBuyer: false,
+    isSupplier: true,
+    createdAt: '2024-07-15T09:00:00Z',
+  },
+  {
+    id: 'supplier-company-aie',
+    name: 'Accra Industrial Equipment',
+    legalName: 'Accra Industrial Equipment Ltd.',
+    country: 'GH',
+    currency: 'GHS',
+    taxId: 'GH-TIN-009871',
+    addresses: [
+      { id: 'addr-aie-accra', label: 'Accra Yard', line1: '55 Tema Motorway', city: 'Accra', country: 'GH', isDefault: true },
+      { id: 'addr-aie-kumasi', label: 'Kumasi Yard', line1: '12 Kejetia Road', city: 'Kumasi', country: 'GH' },
+    ],
+    creditTerms: 'PREPAID',
+    isBuyer: false,
+    isSupplier: true,
+    createdAt: '2024-05-20T09:00:00Z',
+  },
+  {
+    id: 'supplier-company-wae',
+    name: 'West Africa Electronics',
+    legalName: 'West Africa Electronics Ltd.',
+    country: 'NG',
+    currency: 'NGN',
+    taxId: 'NG-TIN-773410',
+    addresses: [
+      { id: 'addr-wae-lagos', label: 'Lagos Warehouse', line1: '9 Apapa Wharf Road', city: 'Lagos', country: 'NG', isDefault: true },
+    ],
+    creditTerms: 'PREPAID',
+    isBuyer: false,
+    isSupplier: true,
+    createdAt: '2024-08-10T09:00:00Z',
+  },
 ];
 
 export const demoCompanyUsers: CompanyUser[] = [
@@ -123,4 +213,9 @@ export const demoCompanyUsers: CompanyUser[] = [
   { id: 'cu-3', companyId: 'company-acme-gh', userId: 'user-michael-doe', role: Role.EMPLOYEE, department: 'Operations', status: 'ACTIVE', joinedAt: '2025-02-02T09:00:00Z' },
   { id: 'cu-4', companyId: 'company-acme-ng', userId: 'user-john-doe', role: Role.OWNER, status: 'ACTIVE', joinedAt: '2025-01-10T09:00:00Z' },
   { id: 'cu-5', companyId: 'company-acme-ke', userId: 'user-john-doe', role: Role.OWNER, status: 'ACTIVE', joinedAt: '2025-03-18T09:00:00Z' },
+  // Supplier-side memberships (Phase 5).
+  { id: 'cu-6', companyId: 'supplier-company-abc', userId: 'user-adwoa-mensah', role: Role.SUPPLIER_ADMIN, department: 'Sales', status: 'ACTIVE', joinedAt: '2024-06-01T09:00:00Z' },
+  { id: 'cu-7', companyId: 'supplier-company-prime', userId: 'user-kofi-boateng', role: Role.SUPPLIER_ADMIN, department: 'Sales', status: 'ACTIVE', joinedAt: '2024-07-15T09:00:00Z' },
+  { id: 'cu-8', companyId: 'supplier-company-aie', userId: 'user-yaw-darko', role: Role.SUPPLIER_ADMIN, department: 'Sales', status: 'ACTIVE', joinedAt: '2024-05-20T09:00:00Z' },
+  { id: 'cu-9', companyId: 'supplier-company-wae', userId: 'user-chidi-okafor', role: Role.SUPPLIER_ADMIN, department: 'Sales', status: 'ACTIVE', joinedAt: '2024-08-10T09:00:00Z' },
 ];

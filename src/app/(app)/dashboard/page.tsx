@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Wallet, Package, CheckSquare, FileText, Receipt, Star, ShieldCheck } from 'lucide-react';
-import { useAuth, useActiveCompany, useActiveMembership } from '@/hooks/useAuth';
+import { useAuth, useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
+import { SupplierDashboard } from '@/features/supplier/SupplierDashboard';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { ordersService } from '@/services/orders.service';
 import { invoicesService } from '@/services/invoices.service';
@@ -21,6 +22,20 @@ import type { RFQ } from '@/types/procurement';
 import type { SupplierProfile } from '@/types/catalog';
 
 export default function DashboardPage() {
+  const workspace = useWorkspace();
+  const company = useActiveCompany();
+
+  if (workspace === 'supplier') {
+    if (!company) return null;
+    const supplier = catalogService.getSupplierByCompanyId(company.id);
+    if (!supplier) return null;
+    return <SupplierDashboard supplier={supplier} />;
+  }
+
+  return <BuyerDashboard />;
+}
+
+function BuyerDashboard() {
   const { session } = useAuth();
   const company = useActiveCompany();
   const membership = useActiveMembership();

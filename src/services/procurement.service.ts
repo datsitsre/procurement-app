@@ -130,11 +130,26 @@ export interface CreateRfqInput {
   supplierIds: UUID[];
 }
 
+export interface SubmitQuoteInput {
+  rfqId: UUID;
+  supplierId: UUID;
+  items: { productId: UUID; quantity: number; unitPrice: number }[];
+  deliveryDays: number;
+  warrantyMonths: number;
+  notes?: string;
+}
+
 export interface ProcurementService {
   listRfqs(companyId: UUID): Promise<ServiceResult<RFQ[]>>;
+  /** RFQs a supplier has been invited to respond to (section 18/44) - the supplier-workspace
+   *  counterpart to `listRfqs`, which is keyed by the *buyer's* company id instead. */
+  listRfqsForSupplier(supplierId: UUID): Promise<ServiceResult<RFQ[]>>;
   getRfq(id: UUID): Promise<ServiceResult<RFQ>>;
   createRfq(input: CreateRfqInput): Promise<ServiceResult<RFQ>>;
   listQuotesForRfq(rfqId: UUID): Promise<ServiceResult<Quote[]>>;
+  /** A supplier's response to an RFQ (section 19) - marks their invitation QUOTED and moves
+   *  the RFQ out of SENT/VIEWED once at least one quote exists. */
+  submitQuote(input: SubmitQuoteInput, callerRole: Role): Promise<ServiceResult<Quote>>;
   listNegotiationMessages(rfqId: UUID, quoteId: UUID): Promise<ServiceResult<NegotiationMessage[]>>;
   sendNegotiationMessage(
     rfqId: UUID,
@@ -164,6 +179,15 @@ class MockProcurementService implements ProcurementService {
   async listRfqs(companyId: UUID): Promise<ServiceResult<RFQ[]>> {
     await delay(250);
     return ok(allRfqs().filter((r) => r.companyId === companyId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
+  }
+
+  async listRfqsForSupplier(supplierId: UUID): Promise<ServiceResult<RFQ[]>> {
+    await delay(250);
+    return ok(
+      allRfqs()
+        .filter((r) => r.suppliers.some((s) => s.supplierId === supplierId))
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
+    );
   }
 
   async getRfq(id: UUID): Promise<ServiceResult<RFQ>> {
@@ -205,6 +229,42 @@ class MockProcurementService implements ProcurementService {
   async listQuotesForRfq(rfqId: UUID): Promise<ServiceResult<Quote[]>> {
     await delay(250);
     return ok(allQuotes().filter((q) => q.rfqId === rfqId));
+  }
+
+  async submitQuote(input: SubmitQuoteInput, callerRole: Role): Promise<ServiceResult<Quote>> {
+    await delay(400);
+    const permissionError = assertPermission(callerRole, Permission.RFQ_RESPOND);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+    if (input.items.length === 0) return fail('EMPTY', 'Quote at least one item.');
+
+    const rfq = allRfqs().find((r) => r.id === input.rfqId);
+    if (!rfq) return fail('NOT_FOUND', 'That RFQ could not be found.');
+    const invitation = rfq.suppliers.find((s) => s.supplierId === input.supplierId);
+    if (!invitation) return fail('NOT_INVITED', 'Your company was not invited to this RFQ.');
+    if (allQuotes().some((q) => q.rfqId === input.rfqId && q.supplierId === input.supplierId)) {
+      return fail('ALREADY_QUOTED', 'You have already submitted a quote for this RFQ.');
+    }
+
+    const totalPrice = input.items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
+    const quote: Quote = {
+      id: newId('quote'),
+      rfqId: input.rfqId,
+      supplierId: input.supplierId,
+      supplierName: invitation.supplierName,
+      items: input.items.map((i) => ({ id: newId('qi'), productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice })),
+      totalPrice,
+      deliveryDays: input.deliveryDays,
+      warrantyMonths: input.warrantyMonths,
+      notes: input.notes,
+      submittedAt: new Date().toISOString(),
+    };
+    appendToList(QUOTE_STORE_KEY, quote);
+
+    const updatedSuppliers = rfq.suppliers.map((s) => (s.supplierId === input.supplierId ? { ...s, status: 'QUOTED' as const } : s));
+    const status = rfq.status === 'SENT' || rfq.status === 'VIEWED' ? ('QUOTED' as const) : rfq.status;
+    writeStore(RFQ_STORE_KEY, rfq.id, { ...rfq, suppliers: updatedSuppliers, status });
+
+    return ok(quote);
   }
 
   // ---- Negotiation ----

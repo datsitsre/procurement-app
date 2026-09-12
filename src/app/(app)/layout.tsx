@@ -7,7 +7,7 @@ import { CartProvider } from '@/hooks/useCart';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Topbar } from '@/components/layout/Topbar';
 import { BottomNav } from '@/components/layout/BottomNav';
-import { buyerNav, buyerBottomNav, supplierNav, platformNav } from '@/config/navigation';
+import { buyerNav, buyerBottomNav, supplierNav, supplierBottomNav, platformNav } from '@/config/navigation';
 
 const navByWorkspace = {
   buyer: buyerNav,
@@ -57,6 +57,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <main className="flex-1 px-4 pt-6 pb-24 lg:px-6 lg:pb-10">{children}</main>
         </div>
         {workspace === 'buyer' && <BottomNav items={buyerBottomNav} moreHref="/more" />}
+        {workspace === 'supplier' && <BottomNav items={supplierBottomNav} moreHref="/more" />}
       </div>
     </CartProvider>
   );

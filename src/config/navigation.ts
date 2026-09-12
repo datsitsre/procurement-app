@@ -49,6 +49,13 @@ export const buyerBottomNav: NavItem[] = [
   { label: 'Analytics', href: '/analytics', icon: BarChart3 },
 ];
 
+export const supplierBottomNav: NavItem[] = [
+  { label: 'Home', href: '/dashboard', icon: LayoutDashboard },
+  { label: 'Orders', href: '/orders', icon: Package },
+  { label: 'Products', href: '/products', icon: ShoppingCart },
+  { label: 'RFQs', href: '/rfqs', icon: FileText },
+];
+
 export const supplierNav: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Orders', href: '/orders', icon: Package },
