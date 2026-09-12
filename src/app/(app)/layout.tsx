@@ -51,10 +51,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <CartProvider>
       <div className="min-h-screen bg-background">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-accent focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-accent-foreground"
+        >
+          Skip to main content
+        </a>
         <Sidebar items={navItems} brandLabel={brandByWorkspace[workspace]} />
         <div className="flex flex-col lg:pl-(--sidebar-width)">
           <Topbar />
-          <main className="flex-1 px-4 pt-6 pb-24 lg:px-6 lg:pb-10">{children}</main>
+          <main id="main-content" tabIndex={-1} className="flex-1 px-4 pt-6 pb-24 lg:px-6 lg:pb-10">
+            {children}
+          </main>
         </div>
         {workspace === 'buyer' && <BottomNav items={buyerBottomNav} moreHref="/more" />}
         {workspace === 'supplier' && <BottomNav items={supplierBottomNav} moreHref="/more" />}

@@ -14,7 +14,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Procurement Platform",
+  title: {
+    default: "Procurement Platform",
+    template: "%s | Procurement Platform",
+  },
   description:
     "B2B e-commerce and procurement platform - discover products, request quotes, manage approvals, and track orders.",
 };

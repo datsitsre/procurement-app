@@ -54,7 +54,7 @@ export default function CartPage() {
   }
 
   async function handleSubmitRequest() {
-    if (!company || !session) return;
+    if (!company || !session || !membership) return;
     if (!reason.trim()) {
       setMessage('Add a reason for this purchase before submitting.');
       return;
@@ -72,14 +72,17 @@ export default function CartPage() {
       unitPrice: l.item.unitPrice,
     }));
 
-    const result = await procurementService.createPurchaseRequest({
-      companyId: company.id,
-      requesterUserId: session.user.id,
-      requesterName: session.user.name,
-      department: membership?.department,
-      items,
-      reason: reason.trim(),
-    });
+    const result = await procurementService.createPurchaseRequest(
+      {
+        companyId: company.id,
+        requesterUserId: session.user.id,
+        requesterName: session.user.name,
+        department: membership.department,
+        items,
+        reason: reason.trim(),
+      },
+      membership.role,
+    );
 
     setSubmitting(false);
     if (!result.ok) {

@@ -28,6 +28,7 @@ export function BottomNav({ items, moreHref }: BottomNavProps) {
             aria-current={active ? 'page' : undefined}
             className={cn(
               'flex flex-1 flex-col items-center justify-center gap-0.5 text-xs font-medium',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset',
               active ? 'text-accent' : 'text-text-tertiary',
             )}
           >
@@ -38,7 +39,7 @@ export function BottomNav({ items, moreHref }: BottomNavProps) {
       })}
       <Link
         href={moreHref}
-        className="flex flex-1 flex-col items-center justify-center gap-0.5 text-xs font-medium text-text-tertiary"
+        className="flex flex-1 flex-col items-center justify-center gap-0.5 text-xs font-medium text-text-tertiary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset"
       >
         <Menu className="h-5 w-5" aria-hidden="true" />
         More

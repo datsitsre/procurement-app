@@ -87,6 +87,7 @@ function BuyerRfqDetail({
 }) {
   const router = useRouter();
   const { session } = useAuth();
+  const membership = useActiveMembership();
   const { data: quotes } = useAsyncData<Quote[]>(rfqId, () => procurementService.listQuotesForRfq(rfqId));
 
   const [openThreadQuoteId, setOpenThreadQuoteId] = useState<string | null>(null);
@@ -115,10 +116,10 @@ function BuyerRfqDetail({
   const bestPrice = quotes && quotes.length > 0 ? Math.min(...quotes.map((q) => q.totalPrice)) : null;
 
   async function handleAccept(quote: Quote) {
-    if (!rfq || !session) return;
+    if (!rfq || !session || !membership) return;
     setMessage(null);
     setAcceptingId(quote.id);
-    const result = await procurementService.acceptQuote(rfq.id, quote.id, session.user.name);
+    const result = await procurementService.acceptQuote(rfq.id, quote.id, session.user.name, membership.role);
     setAcceptingId(null);
     if (!result.ok) {
       setMessage(result.error.message);

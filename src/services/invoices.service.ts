@@ -2,6 +2,7 @@ import { delay, fail, ok } from './base';
 import { demoInvoices } from '@/lib/demo-data/invoices';
 import { demoCompanies } from '@/lib/demo-data/companies';
 import { paymentService, dueDaysFor } from './payment.service';
+import type { Role } from '@/config/rbac';
 import type { ServiceResult, UUID } from '@/types/common';
 import type { Invoice, Order, PaymentMethod } from '@/types/orders';
 
@@ -68,7 +69,7 @@ export interface InvoicesService {
   createForOrder(order: Order): Promise<Invoice>;
   /** Pays down (or fully settles) an invoice through the payment abstraction, updating
    *  `amountPaid`/`status` from the resulting charge. */
-  payInvoice(invoiceId: UUID, method: PaymentMethod, details: Record<string, string>): Promise<ServiceResult<Invoice>>;
+  payInvoice(invoiceId: UUID, method: PaymentMethod, details: Record<string, string>, callerRole: Role): Promise<ServiceResult<Invoice>>;
 }
 
 class MockInvoicesService implements InvoicesService {
@@ -121,21 +122,29 @@ class MockInvoicesService implements InvoicesService {
     return invoice;
   }
 
-  async payInvoice(invoiceId: UUID, method: PaymentMethod, details: Record<string, string>): Promise<ServiceResult<Invoice>> {
+  async payInvoice(
+    invoiceId: UUID,
+    method: PaymentMethod,
+    details: Record<string, string>,
+    callerRole: Role,
+  ): Promise<ServiceResult<Invoice>> {
     const invoice = allInvoices().find((i) => i.id === invoiceId);
     if (!invoice) return fail('NOT_FOUND', 'That invoice could not be found.');
     if (invoice.status === 'PAID') return fail('ALREADY_PAID', 'This invoice is already paid in full.');
 
     const amountDue = invoice.total - invoice.amountPaid;
-    const result = await paymentService.charge({
-      companyId: invoice.companyId,
-      supplierId: invoice.supplierId,
-      amount: amountDue,
-      currency: 'GHS',
-      method,
-      details,
-      invoiceId: invoice.id,
-    });
+    const result = await paymentService.charge(
+      {
+        companyId: invoice.companyId,
+        supplierId: invoice.supplierId,
+        amount: amountDue,
+        currency: 'GHS',
+        method,
+        details,
+        invoiceId: invoice.id,
+      },
+      callerRole,
+    );
     if (!result.ok) return fail(result.error.code, result.error.message);
 
     const updated: Invoice = { ...invoice, amountPaid: invoice.total, status: 'PAID' };

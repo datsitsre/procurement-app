@@ -105,15 +105,18 @@ class MockAnalyticsService implements AnalyticsService {
       spendBySupplierMap.set(order.supplierName, (spendBySupplierMap.get(order.supplierName) ?? 0) + order.total);
     }
 
+    // Fetched in parallel rather than one `await` per line item in sequence - with the mock
+    // services' simulated network delay, awaiting each lookup one at a time would make this
+    // scale linearly with order-item count instead of resolving in one round trip's worth of
+    // latency.
+    const items = orders.flatMap((order) => order.items);
+    const productResults = await Promise.all(items.map((item) => catalogService.getProductById(item.productId)));
     let estimatedSavings = 0;
-    for (const order of orders) {
-      for (const item of order.items) {
-        const productResult = await catalogService.getProductById(item.productId);
-        if (!productResult.ok) continue;
-        const listPrice = productResult.data.basePrice;
-        estimatedSavings += Math.max(0, (listPrice - item.unitPrice) * item.quantity);
-      }
-    }
+    items.forEach((item, i) => {
+      const productResult = productResults[i];
+      if (!productResult.ok) return;
+      estimatedSavings += Math.max(0, (productResult.data.basePrice - item.unitPrice) * item.quantity);
+    });
 
     return ok({
       monthlySpend: bucketByMonth(paidOrders, (o) => o.total),
@@ -139,11 +142,9 @@ class MockAnalyticsService implements AnalyticsService {
 
     const quotesResult = await procurementService.listQuotesForSupplier(supplierId);
     const quotes = quotesResult.ok ? quotesResult.data : [];
-    let quotesWon = 0;
-    for (const quote of quotes) {
-      const rfqResult = await procurementService.getRfq(quote.rfqId);
-      if (rfqResult.ok && rfqResult.data.acceptedQuoteId === quote.id) quotesWon += 1;
-    }
+    // Parallel, for the same reason as getBuyerAnalytics's product lookups above.
+    const rfqResults = await Promise.all(quotes.map((q) => procurementService.getRfq(q.rfqId)));
+    const quotesWon = quotes.filter((q, i) => rfqResults[i].ok && rfqResults[i].data.acceptedQuoteId === q.id).length;
 
     return ok({
       monthlyRevenue: bucketByMonth(paidOrders, (o) => o.total),

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Check, CircleCheck } from 'lucide-react';
-import { useActiveCompany } from '@/hooks/useAuth';
+import { useActiveCompany, useActiveMembership } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { purchaseOrderService } from '@/services/purchase-order.service';
 import { ordersService } from '@/services/orders.service';
@@ -26,6 +26,7 @@ export default function CheckoutPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const company = useActiveCompany();
+  const membership = useActiveMembership();
   const { data: po, loading, error } = useAsyncData<PurchaseOrder>(params.id, () => purchaseOrderService.getPurchaseOrder(params.id));
 
   const [stepIndex, setStepIndex] = useState(0);
@@ -86,20 +87,23 @@ export default function CheckoutPage() {
   }
 
   async function placeOrderAndPay() {
-    if (!method || !po || !company) return;
+    if (!method || !po || !company || !membership) return;
     setSubmitting(true);
     setSubmitError(null);
 
     const chargeDetails = method === 'CREDIT_TERMS' ? { creditAvailable: String(company.creditAvailable ?? 0) } : details;
     const { paymentService } = await import('@/services/payment.service');
-    const result = await paymentService.charge({
-      companyId: company.id,
-      supplierId: po.supplierId,
-      amount: po.total,
-      currency: company.currency,
-      method,
-      details: chargeDetails,
-    });
+    const result = await paymentService.charge(
+      {
+        companyId: company.id,
+        supplierId: po.supplierId,
+        amount: po.total,
+        currency: company.currency,
+        method,
+        details: chargeDetails,
+      },
+      membership.role,
+    );
 
     if (!result.ok) {
       setSubmitError(result.error.message);

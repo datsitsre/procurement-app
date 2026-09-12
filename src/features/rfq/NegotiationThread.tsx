@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Send } from 'lucide-react';
 import { procurementService } from '@/services/procurement.service';
+import { useActiveMembership } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { Button } from '@/components/ui/Button';
 import { formatDateTime } from '@/utils/format';
@@ -21,6 +22,7 @@ export interface NegotiationThreadProps {
  * procurement.service.ts's sendNegotiationMessage) since there's no supplier portal yet.
  */
 export function NegotiationThread({ rfqId, quoteId }: NegotiationThreadProps) {
+  const membership = useActiveMembership();
   const key = `${rfqId}:${quoteId}`;
   const { data: messages, reload } = useAsyncData<NegotiationMessage[]>(key, () =>
     procurementService.listNegotiationMessages(rfqId, quoteId),
@@ -29,9 +31,9 @@ export function NegotiationThread({ rfqId, quoteId }: NegotiationThreadProps) {
   const [sending, setSending] = useState(false);
 
   async function handleSend() {
-    if (!draft.trim()) return;
+    if (!draft.trim() || !membership) return;
     setSending(true);
-    await procurementService.sendNegotiationMessage(rfqId, quoteId, draft.trim());
+    await procurementService.sendNegotiationMessage(rfqId, quoteId, draft.trim(), membership.role);
     setDraft('');
     setSending(false);
     reload();

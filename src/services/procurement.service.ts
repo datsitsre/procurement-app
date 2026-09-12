@@ -145,7 +145,7 @@ export interface ProcurementService {
    *  counterpart to `listRfqs`, which is keyed by the *buyer's* company id instead. */
   listRfqsForSupplier(supplierId: UUID): Promise<ServiceResult<RFQ[]>>;
   getRfq(id: UUID): Promise<ServiceResult<RFQ>>;
-  createRfq(input: CreateRfqInput): Promise<ServiceResult<RFQ>>;
+  createRfq(input: CreateRfqInput, callerRole: Role): Promise<ServiceResult<RFQ>>;
   listQuotesForRfq(rfqId: UUID): Promise<ServiceResult<Quote[]>>;
   /** Every quote a supplier has ever submitted, across every RFQ - analytics' RFQ win-rate
    *  reads this (section 45/63), joined against each RFQ's `acceptedQuoteId` to know which
@@ -159,14 +159,20 @@ export interface ProcurementService {
     rfqId: UUID,
     quoteId: UUID,
     message: string,
+    callerRole: Role,
     proposedPrice?: number,
     proposedQuantity?: number,
   ): Promise<ServiceResult<NegotiationMessage[]>>;
-  acceptQuote(rfqId: UUID, quoteId: UUID, authorizedByName: string): Promise<ServiceResult<{ purchaseOrderId: UUID }>>;
+  acceptQuote(
+    rfqId: UUID,
+    quoteId: UUID,
+    authorizedByName: string,
+    callerRole: Role,
+  ): Promise<ServiceResult<{ purchaseOrderId: UUID }>>;
 
   listPurchaseRequests(companyId: UUID): Promise<ServiceResult<PurchaseRequest[]>>;
   getPurchaseRequest(id: UUID): Promise<ServiceResult<PurchaseRequest>>;
-  createPurchaseRequest(input: CreatePurchaseRequestInput): Promise<ServiceResult<PurchaseRequest>>;
+  createPurchaseRequest(input: CreatePurchaseRequestInput, callerRole: Role): Promise<ServiceResult<PurchaseRequest>>;
   listPendingApprovals(companyId: UUID, role: Role): Promise<ServiceResult<PurchaseRequest[]>>;
   decideStep(
     purchaseRequestId: UUID,
@@ -201,8 +207,10 @@ class MockProcurementService implements ProcurementService {
     return ok(rfq);
   }
 
-  async createRfq(input: CreateRfqInput): Promise<ServiceResult<RFQ>> {
+  async createRfq(input: CreateRfqInput, callerRole: Role): Promise<ServiceResult<RFQ>> {
     await delay(400);
+    const permissionError = assertPermission(callerRole, Permission.RFQ_CREATE);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
     if (input.items.length === 0) return fail('EMPTY', 'Add at least one product to the RFQ.');
     if (input.supplierIds.length === 0) return fail('NO_SUPPLIERS', 'Invite at least one supplier.');
 
@@ -291,10 +299,13 @@ class MockProcurementService implements ProcurementService {
     rfqId: UUID,
     quoteId: UUID,
     message: string,
+    callerRole: Role,
     proposedPrice?: number,
     proposedQuantity?: number,
   ): Promise<ServiceResult<NegotiationMessage[]>> {
     await delay(300);
+    const permissionError = assertPermission(callerRole, Permission.RFQ_CREATE);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
     if (!message.trim()) return fail('EMPTY', 'Write a message before sending.');
 
     const buyerMessage: NegotiationMessage = {
@@ -310,10 +321,11 @@ class MockProcurementService implements ProcurementService {
     };
     appendToList(NEGOTIATION_STORE_KEY, buyerMessage);
 
-    // No supplier portal exists yet (Phase 5) for a real counterpart to reply from - this
-    // canned acknowledgement stands in for that so the thread stays usable to test end to end.
-    // It is never presented as a live person; the sender name is the supplier's company name,
-    // the same way the seeded negotiation history already renders.
+    // Negotiation is one-directional in this build - the supplier side does not have a real
+    // reply UI of its own (the RFQ response flow added in Phase 5 covers quote submission, not
+    // back-and-forth negotiation). This canned acknowledgement stands in for a live counterpart
+    // so the thread stays usable to test end to end; it is never presented as a real person,
+    // and the sender name is the supplier's company name, matching how seeded history renders.
     const quote = allQuotes().find((q) => q.id === quoteId);
     const supplierReply: NegotiationMessage = {
       id: newId('neg'),
@@ -331,8 +343,16 @@ class MockProcurementService implements ProcurementService {
     return this.listNegotiationMessages(rfqId, quoteId);
   }
 
-  async acceptQuote(rfqId: UUID, quoteId: UUID, authorizedByName: string): Promise<ServiceResult<{ purchaseOrderId: UUID }>> {
+  async acceptQuote(
+    rfqId: UUID,
+    quoteId: UUID,
+    authorizedByName: string,
+    callerRole: Role,
+  ): Promise<ServiceResult<{ purchaseOrderId: UUID }>> {
     await delay(400);
+    const permissionError = assertPermission(callerRole, Permission.PURCHASE_ORDER_CREATE);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+
     const rfq = allRfqs().find((r) => r.id === rfqId);
     const quote = allQuotes().find((q) => q.id === quoteId);
     if (!rfq || !quote) return fail('NOT_FOUND', 'That RFQ or quote could not be found.');
@@ -360,8 +380,10 @@ class MockProcurementService implements ProcurementService {
     return ok(pr);
   }
 
-  async createPurchaseRequest(input: CreatePurchaseRequestInput): Promise<ServiceResult<PurchaseRequest>> {
+  async createPurchaseRequest(input: CreatePurchaseRequestInput, callerRole: Role): Promise<ServiceResult<PurchaseRequest>> {
     await delay(400);
+    const permissionError = assertPermission(callerRole, Permission.PURCHASE_REQUEST_CREATE);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
     if (input.items.length === 0) return fail('EMPTY', 'Your cart is empty.');
 
     // Matches the cart page's own total exactly (subtotal + tax + delivery) - the approval

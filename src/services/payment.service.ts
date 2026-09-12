@@ -1,5 +1,6 @@
-import { delay, fail, ok } from './base';
+import { assertPermission, delay, fail, ok } from './base';
 import { paymentProviders } from './payment/providers';
+import { Permission, type Role } from '@/config/rbac';
 import type { ServiceResult, UUID } from '@/types/common';
 import type { CreditTerm } from '@/types/company';
 import type { Payment, PaymentMethod } from '@/types/orders';
@@ -46,7 +47,7 @@ export interface PaymentService {
   /** Payments a supplier has received (section 44) - the supplier-workspace counterpart to
    *  `listPayments`, which is keyed by the *buyer's* company id instead. */
   listPaymentsForSupplier(supplierId: UUID): Promise<ServiceResult<Payment[]>>;
-  charge(input: ChargeInput): Promise<ServiceResult<Payment>>;
+  charge(input: ChargeInput, callerRole: Role): Promise<ServiceResult<Payment>>;
 }
 
 class MockPaymentService implements PaymentService {
@@ -65,7 +66,10 @@ class MockPaymentService implements PaymentService {
     return ok(readPayments().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
   }
 
-  async charge(input: ChargeInput): Promise<ServiceResult<Payment>> {
+  async charge(input: ChargeInput, callerRole: Role): Promise<ServiceResult<Payment>> {
+    const permissionError = assertPermission(callerRole, Permission.PAYMENTS_CREATE);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+
     const provider = paymentProviders[input.method];
     if (!provider) return fail('UNSUPPORTED_METHOD', `No payment provider is configured for ${input.method}.`);
 

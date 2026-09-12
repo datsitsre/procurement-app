@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { useAuth, useActiveCompany } from '@/hooks/useAuth';
+import { useAuth, useActiveCompany, useActiveMembership } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { procurementService } from '@/services/procurement.service';
 import { catalogService } from '@/services/catalog.service';
@@ -18,6 +18,7 @@ export default function CreateRfqPage() {
   const searchParams = useSearchParams();
   const { session } = useAuth();
   const company = useActiveCompany();
+  const membership = useActiveMembership();
 
   // Only published products and verified suppliers can go into an RFQ (section 46) - never the
   // static, unfiltered seed arrays, since a supplier awaiting verification or a product awaiting
@@ -50,7 +51,7 @@ export default function CreateRfqPage() {
   }
 
   async function handleSubmit() {
-    if (!company || !session || !product) return;
+    if (!company || !session || !product || !membership) return;
     setError(null);
 
     if (!requiredDeliveryDate) {
@@ -63,15 +64,18 @@ export default function CreateRfqPage() {
     }
 
     setSubmitting(true);
-    const result = await procurementService.createRfq({
-      companyId: company.id,
-      createdByUserId: session.user.id,
-      items: [{ id: `rfqi-${product.id}`, productId: product.id, productName: product.name, quantity }],
-      requiredDeliveryDate: new Date(requiredDeliveryDate).toISOString(),
-      deliveryLocation,
-      additionalRequirements: additionalRequirements || undefined,
-      supplierIds,
-    });
+    const result = await procurementService.createRfq(
+      {
+        companyId: company.id,
+        createdByUserId: session.user.id,
+        items: [{ id: `rfqi-${product.id}`, productId: product.id, productName: product.name, quantity }],
+        requiredDeliveryDate: new Date(requiredDeliveryDate).toISOString(),
+        deliveryLocation,
+        additionalRequirements: additionalRequirements || undefined,
+        supplierIds,
+      },
+      membership.role,
+    );
     setSubmitting(false);
 
     if (!result.ok) {

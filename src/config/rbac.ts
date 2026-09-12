@@ -126,6 +126,10 @@ export const RolePermissions: Record<Role, Permission[]> = {
     // without it, a request routed to a procurement manager could never be approved by one.
     Permission.PURCHASE_REQUEST_APPROVE,
     Permission.PURCHASE_ORDER_CREATE,
+    // Whoever can authorize a purchase order must also be able to check it out / pay it -
+    // otherwise a procurement manager could create a PO but never actually complete the
+    // purchase, which isn't a real separation of duties, just a dead end.
+    Permission.PAYMENTS_CREATE,
     Permission.SUPPLIERS_READ,
     Permission.SUPPLIERS_MANAGE,
     Permission.PRODUCTS_READ,
