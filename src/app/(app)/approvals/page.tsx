@@ -19,6 +19,7 @@ export default function ApprovalsPage() {
   const [requests, setRequests] = useState<PurchaseRequest[] | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [comments, setComments] = useState<Record<string, string>>({});
 
   useEffect(() => {
     load();
@@ -33,14 +34,16 @@ export default function ApprovalsPage() {
 
   async function decide(id: string, decision: 'APPROVED' | 'REJECTED') {
     if (!membership) return;
+    const comment = comments[id]?.trim() || undefined;
     setMessage(null);
     setDecidingId(id);
-    const result = await procurementService.decideStep(id, membership.role, decision, tenant, undefined, session?.user.name);
+    const result = await procurementService.decideStep(id, membership.role, decision, tenant, comment, session?.user.name);
     setDecidingId(null);
     if (!result.ok) {
       setMessage(result.error.message);
       return;
     }
+    setComments((c) => ({ ...c, [id]: '' }));
     // Re-fetch so a request that no longer has a step pending for this role drops off the list.
     load();
   }
@@ -81,10 +84,23 @@ export default function ApprovalsPage() {
                   <span className="font-medium">Department:</span> {pr.department}
                 </p>
               )}
-              <div className="mt-4 flex gap-2">
+              <label className="mt-3 flex flex-col gap-1.5" htmlFor={`comment-${pr.id}`}>
+                <span className="text-sm font-medium">
+                  Comment <span className="text-text-tertiary font-normal">(required to reject)</span>
+                </span>
+                <textarea
+                  id={`comment-${pr.id}`}
+                  value={comments[pr.id] ?? ''}
+                  onChange={(e) => setComments((c) => ({ ...c, [pr.id]: e.target.value }))}
+                  placeholder="Why are you approving or rejecting this request?"
+                  rows={2}
+                  className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:border-accent"
+                />
+              </label>
+              <div className="mt-3 flex gap-2">
                 <Button
                   variant="danger"
-                  disabled={decidingId === pr.id}
+                  disabled={decidingId === pr.id || !comments[pr.id]?.trim()}
                   loading={decidingId === pr.id}
                   onClick={() => decide(pr.id, 'REJECTED')}
                 >

@@ -10,6 +10,7 @@ import {
 import { demoSuppliers } from '@/lib/demo-data/catalog';
 import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type {
+  ApprovalRule,
   ApprovalStep,
   NegotiationMessage,
   PurchaseRequest,
@@ -18,7 +19,7 @@ import type {
   RFQ,
   RFQItem,
 } from '@/types/procurement';
-import { Permission, RoleLabels, type Role } from '@/config/rbac';
+import { hasPermission, Permission, RoleLabels, type Role } from '@/config/rbac';
 
 function newId(prefix: string): UUID {
   return `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
@@ -91,12 +92,43 @@ function allNegotiationMessages(): NegotiationMessage[] {
 
 // ---------- approval rule resolution (section 23) ----------
 
+// ---------- approval rules (section 12 - admin-configurable spend bands) ----------
+
+const RULE_STORE_KEY = 'procurement.approval-rules.v1';
+const RULE_REMOVED_KEY = 'procurement.approval-rules.v1.removed';
+
+function readRuleRemoved(): Set<UUID> {
+  if (typeof window === 'undefined') return new Set();
+  const raw = window.localStorage.getItem(RULE_REMOVED_KEY);
+  if (!raw) return new Set();
+  try {
+    return new Set(JSON.parse(raw) as UUID[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function markRuleRemoved(id: UUID) {
+  if (typeof window === 'undefined') return;
+  const removed = readRuleRemoved();
+  removed.add(id);
+  window.localStorage.setItem(RULE_REMOVED_KEY, JSON.stringify(Array.from(removed)));
+}
+
+/** Every approval rule for every company (seeded + admin-created), minus anything removed -
+ *  the same seed+override pattern every other mock service in this app uses. There's no
+ *  separate "edit" path yet, only add/remove - editing a band is remove-then-recreate. */
+function allApprovalRules(): ApprovalRule[] {
+  const removed = readRuleRemoved();
+  return [...demoApprovalRules, ...readList<ApprovalRule>(RULE_STORE_KEY)].filter((r) => !removed.has(r.id));
+}
+
 /** Resolves which roles must approve a purchase request of a given amount, per the company's
- *  configured spend bands, and turns that into an ordered list of pending approval steps.
- *  There's no admin UI to edit these bands yet (that's a Settings-page addition for later),
- *  but the resolution logic itself is real and this is the one place it lives. */
+ *  configured spend bands, and turns that into an ordered list of pending approval steps. A
+ *  company with no matching band (or no rules at all) falls back to a single OWNER approval
+ *  step, so a request is never silently left with nothing to gate it. */
 function resolveApprovalSteps(companyId: UUID, amount: number): ApprovalStep[] {
-  const rule = demoApprovalRules
+  const rule = allApprovalRules()
     .filter((r) => r.companyId === companyId)
     .find((r) => amount >= r.minAmount && (r.maxAmount === undefined || amount <= r.maxAmount));
 
@@ -119,6 +151,13 @@ export interface CreatePurchaseRequestInput {
   costCenterId?: UUID;
   items: PurchaseRequestItem[];
   reason: string;
+}
+
+export interface NewApprovalRuleInput {
+  companyId: UUID;
+  minAmount: number;
+  maxAmount?: number;
+  requiredApproverRoles: string[];
 }
 
 export interface CreateRfqInput {
@@ -182,6 +221,11 @@ export interface ProcurementService {
   getPurchaseRequest(id: UUID, caller: TenantContext): Promise<ServiceResult<PurchaseRequest>>;
   createPurchaseRequest(input: CreatePurchaseRequestInput, callerRole: Role): Promise<ServiceResult<PurchaseRequest>>;
   listPendingApprovals(companyId: UUID, role: Role): Promise<ServiceResult<PurchaseRequest[]>>;
+  /** Rejecting a step requires `comment` (enforced here, not just in the UI - section 9.1's
+   *  "the service layer is the security boundary" applies just as much to a business rule like
+   *  this as it does to authorization) so the requester always knows what to fix. `callerName`
+   *  is recorded on the decided step so the approval timeline shows who actually acted, not
+   *  just which role. */
   decideStep(
     purchaseRequestId: UUID,
     callerRole: Role,
@@ -190,6 +234,12 @@ export interface ProcurementService {
     comment?: string,
     callerName?: string,
   ): Promise<ServiceResult<PurchaseRequest>>;
+
+  // ---- Approval rules (section 12 - admin-configurable spend bands) ----
+
+  listApprovalRules(companyId: UUID): Promise<ServiceResult<ApprovalRule[]>>;
+  createApprovalRule(input: NewApprovalRuleInput, callerRole: Role, caller: TenantContext): Promise<ServiceResult<ApprovalRule>>;
+  removeApprovalRule(ruleId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>>;
 }
 
 class MockProcurementService implements ProcurementService {
@@ -477,9 +527,15 @@ class MockProcurementService implements ProcurementService {
         `This request is waiting on ${step ? RoleLabels[step.approverRole as Role] ?? step.approverRole : 'no one'}, not your role.`,
       );
     }
+    // A rejection must say why, so the requester has something to act on - checked here, not
+    // just enforced by the Approvals page's form, per section 9.1's rule that the UI hiding an
+    // action (or, here, disabling a button) is never the actual security/business-rule boundary.
+    if (decision === 'REJECTED' && !comment?.trim()) {
+      return fail('REASON_REQUIRED', 'Add a reason for rejecting this request so the requester knows what to fix.');
+    }
 
     const updatedSteps = pr.approvalSteps.map((s, i) =>
-      i === stepIndex ? { ...s, status: decision, decidedAt: new Date().toISOString(), comment } : s,
+      i === stepIndex ? { ...s, status: decision, decidedAt: new Date().toISOString(), comment, approverName: callerName } : s,
     );
 
     let status = pr.status;
@@ -502,6 +558,71 @@ class MockProcurementService implements ProcurementService {
     }
 
     return ok(next);
+  }
+
+  // ---- Approval rules (section 12) ----
+
+  async listApprovalRules(companyId: UUID): Promise<ServiceResult<ApprovalRule[]>> {
+    await delay(200);
+    return ok(
+      allApprovalRules()
+        .filter((r) => r.companyId === companyId)
+        .sort((a, b) => a.minAmount - b.minAmount),
+    );
+  }
+
+  async createApprovalRule(input: NewApprovalRuleInput, callerRole: Role, caller: TenantContext): Promise<ServiceResult<ApprovalRule>> {
+    await delay(250);
+    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+    if (!ownsRecord(caller, input.companyId)) return fail('NOT_FOUND', 'That company could not be found.');
+
+    if (input.minAmount < 0) return fail('INVALID_RANGE', 'The minimum amount cannot be negative.');
+    if (input.maxAmount !== undefined && input.maxAmount <= input.minAmount) {
+      return fail('INVALID_RANGE', 'The maximum amount must be greater than the minimum.');
+    }
+    if (input.requiredApproverRoles.length === 0) return fail('EMPTY', 'Pick at least one approver role.');
+    // A role that can never act on PURCHASE_REQUEST_APPROVE would permanently strand any
+    // request that lands in this band - nobody could ever approve or reject it.
+    const incapableRole = input.requiredApproverRoles.find((role) => !hasPermission(role as Role, Permission.PURCHASE_REQUEST_APPROVE));
+    if (incapableRole) {
+      return fail(
+        'ROLE_CANNOT_APPROVE',
+        `${RoleLabels[incapableRole as Role] ?? incapableRole} can't approve purchase requests, so a request routed to this role could never move forward.`,
+      );
+    }
+
+    // Two bands covering the same amount would make resolution ambiguous - only the first
+    // match would ever apply, silently ignoring the second rule the admin just configured.
+    const existing = allApprovalRules().filter((r) => r.companyId === input.companyId);
+    const overlaps = existing.some((r) => {
+      const existingMax = r.maxAmount ?? Infinity;
+      const newMax = input.maxAmount ?? Infinity;
+      return input.minAmount <= existingMax && r.minAmount <= newMax;
+    });
+    if (overlaps) return fail('OVERLAPPING_RANGE', 'This range overlaps an existing approval rule for this company.');
+
+    const rule: ApprovalRule = {
+      id: newId('rule'),
+      companyId: input.companyId,
+      minAmount: input.minAmount,
+      maxAmount: input.maxAmount,
+      requiredApproverRoles: input.requiredApproverRoles,
+    };
+    appendToList(RULE_STORE_KEY, rule);
+    return ok(rule);
+  }
+
+  async removeApprovalRule(ruleId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>> {
+    await delay(200);
+    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+
+    const rule = allApprovalRules().find((r) => r.id === ruleId);
+    if (!rule || !ownsRecord(caller, rule.companyId)) return fail('NOT_FOUND', 'That approval rule could not be found.');
+
+    markRuleRemoved(ruleId);
+    return ok(undefined);
   }
 }
 

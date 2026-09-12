@@ -6,6 +6,7 @@ import { ArrowLeft, Building2, Plus, Trash2, Warehouse } from 'lucide-react';
 import { useAuth, useActiveCompany, useActiveMembership, useTenantContext } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { companyService } from '@/services/company.service';
+import { procurementService } from '@/services/procurement.service';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -13,10 +14,14 @@ import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { SkeletonText } from '@/components/ui/Skeleton';
-import { Permission, RoleLabels, type Role } from '@/config/rbac';
+import { BUYER_ROLES, hasPermission, Permission, RoleLabels, type Role } from '@/config/rbac';
+import { formatMoney } from '@/utils/format';
+import { cn } from '@/utils/cn';
 import type { CompanyProfilePatch } from '@/services/company.service';
+import type { NewApprovalRuleInput } from '@/services/procurement.service';
 import type { Branch, Company, CostCenter, Department } from '@/types/company';
-import type { TenantContext } from '@/types/common';
+import type { ApprovalRule } from '@/types/procurement';
+import type { CurrencyCode, TenantContext } from '@/types/common';
 
 export default function CompanySettingsPage() {
   const { can } = useAuth();
@@ -52,6 +57,7 @@ export default function CompanySettingsPage() {
       <DepartmentsSection companyId={company.id} callerRole={membership.role} tenant={tenant} />
       <CostCentersSection companyId={company.id} callerRole={membership.role} tenant={tenant} />
       <SpendingLimitsSection companyId={company.id} callerRole={membership.role} tenant={tenant} />
+      <ApprovalRulesSection companyId={company.id} currency={company.currency} callerRole={membership.role} tenant={tenant} />
     </div>
   );
 }
@@ -459,6 +465,158 @@ function SpendingLimitsSection({ companyId, callerRole, tenant }: { companyId: s
               </li>
             ))}
           </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Approvable roles for a rule's required-approver picker (section 12) - only roles that
+ *  actually hold PURCHASE_REQUEST_APPROVE, so an admin can't configure a band that could never
+ *  be acted on and would permanently strand any request that lands in it. */
+const APPROVER_ROLE_OPTIONS = BUYER_ROLES.filter((role) => hasPermission(role, Permission.PURCHASE_REQUEST_APPROVE));
+
+function ApprovalRulesSection({
+  companyId,
+  currency,
+  callerRole,
+  tenant,
+}: {
+  companyId: string;
+  currency: CurrencyCode;
+  callerRole: Role;
+  tenant: TenantContext;
+}) {
+  const { data: rules, reload } = useAsyncData<ApprovalRule[]>(companyId, () => procurementService.listApprovalRules(companyId));
+  const [adding, setAdding] = useState(false);
+  const [minAmount, setMinAmount] = useState('0');
+  const [maxAmount, setMaxAmount] = useState('');
+  const [selectedRoles, setSelectedRoles] = useState<Role[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function toggleRole(role: Role) {
+    setSelectedRoles((roles) => (roles.includes(role) ? roles.filter((r) => r !== role) : [...roles, role]));
+  }
+
+  async function submit() {
+    setSaving(true);
+    setError(null);
+    const input: NewApprovalRuleInput = {
+      companyId,
+      minAmount: Number(minAmount) || 0,
+      maxAmount: maxAmount.trim() ? Number(maxAmount) : undefined,
+      requiredApproverRoles: selectedRoles,
+    };
+    const result = await procurementService.createApprovalRule(input, callerRole, tenant);
+    setSaving(false);
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    setMinAmount('0');
+    setMaxAmount('');
+    setSelectedRoles([]);
+    setAdding(false);
+    reload();
+  }
+
+  async function remove(ruleId: string) {
+    setError(null);
+    await procurementService.removeApprovalRule(ruleId, callerRole, tenant);
+    reload();
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Approval rules</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="mb-4 text-caption">
+          Which roles must approve a purchase request, based on its total amount. A request whose amount doesn&rsquo;t
+          match any rule falls back to a single company-owner approval, so it&rsquo;s never left ungated.
+        </p>
+        {error && <p className="mb-3 rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
+
+        {rules === null ? (
+          <SkeletonText lines={3} />
+        ) : rules.length === 0 && !adding ? (
+          <p className="text-caption">No approval rules yet - every request falls back to a single owner approval.</p>
+        ) : (
+          <ul className="mb-4 flex flex-col gap-2">
+            {rules.map((rule) => (
+              <li key={rule.id} className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm">
+                <div>
+                  <p className="font-medium">
+                    {formatMoney(rule.minAmount, currency)} – {rule.maxAmount !== undefined ? formatMoney(rule.maxAmount, currency) : 'no limit'}
+                  </p>
+                  <p className="text-caption">
+                    Requires: {rule.requiredApproverRoles.map((r) => RoleLabels[r as Role] ?? r).join(' → ')}
+                  </p>
+                </div>
+                <Button variant="ghost" size="icon" onClick={() => remove(rule.id)} aria-label="Remove rule">
+                  <Trash2 className="h-4 w-4 text-text-tertiary" aria-hidden="true" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {adding ? (
+          <div className="flex flex-col gap-3 rounded-md border border-border p-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="Minimum amount" type="number" value={minAmount} onChange={(e) => setMinAmount(e.target.value)} />
+              <Input
+                label="Maximum amount"
+                type="number"
+                placeholder="No limit"
+                value={maxAmount}
+                onChange={(e) => setMaxAmount(e.target.value)}
+              />
+            </div>
+            <div>
+              <p className="mb-1.5 text-sm font-medium">Required approvers, in order</p>
+              <div className="flex flex-wrap gap-2">
+                {APPROVER_ROLE_OPTIONS.map((role) => (
+                  <button
+                    key={role}
+                    type="button"
+                    onClick={() => toggleRole(role)}
+                    className={cn(
+                      'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                      selectedRoles.includes(role)
+                        ? 'border-accent bg-accent text-accent-foreground'
+                        : 'border-border text-text-secondary hover:bg-neutral-bg',
+                    )}
+                  >
+                    {selectedRoles.includes(role) ? `${selectedRoles.indexOf(role) + 1}. ` : ''}
+                    {RoleLabels[role]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setAdding(false);
+                  setError(null);
+                }}
+                disabled={saving}
+              >
+                Cancel
+              </Button>
+              <Button onClick={submit} loading={saving} disabled={selectedRoles.length === 0}>
+                Create rule
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button variant="outline" onClick={() => setAdding(true)}>
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Add rule
+          </Button>
         )}
       </CardContent>
     </Card>

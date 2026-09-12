@@ -102,7 +102,7 @@ export default function PurchaseRequestDetailPage() {
         <p className="mb-4 text-h3">Approval</p>
         <ol className="flex flex-col gap-3">
           {pr.approvalSteps.map((step) => (
-            <li key={step.id} className="flex items-center gap-3">
+            <li key={step.id} className="flex items-start gap-3">
               <span
                 className={cn(
                   'flex h-6 w-6 items-center justify-center rounded-full text-xs',
@@ -119,11 +119,14 @@ export default function PurchaseRequestDetailPage() {
                   <Circle className="h-2 w-2 fill-current" aria-hidden="true" />
                 )}
               </span>
-              <span className="text-sm">
-                {RoleLabels[step.approverRole as Role] ?? step.approverRole}
-                {step.approverName && ` (${step.approverName})`}
-              </span>
-              {step.decidedAt && <span className="text-caption">· {formatDate(step.decidedAt)}</span>}
+              <div className="flex flex-col">
+                <span className="text-sm">
+                  {RoleLabels[step.approverRole as Role] ?? step.approverRole}
+                  {step.approverName && ` (${step.approverName})`}
+                  {step.decidedAt && <span className="text-caption"> · {formatDate(step.decidedAt)}</span>}
+                </span>
+                {step.comment && <span className="text-caption italic">&ldquo;{step.comment}&rdquo;</span>}
+              </div>
             </li>
           ))}
         </ol>
