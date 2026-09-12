@@ -6,6 +6,7 @@ import { useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/use
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { catalogService } from '@/services/catalog.service';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -93,10 +94,19 @@ function ProductsManager({ supplier, callerRole }: { supplier: SupplierProfile; 
                     <p className="text-caption">{product.sku}</p>
                   </div>
                   <div className="flex items-center gap-4">
+                    {product.moderationStatus !== 'PUBLISHED' && (
+                      <Badge tone={product.moderationStatus === 'PENDING_REVIEW' ? 'warning' : 'danger'}>
+                        {product.moderationStatus === 'PENDING_REVIEW' ? 'Awaiting review' : 'Rejected'}
+                      </Badge>
+                    )}
                     <PriceDisplay amount={product.basePrice} size="sm" />
                     <span className={isLow ? 'text-sm font-medium text-danger' : 'text-sm text-text-secondary'}>{stock} in stock</span>
                   </div>
                 </button>
+
+                {product.moderationStatus === 'REJECTED' && product.moderationNote && (
+                  <p className="border-t border-border px-4 py-2 text-caption">Admin note: {product.moderationNote}</p>
+                )}
 
                 {expandedId === product.id && (
                   <ProductEditPanel product={product} callerRole={callerRole} onSaved={reload} />

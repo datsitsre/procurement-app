@@ -37,6 +37,8 @@ export interface ProductSpecification {
   value: string;
 }
 
+export type ProductModerationStatus = 'PUBLISHED' | 'PENDING_REVIEW' | 'REJECTED';
+
 export interface Product {
   id: UUID;
   slug: string;
@@ -45,6 +47,11 @@ export interface Product {
   sku: string;
   supplierId: UUID;
   categoryId: UUID;
+  /** Platform moderation state (section 46/62) - a newly-submitted product starts
+   *  PENDING_REVIEW and is excluded from the buyer-facing catalog until an admin publishes it;
+   *  seed products are already PUBLISHED since they represent an established listing. */
+  moderationStatus: ProductModerationStatus;
+  moderationNote?: string;
   images: string[];
   description: string;
   specifications: ProductSpecification[];

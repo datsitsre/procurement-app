@@ -1,11 +1,20 @@
 import { assertPermission, delay, ok, fail } from './base';
+import { auditLogService } from './audit-log.service';
 import { demoCategories, demoProducts, demoSuppliers, demoWarehouses } from '@/lib/demo-data/catalog';
 import { Permission, type Role } from '@/config/rbac';
 import type { ServiceResult, UUID } from '@/types/common';
 import type { Category, Product, SupplierProfile, Warehouse } from '@/types/catalog';
 
+/** Who performed a mutating action - threaded through from the caller's session so the audit
+ *  log records a real name, not a role label. */
+export interface Actor {
+  id: UUID;
+  name: string;
+}
+
 const PRODUCT_OVERRIDE_KEY = 'catalog.products.v1.overrides';
 const PRODUCT_CREATED_KEY = 'catalog.products.v1.created';
+const SUPPLIER_OVERRIDE_KEY = 'catalog.suppliers.v1.overrides';
 
 function newId(prefix: string): UUID {
   return `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
@@ -57,6 +66,29 @@ function allProducts(): Product[] {
   return [...seeded, ...created];
 }
 
+function readSupplierOverrides(): Record<UUID, SupplierProfile> {
+  if (typeof window === 'undefined') return {};
+  const raw = window.localStorage.getItem(SUPPLIER_OVERRIDE_KEY);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<UUID, SupplierProfile>;
+  } catch {
+    return {};
+  }
+}
+
+function writeSupplierOverride(supplier: SupplierProfile) {
+  if (typeof window === 'undefined') return;
+  const store = readSupplierOverrides();
+  store[supplier.id] = supplier;
+  window.localStorage.setItem(SUPPLIER_OVERRIDE_KEY, JSON.stringify(store));
+}
+
+function allSuppliers(): SupplierProfile[] {
+  const overrides = readSupplierOverrides();
+  return demoSuppliers.map((s) => overrides[s.id] ?? s);
+}
+
 export interface NewProductInput {
   name: string;
   brand: string;
@@ -94,14 +126,37 @@ export interface CatalogService {
   getProductBySlug(slug: string): Promise<ServiceResult<Product>>;
   getProductById(id: UUID): Promise<ServiceResult<Product>>;
   listSuppliers(): Promise<ServiceResult<SupplierProfile[]>>;
+  /** Every supplier regardless of verification status - the admin verification queue (section
+   *  46) reads this, not the buyer-facing `listSuppliers`. */
+  listAllSuppliers(): Promise<ServiceResult<SupplierProfile[]>>;
   getSupplierBySlug(slug: string): Promise<ServiceResult<SupplierProfile>>;
   getSupplierById(id: string): SupplierProfile | undefined;
   getSupplierByCompanyId(companyId: UUID): SupplierProfile | undefined;
+  /** Verifies, suspends, or rejects a supplier - only VERIFIED/PREMIUM_VERIFIED suppliers ever
+   *  reach the buyer-facing directory or RFQ invite list. */
+  verifySupplier(
+    supplierId: UUID,
+    decision: 'VERIFIED' | 'SUSPENDED' | 'REJECTED',
+    callerRole: Role,
+    actor: Actor,
+  ): Promise<ServiceResult<SupplierProfile>>;
   /** A supplier's own listing, for the Products & Inventory page (section 34). */
   listProductsForSupplier(supplierId: UUID): Promise<ServiceResult<Product[]>>;
   listWarehousesForSupplier(supplierId: UUID): Promise<ServiceResult<Warehouse[]>>;
   createProduct(input: NewProductInput, callerRole: Role): Promise<ServiceResult<Product>>;
   updateProduct(productId: UUID, patch: ProductPatch, callerRole: Role): Promise<ServiceResult<Product>>;
+  /** Every product across every supplier, unfiltered by moderation status - the admin
+   *  product-moderation queue (section 46) reads this, not the buyer-facing `listProducts`. */
+  listAllProductsForModeration(): Promise<ServiceResult<Product[]>>;
+  /** Publishes or rejects a product awaiting moderation - a rejected listing stays visible to
+   *  its supplier (with `moderationNote` explaining why) but never reaches the buyer catalog. */
+  moderateProduct(
+    productId: UUID,
+    decision: 'PUBLISHED' | 'REJECTED',
+    note: string | undefined,
+    callerRole: Role,
+    actor: Actor,
+  ): Promise<ServiceResult<Product>>;
   /** Adjusts stock/threshold at one warehouse (section 35) - adds the warehouse's inventory
    *  record if the product isn't stocked there yet. */
   updateInventory(
@@ -124,6 +179,10 @@ class MockCatalogService implements CatalogService {
     const text = filters.search?.trim().toLowerCase();
 
     let results = allProducts().filter((p) => {
+      // Only published listings ever reach the buyer-facing catalog (section 46) - a product
+      // pending or rejected in moderation is still visible to its own supplier and to admins,
+      // just not here.
+      if (p.moderationStatus !== 'PUBLISHED') return false;
       if (category && p.categoryId !== category.id) return false;
       if (filters.supplierId && p.supplierId !== filters.supplierId) return false;
       if (text && !p.name.toLowerCase().includes(text) && !p.brand.toLowerCase().includes(text) && !p.sku.toLowerCase().includes(text)) {
@@ -167,22 +226,57 @@ class MockCatalogService implements CatalogService {
 
   async listSuppliers(): Promise<ServiceResult<SupplierProfile[]>> {
     await delay(250);
-    return ok(demoSuppliers);
+    // The buyer-facing supplier directory only ever shows verified suppliers (section 46) - a
+    // supplier still PENDING_VERIFICATION or SUSPENDED can't be found, invited to an RFQ, or
+    // bought from until an admin verifies them.
+    return ok(allSuppliers().filter((s) => s.verification === 'VERIFIED' || s.verification === 'PREMIUM_VERIFIED'));
+  }
+
+  async listAllSuppliers(): Promise<ServiceResult<SupplierProfile[]>> {
+    await delay(250);
+    return ok(allSuppliers());
   }
 
   async getSupplierBySlug(slug: string): Promise<ServiceResult<SupplierProfile>> {
     await delay(250);
-    const supplier = demoSuppliers.find((s) => s.slug === slug);
+    const supplier = allSuppliers().find((s) => s.slug === slug);
     if (!supplier) return fail('NOT_FOUND', 'That supplier could not be found.');
     return ok(supplier);
   }
 
   getSupplierById(id: string): SupplierProfile | undefined {
-    return demoSuppliers.find((s) => s.id === id);
+    return allSuppliers().find((s) => s.id === id);
   }
 
   getSupplierByCompanyId(companyId: UUID): SupplierProfile | undefined {
-    return demoSuppliers.find((s) => s.companyId === companyId);
+    return allSuppliers().find((s) => s.companyId === companyId);
+  }
+
+  async verifySupplier(
+    supplierId: UUID,
+    decision: 'VERIFIED' | 'SUSPENDED' | 'REJECTED',
+    callerRole: Role,
+    actor: Actor,
+  ): Promise<ServiceResult<SupplierProfile>> {
+    await delay(300);
+    const permissionError = assertPermission(callerRole, Permission.PLATFORM_MANAGE);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+
+    const supplier = allSuppliers().find((s) => s.id === supplierId);
+    if (!supplier) return fail('NOT_FOUND', 'That supplier could not be found.');
+
+    const updated: SupplierProfile = { ...supplier, verification: decision };
+    writeSupplierOverride(updated);
+    auditLogService.record({
+      actorId: actor.id,
+      actorName: actor.name,
+      action: 'SUPPLIER_VERIFICATION_CHANGED',
+      entityType: 'Supplier',
+      entityId: supplierId,
+      previousValue: { verification: supplier.verification },
+      newValue: { verification: decision },
+    });
+    return ok(updated);
   }
 
   async listProductsForSupplier(supplierId: UUID): Promise<ServiceResult<Product[]>> {
@@ -210,6 +304,9 @@ class MockCatalogService implements CatalogService {
       sku: input.sku,
       supplierId: input.supplierId,
       categoryId: input.categoryId,
+      // Every newly-submitted product is held for admin review (section 46) before it can
+      // appear in the buyer-facing catalog - see listProducts's moderationStatus filter.
+      moderationStatus: 'PENDING_REVIEW',
       images: [],
       description: input.description,
       specifications: [],
@@ -259,6 +356,39 @@ class MockCatalogService implements CatalogService {
 
     const updated: Product = { ...product, inventory };
     writeOverride(updated);
+    return ok(updated);
+  }
+
+  async listAllProductsForModeration(): Promise<ServiceResult<Product[]>> {
+    await delay(250);
+    return ok(allProducts().slice().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
+  }
+
+  async moderateProduct(
+    productId: UUID,
+    decision: 'PUBLISHED' | 'REJECTED',
+    note: string | undefined,
+    callerRole: Role,
+    actor: Actor,
+  ): Promise<ServiceResult<Product>> {
+    await delay(300);
+    const permissionError = assertPermission(callerRole, Permission.PLATFORM_MANAGE);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+
+    const product = allProducts().find((p) => p.id === productId);
+    if (!product) return fail('NOT_FOUND', 'That product could not be found.');
+
+    const updated: Product = { ...product, moderationStatus: decision, moderationNote: note };
+    writeOverride(updated);
+    auditLogService.record({
+      actorId: actor.id,
+      actorName: actor.name,
+      action: 'PRODUCT_MODERATED',
+      entityType: 'Product',
+      entityId: productId,
+      previousValue: { moderationStatus: product.moderationStatus },
+      newValue: { moderationStatus: decision, note },
+    });
     return ok(updated);
   }
 }

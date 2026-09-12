@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Wallet, Package, CheckSquare, FileText, Receipt, Star, ShieldCheck } from 'lucide-react';
 import { useAuth, useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
 import { SupplierDashboard } from '@/features/supplier/SupplierDashboard';
@@ -22,8 +23,17 @@ import type { RFQ } from '@/types/procurement';
 import type { SupplierProfile } from '@/types/catalog';
 
 export default function DashboardPage() {
+  const router = useRouter();
   const workspace = useWorkspace();
   const company = useActiveCompany();
+
+  // The platform workspace's home is /admin, not this buyer/supplier dashboard - login always
+  // lands here first (it has no way to know the workspace ahead of time), so bounce onward.
+  useEffect(() => {
+    if (workspace === 'platform') router.replace('/admin');
+  }, [workspace, router]);
+
+  if (workspace === 'platform') return null;
 
   if (workspace === 'supplier') {
     if (!company) return null;

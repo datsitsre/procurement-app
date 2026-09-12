@@ -1,5 +1,5 @@
 import type { ISODateTime, UUID } from './common';
-import type { InvoiceStatus, OrderStatus, PaymentStatus } from './status';
+import type { DisputeStatus, InvoiceStatus, OrderStatus, PaymentStatus } from './status';
 
 export interface OrderItem {
   id: UUID;
@@ -112,10 +112,14 @@ export interface Payment {
 export interface Dispute {
   id: UUID;
   orderId: UUID;
+  orderReference: string;
   companyId: UUID;
+  supplierId: UUID;
   reason: string;
   description: string;
   evidenceUrls: string[];
-  status: string;
+  status: DisputeStatus;
+  resolutionNote?: string;
   createdAt: ISODateTime;
+  resolvedAt?: ISODateTime;
 }

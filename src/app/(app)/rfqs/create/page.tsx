@@ -5,10 +5,13 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { useAuth, useActiveCompany } from '@/hooks/useAuth';
+import { useAsyncData } from '@/hooks/useAsyncData';
 import { procurementService } from '@/services/procurement.service';
-import { demoCategories, demoProducts, demoSuppliers } from '@/lib/demo-data/catalog';
+import { catalogService } from '@/services/catalog.service';
+import { demoCategories } from '@/lib/demo-data/catalog';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import type { Product, SupplierProfile } from '@/types/catalog';
 
 export default function CreateRfqPage() {
   const router = useRouter();
@@ -16,8 +19,14 @@ export default function CreateRfqPage() {
   const { session } = useAuth();
   const company = useActiveCompany();
 
+  // Only published products and verified suppliers can go into an RFQ (section 46) - never the
+  // static, unfiltered seed arrays, since a supplier awaiting verification or a product awaiting
+  // moderation must not be reachable this way.
+  const { data: products } = useAsyncData<Product[]>('rfq-create-products', () => catalogService.listProducts());
+  const { data: suppliers } = useAsyncData<SupplierProfile[]>('rfq-create-suppliers', () => catalogService.listSuppliers());
+
   const preselectedProductId = searchParams.get('product');
-  const [productId, setProductId] = useState(preselectedProductId ?? demoProducts[0]?.id ?? '');
+  const [productId, setProductId] = useState(preselectedProductId ?? '');
   const [quantity, setQuantity] = useState(10);
   const [requiredDeliveryDate, setRequiredDeliveryDate] = useState('');
   const [deliveryLocation, setDeliveryLocation] = useState('Accra');
@@ -26,13 +35,15 @@ export default function CreateRfqPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const product = demoProducts.find((p) => p.id === productId);
+  const productList = products ?? [];
+  const product = productList.find((p) => p.id === productId) ?? productList[0];
 
   const eligibleSuppliers = useMemo(() => {
-    if (!product) return demoSuppliers;
+    if (!suppliers) return [];
+    if (!product) return suppliers;
     const categoryName = demoCategories.find((c) => c.id === product.categoryId)?.name;
-    return demoSuppliers.filter((s) => s.categories.includes(categoryName ?? '') || s.id === product.supplierId);
-  }, [product]);
+    return suppliers.filter((s) => s.categories.includes(categoryName ?? '') || s.id === product.supplierId);
+  }, [product, suppliers]);
 
   function toggleSupplier(id: string) {
     setSupplierIds((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
@@ -96,14 +107,14 @@ export default function CreateRfqPage() {
             </label>
             <select
               id="product"
-              value={productId}
+              value={product?.id ?? ''}
               onChange={(e) => {
                 setProductId(e.target.value);
                 setSupplierIds([]);
               }}
               className="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
-              {demoProducts.map((p) => (
+              {productList.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>

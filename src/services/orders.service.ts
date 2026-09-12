@@ -95,6 +95,8 @@ function addTimelineEvent(orderId: UUID, status: OrderTimelineEvent['status'], l
 
 export interface OrdersService {
   listOrders(companyId: UUID): Promise<ServiceResult<Order[]>>;
+  /** Every order across every company - the platform admin overview (section 46). */
+  listAllOrders(): Promise<ServiceResult<Order[]>>;
   getOrder(id: UUID): Promise<ServiceResult<Order>>;
   getOrderForPurchaseOrder(purchaseOrderId: UUID): Promise<ServiceResult<Order | null>>;
   listTimeline(orderId: UUID): Promise<ServiceResult<OrderTimelineEvent[]>>;
@@ -116,12 +118,22 @@ export interface OrdersService {
    *  shipment. Partial delivery (section 29) is modeled in the type but not yet exposed as a
    *  supplier action here - a future refinement, not a gap in what's demoed today. */
   markDelivered(orderId: UUID, callerRole: Role): Promise<ServiceResult<Order>>;
+  /** Marks an order's payment REFUNDED - called by disputes.service once a platform admin
+   *  resolves a dispute in the buyer's favor. Not permission-gated here: the caller has already
+   *  checked PLATFORM_MANAGE before reaching this, the same "checked once, upstream" pattern
+   *  audit-log.service's `record` uses. */
+  markRefunded(orderId: UUID): Promise<ServiceResult<Order>>;
 }
 
 class MockOrdersService implements OrdersService {
   async listOrders(companyId: UUID): Promise<ServiceResult<Order[]>> {
     await delay(250);
     return ok(allOrders().filter((o) => o.companyId === companyId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
+  }
+
+  async listAllOrders(): Promise<ServiceResult<Order[]>> {
+    await delay(250);
+    return ok(allOrders().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
   }
 
   async getOrder(id: UUID): Promise<ServiceResult<Order>> {
@@ -273,6 +285,16 @@ class MockOrdersService implements OrdersService {
     const updated: Order = { ...order, status: 'DELIVERED' };
     writeOverride(ORDER_OVERRIDE_KEY, updated);
     addTimelineEvent(orderId, 'DELIVERED', 'Delivered');
+    return ok(updated);
+  }
+
+  async markRefunded(orderId: UUID): Promise<ServiceResult<Order>> {
+    await delay(200);
+    const order = allOrders().find((o) => o.id === orderId);
+    if (!order) return fail('NOT_FOUND', 'That order could not be found.');
+
+    const updated: Order = { ...order, paymentStatus: 'REFUNDED' };
+    writeOverride(ORDER_OVERRIDE_KEY, updated);
     return ok(updated);
   }
 }

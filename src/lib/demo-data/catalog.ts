@@ -16,6 +16,7 @@ export const demoWarehouses: Warehouse[] = [
   { id: 'wh-aie-accra', supplierId: 'supplier-aie', name: 'Accra Warehouse', city: 'Accra', isDefault: true },
   { id: 'wh-aie-kumasi', supplierId: 'supplier-aie', name: 'Kumasi Warehouse', city: 'Kumasi' },
   { id: 'wh-wae-lagos', supplierId: 'supplier-wae', name: 'Lagos Warehouse', city: 'Lagos', isDefault: true },
+  { id: 'wh-kpp-kumasi', supplierId: 'supplier-kpp', name: 'Kumasi Warehouse', city: 'Kumasi', isDefault: true },
 ];
 
 export const demoSuppliers: SupplierProfile[] = [
@@ -83,6 +84,24 @@ export const demoSuppliers: SupplierProfile[] = [
     certifications: [],
     description: 'Regional distributor of servers, power systems, and enterprise electronics.',
   },
+  {
+    id: 'supplier-kpp',
+    companyId: 'supplier-company-kpp',
+    name: 'Kumasi Print & Pack',
+    slug: 'kumasi-print-and-pack',
+    categories: ['Office Equipment'],
+    city: 'Kumasi',
+    country: 'Ghana',
+    // Newly registered - awaiting the platform admin's verification review (section 46) before
+    // it can be invited to RFQs or appear as a "verified" badge in the supplier directory.
+    verification: 'PENDING_VERIFICATION',
+    rating: 0,
+    reviewCount: 0,
+    responseTimeHours: 12,
+    completedOrders: 0,
+    certifications: [],
+    description: 'Commercial printing, packaging materials, and branded stationery for Ashanti-region businesses.',
+  },
 ];
 
 export const demoProducts: Product[] = [
@@ -94,6 +113,7 @@ export const demoProducts: Product[] = [
     sku: 'C9200L-24P',
     supplierId: 'supplier-abc',
     categoryId: 'cat-networking',
+    moderationStatus: 'PUBLISHED',
     images: ['https://images.pexels.com/photos/2881227/pexels-photo-2881227.jpeg'],
     description: '24-port managed Ethernet switch with PoE+, built for reliable enterprise and campus networks.',
     specifications: [
@@ -125,6 +145,7 @@ export const demoProducts: Product[] = [
     sku: 'HP-PB450-G10',
     supplierId: 'supplier-abc',
     categoryId: 'cat-computing',
+    moderationStatus: 'PUBLISHED',
     images: ['https://images.pexels.com/photos/10655906/pexels-photo-10655906.jpeg'],
     description: '14" business laptop with Intel Core i5, 16GB RAM, and a 3-year onsite warranty.',
     specifications: [
@@ -155,6 +176,7 @@ export const demoProducts: Product[] = [
     sku: 'PE-R650-BASE',
     supplierId: 'supplier-wae',
     categoryId: 'cat-computing',
+    moderationStatus: 'PUBLISHED',
     images: ['https://images.pexels.com/photos/4508751/pexels-photo-4508751.jpeg'],
     description: '1U rack server for demanding virtualization and database workloads.',
     specifications: [
@@ -185,6 +207,7 @@ export const demoProducts: Product[] = [
     sku: 'CAT6-305M-BLU',
     supplierId: 'supplier-abc',
     categoryId: 'cat-networking',
+    moderationStatus: 'PUBLISHED',
     images: ['https://images.pexels.com/photos/415043/pexels-photo-415043.jpeg'],
     description: '305m box of solid-core CAT6 UTP cable for structured cabling installations.',
     specifications: [
@@ -215,6 +238,7 @@ export const demoProducts: Product[] = [
     sku: 'APC-SMT1500',
     supplierId: 'supplier-wae',
     categoryId: 'cat-networking',
+    moderationStatus: 'PUBLISHED',
     images: ['https://images.pexels.com/photos/37929911/pexels-photo-37929911.jpeg'],
     description: '1500VA line-interactive UPS for servers and network equipment, built for frequent outages.',
     specifications: [
@@ -245,6 +269,7 @@ export const demoProducts: Product[] = [
     sku: 'PF-DESK-140',
     supplierId: 'supplier-prime',
     categoryId: 'cat-office-furniture',
+    moderationStatus: 'PUBLISHED',
     images: ['https://images.pexels.com/photos/1957477/pexels-photo-1957477.jpeg'],
     description: '140cm office desk with cable management, in a durable laminate finish.',
     specifications: [
@@ -275,6 +300,7 @@ export const demoProducts: Product[] = [
     sku: 'PF-CHAIR-ERG2',
     supplierId: 'supplier-prime',
     categoryId: 'cat-office-furniture',
+    moderationStatus: 'PUBLISHED',
     images: ['https://images.pexels.com/photos/31236091/pexels-photo-31236091.jpeg'],
     description: 'Ergonomic mesh-back office chair with adjustable lumbar support and armrests.',
     specifications: [
@@ -305,6 +331,7 @@ export const demoProducts: Product[] = [
     sku: 'CUM-GEN-60KVA',
     supplierId: 'supplier-aie',
     categoryId: 'cat-industrial',
+    moderationStatus: 'PUBLISHED',
     images: ['https://images.pexels.com/photos/32713414/pexels-photo-32713414.jpeg'],
     description: '60kVA diesel generator with automatic transfer switch, for continuous site power.',
     specifications: [
@@ -337,6 +364,7 @@ export const demoProducts: Product[] = [
     sku: 'SG-KIT-STD',
     supplierId: 'supplier-aie',
     categoryId: 'cat-industrial',
+    moderationStatus: 'PUBLISHED',
     images: ['https://images.pexels.com/photos/38070/pexels-photo-38070.jpeg'],
     description: 'Standard site safety kit: hard hat, gloves, safety glasses, and hi-vis vest, per worker.',
     specifications: [
@@ -367,6 +395,7 @@ export const demoProducts: Product[] = [
     sku: 'CAN-MF275DW',
     supplierId: 'supplier-prime',
     categoryId: 'cat-office-equipment',
+    moderationStatus: 'PUBLISHED',
     images: ['https://images.pexels.com/photos/4792283/pexels-photo-4792283.jpeg'],
     description: 'Wireless all-in-one laser printer with duplex printing, scan, and fax.',
     specifications: [
@@ -388,5 +417,32 @@ export const demoProducts: Product[] = [
     rating: 4.1,
     reviewCount: 33,
     createdAt: '2025-10-28T09:00:00Z',
+  },
+  {
+    id: 'prod-branded-notebooks',
+    slug: 'branded-notebooks',
+    name: 'Branded Notebooks (500-pack)',
+    brand: 'Kumasi Print & Pack',
+    sku: 'KPP-NB-500',
+    supplierId: 'supplier-kpp',
+    categoryId: 'cat-office-equipment',
+    // Awaiting admin review (section 46) - excluded from the buyer catalog until published.
+    moderationStatus: 'PENDING_REVIEW',
+    images: ['https://images.pexels.com/photos/6690918/pexels-photo-6690918.jpeg'],
+    description: 'A5 hardcover notebooks with custom cover printing, sold in packs of 500.',
+    specifications: [
+      { label: 'Size', value: 'A5, 80 pages' },
+      { label: 'Printing', value: 'Full-colour cover, one side' },
+      { label: 'Lead time', value: '10 business days' },
+      { label: 'Country of origin', value: 'Ghana' },
+    ],
+    currency: 'GHS',
+    basePrice: 4500,
+    priceTiers: [{ minQty: 1, unitPrice: 4500 }],
+    moq: 1,
+    inventory: [{ warehouseId: 'wh-kpp-kumasi', stock: 20, reserved: 0, lowStockThreshold: 5 }],
+    rating: 0,
+    reviewCount: 0,
+    createdAt: '2026-09-10T09:00:00Z',
   },
 ];

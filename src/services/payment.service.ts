@@ -41,6 +41,8 @@ export interface ChargeInput {
 
 export interface PaymentService {
   listPayments(companyId: UUID): Promise<ServiceResult<Payment[]>>;
+  /** Every payment across every company - the platform admin overview (section 46). */
+  listAllPayments(): Promise<ServiceResult<Payment[]>>;
   /** Payments a supplier has received (section 44) - the supplier-workspace counterpart to
    *  `listPayments`, which is keyed by the *buyer's* company id instead. */
   listPaymentsForSupplier(supplierId: UUID): Promise<ServiceResult<Payment[]>>;
@@ -56,6 +58,11 @@ class MockPaymentService implements PaymentService {
   async listPaymentsForSupplier(supplierId: UUID): Promise<ServiceResult<Payment[]>> {
     await delay(200);
     return ok(readPayments().filter((p) => p.supplierId === supplierId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
+  }
+
+  async listAllPayments(): Promise<ServiceResult<Payment[]>> {
+    await delay(200);
+    return ok(readPayments().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
   }
 
   async charge(input: ChargeInput): Promise<ServiceResult<Payment>> {

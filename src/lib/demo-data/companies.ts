@@ -52,6 +52,19 @@ export const demoUsers: User[] = [
     email: 'chidi.okafor@waelectronics.example',
     createdAt: '2024-08-10T09:00:00Z',
   },
+  {
+    id: 'user-efua-asante',
+    name: 'Efua Asante',
+    email: 'efua.asante@kumasiprint.example',
+    createdAt: '2026-09-01T09:00:00Z',
+  },
+  // Platform-side user (Phase 6) - runs the marketplace itself, not a buyer or supplier company.
+  {
+    id: 'user-grace-owusu',
+    name: 'Grace Owusu',
+    email: 'grace.owusu@platform.example',
+    createdAt: '2024-01-01T09:00:00Z',
+  },
 ];
 
 export const demoCompanyGroups: CompanyGroup[] = [
@@ -205,6 +218,35 @@ export const demoCompanies: Company[] = [
     isSupplier: true,
     createdAt: '2024-08-10T09:00:00Z',
   },
+  {
+    id: 'supplier-company-kpp',
+    name: 'Kumasi Print & Pack',
+    legalName: 'Kumasi Print & Pack Ltd.',
+    country: 'GH',
+    currency: 'GHS',
+    taxId: 'GH-TIN-024417',
+    addresses: [
+      { id: 'addr-kpp-kumasi', label: 'Kumasi Warehouse', line1: '31 Prempeh II Street', city: 'Kumasi', country: 'GH', isDefault: true },
+    ],
+    creditTerms: 'PREPAID',
+    isBuyer: false,
+    isSupplier: true,
+    createdAt: '2026-09-01T09:00:00Z',
+  },
+  // Platform operator (Phase 6) - neither a buyer nor a supplier tenant; exists only so a
+  // PLATFORM_ADMIN session has a CompanyUser membership to resolve, the same as every other
+  // role. Never shown in the company switcher or any buyer/supplier-facing list.
+  {
+    id: 'platform-hq',
+    name: 'Marketplace Platform',
+    country: 'GH',
+    currency: 'GHS',
+    addresses: [],
+    creditTerms: 'PREPAID',
+    isBuyer: false,
+    isSupplier: false,
+    createdAt: '2024-01-01T09:00:00Z',
+  },
 ];
 
 export const demoCompanyUsers: CompanyUser[] = [
@@ -218,4 +260,7 @@ export const demoCompanyUsers: CompanyUser[] = [
   { id: 'cu-7', companyId: 'supplier-company-prime', userId: 'user-kofi-boateng', role: Role.SUPPLIER_ADMIN, department: 'Sales', status: 'ACTIVE', joinedAt: '2024-07-15T09:00:00Z' },
   { id: 'cu-8', companyId: 'supplier-company-aie', userId: 'user-yaw-darko', role: Role.SUPPLIER_ADMIN, department: 'Sales', status: 'ACTIVE', joinedAt: '2024-05-20T09:00:00Z' },
   { id: 'cu-9', companyId: 'supplier-company-wae', userId: 'user-chidi-okafor', role: Role.SUPPLIER_ADMIN, department: 'Sales', status: 'ACTIVE', joinedAt: '2024-08-10T09:00:00Z' },
+  { id: 'cu-10', companyId: 'supplier-company-kpp', userId: 'user-efua-asante', role: Role.SUPPLIER_ADMIN, department: 'Sales', status: 'ACTIVE', joinedAt: '2026-09-01T09:00:00Z' },
+  // Platform-side membership (Phase 6).
+  { id: 'cu-11', companyId: 'platform-hq', userId: 'user-grace-owusu', role: Role.PLATFORM_ADMIN, status: 'ACTIVE', joinedAt: '2024-01-01T09:00:00Z' },
 ];
