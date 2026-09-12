@@ -117,6 +117,9 @@ export interface PurchaseRequest {
   requesterUserId: UUID;
   requesterName: string;
   department?: string;
+  /** Which cost center absorbs this spend (section 10.3/11.3) - optional so existing requests
+   *  and companies that haven't set up cost centers aren't forced to pick one. */
+  costCenterId?: UUID;
   items: PurchaseRequestItem[];
   totalAmount: number;
   reason: string;
@@ -143,6 +146,11 @@ export interface PurchaseOrder {
   supplierId: UUID;
   supplierName: string;
   purchaseRequestId?: UUID;
+  /** Carried over from the originating purchase request (section 10.2/10.3), when there was
+   *  one - lets department/cost-center spend analytics trace all the way through to the order
+   *  it eventually produced, not just the request that was submitted. */
+  department?: string;
+  costCenterId?: UUID;
   items: PurchaseOrderItem[];
   subtotal: number;
   tax: number;

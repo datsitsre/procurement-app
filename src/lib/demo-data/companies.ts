@@ -80,9 +80,15 @@ export const demoCompanies: Company[] = [
     id: 'company-acme-gh',
     name: 'Acme Technologies Ghana',
     legalName: 'Acme Technologies Ghana Ltd.',
+    registrationNumber: 'GH-CR-102934',
+    taxId: 'GH-TIN-004821',
+    industry: 'Information Technology',
+    website: 'https://acmetech.example',
+    phone: '+233 30 123 4567',
+    email: 'procurement@acmetech.example',
+    description: 'IT hardware and networking reseller serving businesses across Ghana.',
     country: 'GH',
     currency: 'GHS',
-    taxId: 'GH-TIN-004821',
     addresses: [
       {
         id: 'addr-acme-gh-accra',

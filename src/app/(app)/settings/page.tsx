@@ -1,14 +1,17 @@
 'use client';
 
-import { useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
+import Link from 'next/link';
+import { useAuth, useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { RoleLabels } from '@/config/rbac';
+import { Button } from '@/components/ui/Button';
+import { Permission, RoleLabels } from '@/config/rbac';
 import { formatMoney } from '@/utils/format';
 
 export default function SettingsPage() {
   const workspace = useWorkspace();
   const company = useActiveCompany();
   const membership = useActiveMembership();
+  const { can } = useAuth();
 
   return (
     <div className="flex flex-col gap-6">
@@ -17,6 +20,13 @@ export default function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Company profile</CardTitle>
+          {can(Permission.SETTINGS_MANAGE) && (
+            <Link href="/settings/company">
+              <Button variant="outline" size="sm">
+                Manage company
+              </Button>
+            </Link>
+          )}
         </CardHeader>
         <CardContent>
           <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">

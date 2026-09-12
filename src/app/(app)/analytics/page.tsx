@@ -76,6 +76,23 @@ function BuyerAnalyticsView() {
             </div>
           </div>
 
+          {(data.spendByDepartment.length > 0 || data.spendByCostCenter.length > 0) && (
+            <div className="grid gap-6 lg:grid-cols-2">
+              {data.spendByDepartment.length > 0 && (
+                <div className="rounded-lg border border-border bg-surface p-5">
+                  <p className="mb-4 text-h3">Spend by department</p>
+                  <HorizontalBarList items={data.spendByDepartment} valueFormatter={(v) => formatMoney(v, company?.currency)} />
+                </div>
+              )}
+              {data.spendByCostCenter.length > 0 && (
+                <div className="rounded-lg border border-border bg-surface p-5">
+                  <p className="mb-4 text-h3">Spend by cost center</p>
+                  <HorizontalBarList items={data.spendByCostCenter} valueFormatter={(v) => formatMoney(v, company?.currency)} />
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="rounded-lg border border-border bg-surface p-5">
             <p className="mb-4 text-h3">Orders by status</p>
             <div className="flex flex-wrap gap-3">

@@ -3,6 +3,7 @@ import { ordersService } from './orders.service';
 import { catalogService } from './catalog.service';
 import { procurementService } from './procurement.service';
 import { disputesService } from './disputes.service';
+import { companyService } from './company.service';
 import { allCompanies } from './auth.service';
 import type { ServiceResult, UUID } from '@/types/common';
 import type { Order } from '@/types/orders';
@@ -62,6 +63,12 @@ function statusBreakdown(orders: Order[]): OrderStatusBreakdown[] {
 export interface BuyerAnalytics {
   monthlySpend: ChartPoint[];
   spendBySupplier: ChartPoint[];
+  /** Spend bucketed by the requester's department at the time of the purchase request
+   *  (section 10.2/23) - only orders that trace back to a purchase request carry a
+   *  department, so an order placed by direct RFQ-acceptance has no department to bucket into. */
+  spendByDepartment: ChartPoint[];
+  /** Spend bucketed by cost center (section 10.3/23) - same caveat as spendByDepartment. */
+  spendByCostCenter: ChartPoint[];
   ordersByStatus: OrderStatusBreakdown[];
   estimatedSavings: number;
   totalOrders: number;
@@ -101,8 +108,19 @@ class MockAnalyticsService implements AnalyticsService {
     const paidOrders = orders.filter((o) => o.paymentStatus === 'PAID');
 
     const spendBySupplierMap = new Map<string, number>();
+    const spendByDepartmentMap = new Map<string, number>();
+    const spendByCostCenterMap = new Map<string, number>();
+    const costCentersResult = await companyService.listCostCenters(companyId);
+    const costCenters = costCentersResult.ok ? costCentersResult.data : [];
     for (const order of paidOrders) {
       spendBySupplierMap.set(order.supplierName, (spendBySupplierMap.get(order.supplierName) ?? 0) + order.total);
+      if (order.department) {
+        spendByDepartmentMap.set(order.department, (spendByDepartmentMap.get(order.department) ?? 0) + order.total);
+      }
+      if (order.costCenterId) {
+        const label = costCenters.find((c) => c.id === order.costCenterId)?.code ?? order.costCenterId;
+        spendByCostCenterMap.set(label, (spendByCostCenterMap.get(label) ?? 0) + order.total);
+      }
     }
 
     // Fetched in parallel rather than one `await` per line item in sequence - with the mock
@@ -121,6 +139,8 @@ class MockAnalyticsService implements AnalyticsService {
     return ok({
       monthlySpend: bucketByMonth(paidOrders, (o) => o.total),
       spendBySupplier: topN(spendBySupplierMap, 5),
+      spendByDepartment: topN(spendByDepartmentMap, 10),
+      spendByCostCenter: topN(spendByCostCenterMap, 10),
       ordersByStatus: statusBreakdown(orders),
       estimatedSavings: Math.round(estimatedSavings),
       totalOrders: orders.length,

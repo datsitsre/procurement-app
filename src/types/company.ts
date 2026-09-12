@@ -9,9 +9,17 @@ export interface Company {
   id: UUID;
   name: string;
   legalName?: string;
+  /** Official company registration number (section 10) - distinct from `taxId`, since a
+   *  company registers with a corporate registry and separately registers for tax. */
+  registrationNumber?: string;
+  taxId?: string;
+  industry?: string;
+  website?: string;
+  phone?: string;
+  email?: string;
+  description?: string;
   country: CountryCode;
   currency: CurrencyCode;
-  taxId?: string;
   logoUrl?: string;
   addresses: Address[];
   creditTerms: CreditTerm;
@@ -22,6 +30,48 @@ export interface Company {
   /** Companies operating under the same parent group, for the company switcher (section 10). */
   parentGroupId?: UUID;
   createdAt: ISODateTime;
+}
+
+/**
+ * A physical location a company operates from (section 10.1) - richer than a plain `Address`:
+ * it names who's based there, whether it doubles as a warehouse, and which cost center absorbs
+ * its running costs. Deliberately layered on top of `Address` (via `addressId`) rather than
+ * replacing it - checkout, purchase orders, and every other existing address picker keep
+ * reading `Company.addresses` exactly as before; a Branch is what Company Settings shows on top
+ * of that same list, not a second, competing source of truth for "where is this company".
+ */
+export interface Branch {
+  id: UUID;
+  companyId: UUID;
+  name: string;
+  addressId: UUID;
+  contactName?: string;
+  contactPhone?: string;
+  costCenterId?: UUID;
+  isWarehouse: boolean;
+  isHeadOffice?: boolean;
+  createdAt: ISODateTime;
+}
+
+/** A named department a company organizes its people into (section 10.2) - the source of truth
+ *  the free-text `CompanyUser.department` label is drawn from, so Company Settings can show a
+ *  managed department list instead of departments existing only as whatever string someone
+ *  typed on the last invite form. */
+export interface Department {
+  id: UUID;
+  companyId: UUID;
+  name: string;
+}
+
+/** A budget/reporting bucket purchase requests can be tagged with (section 10.3) - e.g.
+ *  "IT-001". Deliberately holds no budget figures itself; Phase 11's procurement budgets are
+ *  the thing that tracks spend against a cost center, this is just the label. */
+export interface CostCenter {
+  id: UUID;
+  companyId: UUID;
+  code: string;
+  name: string;
+  departmentId?: UUID;
 }
 
 /** A named group of related companies (e.g. "Acme Technologies") shown in the switcher. */

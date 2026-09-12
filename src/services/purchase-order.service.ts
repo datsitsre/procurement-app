@@ -158,6 +158,8 @@ class MockPurchaseOrderService implements PurchaseOrderService {
         supplierId,
         supplierName: items[0].supplierName,
         purchaseRequestId: pr.id,
+        department: pr.department,
+        costCenterId: pr.costCenterId,
         items: items.map((i) => ({ id: newId('poi'), productId: i.productId, productName: i.productName, quantity: i.quantity, unitPrice: i.unitPrice })),
         subtotal,
         tax,

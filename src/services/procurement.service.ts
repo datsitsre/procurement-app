@@ -116,6 +116,7 @@ export interface CreatePurchaseRequestInput {
   requesterUserId: UUID;
   requesterName: string;
   department?: string;
+  costCenterId?: UUID;
   items: PurchaseRequestItem[];
   reason: string;
 }
@@ -412,6 +413,7 @@ class MockProcurementService implements ProcurementService {
       requesterUserId: input.requesterUserId,
       requesterName: input.requesterName,
       department: input.department,
+      costCenterId: input.costCenterId,
       items: input.items,
       totalAmount,
       reason: input.reason,

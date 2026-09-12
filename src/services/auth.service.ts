@@ -89,12 +89,40 @@ function writeRuntimeData(data: RuntimeData) {
   window.localStorage.setItem(RUNTIME_DATA_STORAGE_KEY, JSON.stringify(data));
 }
 
-/** Merges the static demo seed data with anything created at runtime (e.g. via registration).
- *  Exported so other mock services (company.service.ts, etc.) read the same merged view
- *  instead of only the static seed arrays - otherwise a newly registered company's own data
- *  would be invisible to every service except this one. */
+const COMPANY_OVERRIDE_KEY = 'procurement.company-profile-overrides.v1';
+
+/** Overrides keyed by company id - lets company.service.ts's profile editor (section 10) edit
+ *  a *seeded* demo company in place, the same seed+override pattern every other mutable mock
+ *  resource in this app uses, rather than needing a company to have been runtime-registered
+ *  before its profile fields could ever change. */
+function readCompanyOverrides(): Record<UUID, Partial<Company>> {
+  if (typeof window === 'undefined') return {};
+  const raw = window.localStorage.getItem(COMPANY_OVERRIDE_KEY);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<UUID, Partial<Company>>;
+  } catch {
+    return {};
+  }
+}
+
+/** Applies a partial company-profile update - exported so company.service.ts can edit a
+ *  company's profile without duplicating this module's storage/merge logic. */
+export function writeCompanyProfileOverride(companyId: UUID, patch: Partial<Company>) {
+  if (typeof window === 'undefined') return;
+  const store = readCompanyOverrides();
+  store[companyId] = { ...store[companyId], ...patch };
+  window.localStorage.setItem(COMPANY_OVERRIDE_KEY, JSON.stringify(store));
+}
+
+/** Merges the static demo seed data with anything created at runtime (e.g. via registration)
+ *  and any profile edits made since. Exported so other mock services (company.service.ts,
+ *  etc.) read the same merged view instead of only the static seed arrays - otherwise a newly
+ *  registered company's own data (or an edited profile) would be invisible to every service
+ *  except this one. */
 export function allCompanies(): Company[] {
-  return [...demoCompanies, ...readRuntimeData().companies];
+  const overrides = readCompanyOverrides();
+  return [...demoCompanies, ...readRuntimeData().companies].map((c) => (overrides[c.id] ? { ...c, ...overrides[c.id] } : c));
 }
 
 export function allUsers(): User[] {

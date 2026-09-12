@@ -182,6 +182,8 @@ class MockOrdersService implements OrdersService {
       supplierId: po.supplierId,
       supplierName: po.supplierName,
       purchaseOrderId: po.id,
+      department: po.department,
+      costCenterId: po.costCenterId,
       items: po.items.map((i) => ({ id: newId('oi'), productId: i.productId, productName: i.productName, quantity: i.quantity, unitPrice: i.unitPrice })),
       subtotal: po.subtotal,
       tax: po.tax,

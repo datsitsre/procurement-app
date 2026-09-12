@@ -6,8 +6,11 @@ import Link from 'next/link';
 import { Minus, Plus, ShoppingCart, Trash2 } from 'lucide-react';
 import { useCart, type CartLine } from '@/hooks/useCart';
 import { useAuth, useActiveCompany, useActiveMembership } from '@/hooks/useAuth';
+import { useAsyncData } from '@/hooks/useAsyncData';
 import { catalogService } from '@/services/catalog.service';
 import { procurementService } from '@/services/procurement.service';
+import { companyService } from '@/services/company.service';
+import type { CostCenter } from '@/types/company';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -22,9 +25,12 @@ export default function CartPage() {
   const { loading, lines, subtotal, setQuantity, removeItem, clear } = useCart();
   const company = useActiveCompany();
   const membership = useActiveMembership();
+  const companyId = company?.id ?? null;
+  const { data: costCenters } = useAsyncData<CostCenter[]>(companyId, () => companyService.listCostCenters(companyId!));
   const [message, setMessage] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
+  const [costCenterId, setCostCenterId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [showReasonPrompt, setShowReasonPrompt] = useState(false);
 
@@ -78,6 +84,7 @@ export default function CartPage() {
         requesterUserId: session.user.id,
         requesterName: session.user.name,
         department: membership.department,
+        costCenterId: costCenterId || undefined,
         items,
         reason: reason.trim(),
       },
@@ -221,6 +228,26 @@ export default function CartPage() {
                 placeholder="e.g. Network infrastructure upgrade"
                 className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               />
+              {costCenters && costCenters.length > 0 && (
+                <>
+                  <label htmlFor="cost-center" className="text-sm font-medium">
+                    Cost center (optional)
+                  </label>
+                  <select
+                    id="cost-center"
+                    value={costCenterId}
+                    onChange={(e) => setCostCenterId(e.target.value)}
+                    className="h-9 rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  >
+                    <option value="">No cost center</option>
+                    {costCenters.map((cc) => (
+                      <option key={cc.id} value={cc.id}>
+                        {cc.code} · {cc.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              )}
               <Button onClick={handleSubmitRequest} loading={submitting} className="w-full">
                 Submit for approval
               </Button>

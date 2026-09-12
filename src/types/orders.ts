@@ -16,6 +16,11 @@ export interface Order {
   supplierId: UUID;
   supplierName: string;
   purchaseOrderId?: UUID;
+  /** Carried over from the originating purchase order/request, when there was one (section
+   *  10.2/10.3) - lets buyer analytics break spend down by department and cost center using
+   *  real order data, not just purchase-request counts. */
+  department?: string;
+  costCenterId?: UUID;
   items: OrderItem[];
   subtotal: number;
   tax: number;
