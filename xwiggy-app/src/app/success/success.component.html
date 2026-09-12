@@ -1,0 +1,30 @@
+<div class="dash">
+  <aside class="dash-nav">
+    <div class="dash-nav-mark">SpringFood</div>
+    <nav>
+      <a routerLink="/menu">Menu</a>
+      <a routerLink="/myOrders">My orders</a>
+      <a routerLink="/contactUs">Contact us</a>
+      <a routerLink="/home" (click)="clearLocal()">Log out</a>
+    </nav>
+  </aside>
+
+  <main class="dash-main">
+    <div class="success-card">
+      <div class="success-icon"><i class="fa fa-check"></i></div>
+      <h1>Your order is on its way</h1>
+      <div class="sub">payment successful</div>
+
+      <div class="order-recap" *ngIf="!loading && order">
+        <span>Order #{{order.id}} · {{itemCount}} item{{itemCount===1 ? '' : 's'}}</span>
+        <span class="price">{{order.total}}</span>
+      </div>
+
+      <div class="btn-row center">
+        <button class="btn btn-ghost" routerLink="/contactUs">Contact us</button>
+        <button class="btn btn-ghost" *ngIf="order" [routerLink]="['/myOrders', order.id]">Track order</button>
+        <button class="btn btn-accent" routerLink="/menu">Back to menu</button>
+      </div>
+    </div>
+  </main>
+</div>

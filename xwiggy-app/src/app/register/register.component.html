@@ -1,0 +1,127 @@
+<div class="auth">
+  <div class="auth-mark">SpringFood</div>
+
+  <div class="auth-card wide">
+    <h1>Register</h1>
+    <div class="sub">create an account to start ordering</div>
+
+    <div *ngIf="message" class="notice error" role="alert">{{message}}</div>
+    <div *ngIf="present" class="notice error" role="alert">Username already taken</div>
+    <div *ngIf="present==false" class="notice success">Username available</div>
+
+    <form name="form" #f="ngForm" (ngSubmit)="emailValidation&&phoneValidation&&passwordValidation&&f.form.valid && registerUser()" novalidate>
+      <div class="field">
+        <label for="username">Username</label>
+        <div class="field-row">
+          <input type="text"
+                 id="username"
+                 name="username"
+                 placeholder="your username"
+                 [(ngModel)]="model.username"
+                 #username="ngModel"
+                 [class.is-invalid]="f.submitted && username.invalid"
+                 required/>
+          <button type="button" class="btn btn-ghost check-btn" (click)="usernamePresent()" [disabled]="checkingUsername" title="Check availability">{{checkingUsername ? 'Checking…' : 'Check'}}</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="password">Password</label>
+        <input (keyup)="passwordStrength()" type="password"
+               id="password"
+               name="password"
+               placeholder="your password"
+               [(ngModel)]="model.password"
+               #password="ngModel"
+               minlength="8"
+               maxlength="16"
+               [class.is-invalid]="f.submitted && password.invalid"
+               required/>
+        <div *ngIf="!passwordValidation" class="hint">At least 8 characters, with an uppercase letter, a number and a special character</div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="firstname">First name</label>
+          <input type="text"
+                 id="firstname"
+                 name="firstname"
+                 placeholder="first name"
+                 [(ngModel)]="model.firstname"
+                 #firstname="ngModel"
+                 [class.is-invalid]="f.submitted && firstname.invalid"
+                 required/>
+        </div>
+        <div class="field">
+          <label for="lastname">Last name</label>
+          <input type="text"
+                 id="lastname"
+                 name="lastname"
+                 placeholder="last name"
+                 [(ngModel)]="model.lastname"
+                 #lastname="ngModel"
+                 [class.is-invalid]="f.submitted && lastname.invalid"
+                 required/>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="email">Email</label>
+        <input (keyup)="checkEmail()"
+               type="text"
+               id="email"
+               name="email"
+               placeholder="you@example.com"
+               [(ngModel)]="model.email"
+               #email="ngModel"
+               [class.is-invalid]="f.submitted && email.invalid"
+               required/>
+        <div *ngIf="!emailValidation" class="hint">Enter a valid email address</div>
+      </div>
+
+      <div class="field">
+        <label for="address">Address</label>
+        <input type="text"
+               id="address"
+               name="address"
+               placeholder="delivery address"
+               [(ngModel)]="model.address"
+               #address="ngModel"
+               [class.is-invalid]="f.submitted && address.invalid"
+               required/>
+      </div>
+
+      <div class="field">
+        <label for="phone">Phone</label>
+        <input (keyup)="checkPhone()"
+               class="num"
+               type="text"
+               id="phone"
+               name="phone"
+               placeholder="10-digit number"
+               [(ngModel)]="model.phone"
+               #phone="ngModel"
+               maxlength="10"
+               minlength="10"
+               [class.is-invalid]="f.submitted && phone.invalid"
+               required/>
+        <div *ngIf="!phoneValidation" class="hint">Enter a valid phone number</div>
+      </div>
+
+      <div class="field">
+        <label for="options">Account type</label>
+        <select [(ngModel)]="options" name="options" id="options">
+          <option>User</option>
+          <option>Merchant</option>
+        </select>
+      </div>
+
+      <div class="btn-row">
+        <button type="submit" class="btn btn-accent" [disabled]="loading">{{loading ? 'Registering…' : 'Register'}}</button>
+        <button type="button" class="btn btn-ghost" [disabled]="loading" routerLink="/home">Home</button>
+      </div>
+    </form>
+
+    <a class="back-link" routerLink="/login">Already have an account? Log in</a>
+  </div>
+</div>

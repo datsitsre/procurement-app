@@ -1,0 +1,49 @@
+<div class="auth">
+  <div class="auth-mark">SpringFood</div>
+
+  <div class="auth-card">
+    <h1>Log in</h1>
+    <div class="sub">welcome back - grab a bite</div>
+
+    <div *ngIf="message" class="notice error" role="alert">{{message}}</div>
+
+    <form name="form" #f="ngForm" (ngSubmit)="f.form.valid && sendFeedback()" novalidate>
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text"
+               id="username"
+               name="username"
+               placeholder="username"
+               [(ngModel)]="model.username"
+               #username="ngModel"
+               [class.is-invalid]="f.submitted && username.invalid"
+               required/>
+        <div *ngIf="f.submitted && username.invalid" class="hint">
+          <span *ngIf="username.errors?.required">Username is required</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password"
+               id="password"
+               name="password"
+               placeholder="password"
+               [(ngModel)]="model.password"
+               #password="ngModel"
+               [class.is-invalid]="f.submitted && password.invalid"
+               required/>
+        <div *ngIf="f.submitted && password.invalid" class="hint">
+          <span *ngIf="password.errors?.required">Password is required</span>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button type="submit" class="btn btn-accent" [disabled]="loading">{{loading ? 'Logging in…' : 'Log in'}}</button>
+        <button type="button" class="btn btn-ghost" [disabled]="loading" routerLink="/register">Register</button>
+      </div>
+    </form>
+
+    <a class="back-link" routerLink="/home">← Back to home</a>
+  </div>
+</div>

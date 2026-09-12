@@ -1,0 +1,466 @@
+/* ============================================================
+   SpringFood design system — "The Counter"
+   A neighbourhood snack counter, not a delivery unicorn: order
+   tickets, chalkboard signage, register-tape numerals. See each
+   component's stylesheet for page-specific layout.
+   ============================================================ */
+
+@import url('../node_modules/font-awesome/css/font-awesome.css');
+
+:root {
+  --ink: #24312a;
+  --ink-soft: #3c4c43;
+  --paper: #f3ecd8;
+  --paper-card: #faf6ea;
+  --turmeric: #e3a72e;
+  --turmeric-dark: #b9821b;
+  --brick: #a23e2e;
+  --sage: #5d7d57;
+  --line: #cbbe97;
+
+  --font-display: 'Fraunces', ui-serif, Georgia, serif;
+  --font-body: 'Work Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-num: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 0.5em;
+  letter-spacing: -0.01em;
+}
+
+h1 { font-size: clamp(1.6rem, 3vw, 2.4rem); }
+h2 { font-size: 1.35rem; font-weight: 600; }
+
+a { color: inherit; }
+
+img { max-width: 100%; }
+
+/* ---------- page shell ---------- */
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 20px 64px;
+}
+
+.site-band {
+  width: 100%;
+  background: var(--ink);
+  color: var(--paper);
+  text-align: center;
+  padding: 28px 20px 22px;
+  margin-bottom: 40px;
+}
+
+.site-band .mark {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.9rem;
+  letter-spacing: -0.01em;
+}
+
+.site-band .tagline {
+  font-family: var(--font-num);
+  font-size: 0.78rem;
+  color: var(--turmeric);
+  margin-top: 6px;
+}
+
+.page-heading {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.page-heading h1 { margin-bottom: 4px; }
+
+.page-heading .sub {
+  font-family: var(--font-num);
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+/* ---------- ticket surface (the signature move) ---------- */
+
+.ticket {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  background: var(--paper-card);
+  border: 1px solid var(--line);
+  border-top: none;
+  padding: 36px 32px 32px;
+}
+
+.ticket.wide { max-width: 640px; }
+
+.ticket::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 14px;
+  background-image:
+    linear-gradient(135deg, var(--paper-card) 50%, transparent 50%),
+    linear-gradient(45deg, var(--paper-card) 50%, transparent 50%);
+  background-size: 18px 18px;
+  background-position: top left, top left;
+  background-repeat: repeat-x;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+
+.ticket .punch {
+  position: absolute;
+  top: 18px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+
+.ticket .punch.left { left: -6px; }
+.ticket .punch.right { right: -6px; }
+
+.rule {
+  border: none;
+  border-top: 1px dashed var(--line);
+  margin: 20px 0;
+}
+
+/* ---------- form fields ---------- */
+
+.field {
+  margin-bottom: 18px;
+}
+
+.field label {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  margin-bottom: 6px;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.field input[type='number'],
+.field input.num {
+  font-family: var(--font-num);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: var(--ink);
+}
+
+.field input.is-invalid,
+.field input.invalid {
+  border-color: var(--brick);
+}
+
+.field .hint {
+  font-size: 0.78rem;
+  color: var(--brick);
+  margin-top: 5px;
+}
+
+.field-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.field-row .field { flex: 1; margin-bottom: 0; }
+
+/* ---------- buttons ---------- */
+
+.btn {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+  color: var(--paper);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  padding: 11px 22px;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+
+.btn:hover { background: var(--ink-soft); }
+.btn:active { transform: scale(0.97); }
+
+.btn:disabled,
+.btn:disabled:hover {
+  background: var(--line);
+  border-color: var(--line);
+  color: var(--ink-soft);
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-accent {
+  background: var(--turmeric);
+  border-color: var(--turmeric);
+  color: var(--ink);
+}
+
+.btn-accent:hover { background: var(--turmeric-dark); border-color: var(--turmeric-dark); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.btn-ghost:hover { background: var(--paper-card); }
+
+.btn-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 22px;
+}
+
+.btn-row.center { justify-content: center; }
+
+/* ---------- numerals ---------- */
+
+.num { font-family: var(--font-num); }
+
+.price {
+  font-family: var(--font-num);
+  font-weight: 500;
+}
+
+.price::before { content: '₹'; opacity: 0.7; margin-right: 1px; }
+
+/* ---------- alerts / status ---------- */
+
+.notice {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--ink);
+  background: var(--paper-card);
+  padding: 12px 16px;
+  font-size: 0.88rem;
+  margin-bottom: 20px;
+}
+
+.notice.success { border-left-color: var(--sage); }
+.notice.error { border-left-color: var(--brick); color: var(--brick); }
+.notice.warning { border-left-color: var(--turmeric-dark); }
+
+/* ---------- detail rows (profile pages) ---------- */
+
+.detail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.detail-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 0.92rem;
+}
+
+.detail-list li:last-child { border-bottom: none; }
+
+.detail-list .label {
+  color: var(--ink-soft);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-list .label i { color: var(--turmeric-dark); width: 16px; text-align: center; }
+
+.detail-list .value { font-family: var(--font-num); }
+
+/* ---------- menu grid ---------- */
+
+.menu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 18px;
+  width: 100%;
+  max-width: 920px;
+}
+
+.menu-card {
+  position: relative;
+  background: var(--paper-card);
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+
+.menu-card .photo {
+  height: 150px;
+  overflow: hidden;
+  border-bottom: 1px dashed var(--line);
+}
+
+.menu-card .photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.menu-card .body {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+}
+
+.menu-card h3 {
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.menu-card .price-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+.menu-card .price-row .price {
+  font-size: 1rem;
+  color: var(--ink);
+}
+
+.menu-card .qty-row {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.menu-card .qty-row label {
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+
+.menu-card .qty-row input {
+  width: 64px;
+  font-family: var(--font-num);
+  font-size: 0.95rem;
+  text-align: center;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 6px 4px;
+}
+
+.cart-total {
+  width: 100%;
+  max-width: 920px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-top: 1px dashed var(--line);
+  margin-top: 24px;
+  padding-top: 16px;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+}
+
+.cart-total .price { font-size: 1.4rem; }
+
+/* ---------- status strip (success page) ---------- */
+
+.status-strip {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 24px 0 32px;
+}
+
+.status-strip .step {
+  display: flex;
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--sage);
+  background: var(--paper-card);
+  padding: 10px 16px;
+  font-size: 0.88rem;
+}
+
+.status-strip .step .val { font-family: var(--font-num); color: var(--ink-soft); }
+
+/* ---------- utility ---------- */
+
+.center { text-align: center; }
+.muted { color: var(--ink-soft); }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn { transition: none; }
+}
+
+/* ---------- small screens ---------- */
+
+@media (max-width: 480px) {
+  .page { padding: 0 12px 48px; }
+  .ticket, .ticket.wide { padding: 30px 18px 24px; }
+  .site-band { padding: 22px 16px 18px; margin-bottom: 28px; }
+  .site-band .mark { font-size: 1.5rem; }
+
+  /* Three cramped fields (e.g. expiry month/year + CVV) read better stacked than squeezed. */
+  .field-row { flex-direction: column; gap: 0; }
+  .field-row .field { margin-bottom: 18px; }
+
+  .btn-row { flex-direction: column; align-items: stretch; }
+  .btn-row .btn, .btn-row input[type='submit'] { width: 100%; }
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--brick);
+  outline-offset: 2px;
+}

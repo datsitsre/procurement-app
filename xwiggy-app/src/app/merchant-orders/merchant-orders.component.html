@@ -1,0 +1,117 @@
+<div class="dash">
+  <aside class="dash-nav">
+    <div class="dash-nav-mark">SpringFood</div>
+    <nav>
+      <a routerLink="/merchantMenu">Menu</a>
+      <a routerLink="/addItem">Add item</a>
+      <a class="active">Orders</a>
+      <a routerLink="/home" (click)="clearLocal()">Log out</a>
+    </nav>
+  </aside>
+
+  <main class="dash-main">
+    <div class="dash-topbar">
+      <div>
+        <h1>Orders</h1>
+        <div class="sub">accept, reject and move orders through fulfilment</div>
+      </div>
+      <input class="dash-search" type="search" placeholder="Search by order # or customer…" [(ngModel)]="searchText" name="searchText">
+    </div>
+
+    <div *ngIf="loading" class="notice" aria-live="polite">Loading orders…</div>
+
+    <div *ngIf="loadError" class="notice error" role="alert">
+      {{loadError}}
+      <div class="btn-row" style="margin-top: 10px;">
+        <button type="button" class="btn btn-ghost" (click)="getOrders()">Retry</button>
+      </div>
+    </div>
+
+    <div *ngIf="message" class="notice error" role="alert">{{message}}</div>
+
+    <ng-container *ngIf="!loading && !loadError">
+      <div class="board">
+        <div class="board-column">
+          <div class="column-head new">New orders <span class="count">{{ordersByStatus('PAID').length}}</span></div>
+          <div class="column-body">
+            <div class="order-card" *ngFor="let o of ordersByStatus('PAID')">
+              <a class="card-top" [routerLink]="['/merchantOrders', o.id]">
+                <span class="badge">{{itemCount(o)}}</span>
+                <div class="card-meta">
+                  <div class="order-id">#{{o.id}}</div>
+                  <div class="customer">{{o.username}}</div>
+                  <div class="when">{{o.orderDate | date:'short'}}</div>
+                </div>
+                <div class="card-total">₹{{o.total}}</div>
+              </a>
+              <div class="card-actions">
+                <button type="button" class="btn-ghost-sm" [disabled]="updatingId===o.id" (click)="reject(o)">Reject</button>
+                <button type="button" class="btn-accent-sm" [disabled]="updatingId===o.id" (click)="accept(o)">Accept</button>
+              </div>
+            </div>
+            <div *ngIf="ordersByStatus('PAID').length===0" class="empty">Nothing here yet.</div>
+          </div>
+        </div>
+
+        <div class="board-column">
+          <div class="column-head confirmed">Confirmed / in-process <span class="count">{{ordersByStatus('CONFIRMED').length}}</span></div>
+          <div class="column-body">
+            <div class="order-card" *ngFor="let o of ordersByStatus('CONFIRMED')">
+              <a class="card-top" [routerLink]="['/merchantOrders', o.id]">
+                <span class="badge">{{itemCount(o)}}</span>
+                <div class="card-meta">
+                  <div class="order-id">#{{o.id}}</div>
+                  <div class="customer">{{o.username}}</div>
+                  <div class="when">{{o.orderDate | date:'short'}}</div>
+                </div>
+                <div class="card-total">₹{{o.total}}</div>
+              </a>
+              <div class="card-actions">
+                <button type="button" class="btn-ghost-sm" [disabled]="updatingId===o.id" (click)="reject(o)">Reject</button>
+                <button type="button" class="btn-accent-sm" [disabled]="updatingId===o.id" (click)="markReady(o)">Mark ready</button>
+              </div>
+            </div>
+            <div *ngIf="ordersByStatus('CONFIRMED').length===0" class="empty">Nothing here yet.</div>
+          </div>
+        </div>
+
+        <div class="board-column">
+          <div class="column-head ready">Ready to dispatch <span class="count">{{ordersByStatus('READY').length}}</span></div>
+          <div class="column-body">
+            <div class="order-card" *ngFor="let o of ordersByStatus('READY')">
+              <a class="card-top" [routerLink]="['/merchantOrders', o.id]">
+                <span class="badge">{{itemCount(o)}}</span>
+                <div class="card-meta">
+                  <div class="order-id">#{{o.id}}</div>
+                  <div class="customer">{{o.username}}</div>
+                  <div class="when">{{o.orderDate | date:'short'}}</div>
+                </div>
+                <div class="card-total">₹{{o.total}}</div>
+              </a>
+              <div class="card-actions">
+                <button type="button" class="btn-accent-sm wide" [disabled]="updatingId===o.id" (click)="markDispatched(o)">Dispatch</button>
+              </div>
+            </div>
+            <div *ngIf="ordersByStatus('READY').length===0" class="empty">Nothing here yet.</div>
+          </div>
+        </div>
+
+        <div class="board-column">
+          <div class="column-head dispatched">Dispatched <span class="count">{{ordersByStatus('DISPATCHED').length}}</span></div>
+          <div class="column-body">
+            <a class="order-card card-top" *ngFor="let o of ordersByStatus('DISPATCHED')" [routerLink]="['/merchantOrders', o.id]">
+              <span class="badge">{{itemCount(o)}}</span>
+              <div class="card-meta">
+                <div class="order-id">#{{o.id}}</div>
+                <div class="customer">{{o.username}}</div>
+                <div class="when">{{o.orderDate | date:'short'}}</div>
+              </div>
+              <div class="card-total">₹{{o.total}}</div>
+            </a>
+            <div *ngIf="ordersByStatus('DISPATCHED').length===0" class="empty">Nothing here yet.</div>
+          </div>
+        </div>
+      </div>
+    </ng-container>
+  </main>
+</div>

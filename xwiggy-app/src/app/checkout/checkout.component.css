@@ -1,0 +1,144 @@
+/* Same dashboard shell (sidebar + white cards + golden accent) as the rest of the
+   authenticated app, with a single centered payment card as the main content. */
+
+:host {
+  --dash-canvas: #f6f3ee;
+  --dash-card: #ffffff;
+  --dash-text: #23262b;
+  --dash-muted: #9098a3;
+  --dash-border: #eef0f3;
+  --dash-accent: #f6a821;
+  --dash-accent-dark: #e0930f;
+  --dash-shadow: 0 10px 30px rgba(35, 38, 43, 0.06);
+  --dash-radius: 18px;
+}
+
+.dash {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 24px;
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 28px 24px 64px;
+  align-items: start;
+  background: var(--dash-canvas);
+  font-family: var(--font-body);
+  color: var(--dash-text);
+  min-height: 100vh;
+}
+
+.dash-nav {
+  position: sticky;
+  top: 28px;
+  background: var(--dash-card);
+  border-radius: var(--dash-radius);
+  box-shadow: var(--dash-shadow);
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.dash-nav-mark { font-weight: 800; font-size: 1.25rem; padding: 0 8px; }
+.dash-nav-mark::after { content: '.'; color: var(--dash-accent); }
+
+.dash-nav nav { display: flex; flex-direction: column; gap: 4px; }
+
+.dash-nav nav a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--dash-muted);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.dash-nav nav a:hover { background: #fbf5ea; color: var(--dash-text); }
+
+.dash-main {
+  display: flex;
+  justify-content: center;
+}
+
+.checkout-card {
+  width: 100%;
+  max-width: 440px;
+  background: var(--dash-card);
+  border-radius: var(--dash-radius);
+  box-shadow: var(--dash-shadow);
+  padding: 30px 30px 26px;
+}
+
+.checkout-card h1 { font-weight: 700; font-size: 1.4rem; margin-bottom: 4px; }
+.checkout-card .sub { font-size: 0.85rem; color: var(--dash-muted); margin-bottom: 20px; }
+
+.total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.95rem;
+}
+
+.total-row .price {
+  font-weight: 700;
+  font-size: 1.5rem;
+  color: var(--dash-text);
+}
+
+.rule { border: none; border-top: 1px solid var(--dash-border); margin: 18px 0 20px; }
+
+.checkout-card .notice {
+  border: none;
+  border-radius: 12px;
+  background: #fbe7e7;
+  border-left: 4px solid #d64545;
+  color: #d64545;
+  margin-bottom: 16px;
+}
+
+.checkout-card .field label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--dash-muted);
+}
+
+.checkout-card .field input {
+  border: 1px solid var(--dash-border);
+  border-radius: 10px;
+  background: #fbfbfa;
+  font-family: var(--font-body);
+}
+
+.checkout-card .field input:focus {
+  outline: none;
+  border-color: var(--dash-accent);
+  box-shadow: 0 0 0 3px rgba(246, 168, 33, 0.15);
+}
+
+.checkout-card .btn-accent {
+  background: var(--dash-accent);
+  border-color: var(--dash-accent);
+  border-radius: 12px;
+  flex: 1;
+}
+
+.checkout-card .btn-accent:hover { background: var(--dash-accent-dark); border-color: var(--dash-accent-dark); }
+
+.checkout-card .btn-ghost {
+  border-radius: 12px;
+  background: #f3f1ec;
+  border-color: transparent;
+  color: var(--dash-text);
+}
+
+.checkout-card .btn-ghost:hover { background: #ece9e2; }
+
+@media (max-width: 720px) {
+  .dash { grid-template-columns: 1fr; padding: 20px 16px 48px; }
+  .dash-nav { position: static; flex-direction: row; flex-wrap: wrap; }
+  .dash-nav nav { flex-direction: row; }
+}

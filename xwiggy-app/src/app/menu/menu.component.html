@@ -1,0 +1,138 @@
+<div class="dash">
+  <aside class="dash-nav">
+    <div class="dash-nav-mark">SpringFood</div>
+    <nav>
+      <a class="active">Menu</a>
+      <a routerLink="/myOrders">My orders</a>
+      <a routerLink="/contactUs">Contact us</a>
+      <a routerLink="/home" (click)="clearLocal()">Log out</a>
+    </nav>
+  </aside>
+
+  <main class="dash-main">
+    <div class="dash-topbar">
+      <div>
+        <h1>Hello, {{user?.firstname || 'there'}}</h1>
+        <div class="sub">what are you in the mood for today?</div>
+      </div>
+      <input class="dash-search" type="search" placeholder="Search the menu…" [(ngModel)]="searchText" name="searchText">
+    </div>
+
+    <div *ngIf="loadingMenu" class="notice" aria-live="polite">Loading the menu…</div>
+
+    <div *ngIf="loadError" class="notice error" role="alert">
+      {{loadError}}
+      <div class="btn-row" style="margin-top: 10px;">
+        <button type="button" class="btn btn-ghost" (click)="getItems()">Retry</button>
+      </div>
+    </div>
+
+    <ng-container *ngIf="!loadingMenu && !loadError">
+      <div *ngIf="message" class="notice error" role="alert">{{message}}</div>
+
+      <div class="dash-body">
+        <aside class="dash-filters">
+          <h2>Categories</h2>
+          <ul class="filter-list">
+            <li [class.active]="selectedCategory===null" (click)="selectCategory(null)">
+              <span><i class="fa fa-th-large"></i> All</span>
+              <span class="count">{{model.length}}</span>
+            </li>
+            <li *ngFor="let c of categories" [class.active]="selectedCategory===c" (click)="selectCategory(c)">
+              <span><i class="fa" [ngClass]="categoryIcon(c)"></i> {{c}}</span>
+              <span class="count">{{categoryCount(c)}}</span>
+            </li>
+          </ul>
+
+          <h2>Price</h2>
+          <div class="price-filter">
+            <div class="price-track">
+              <input type="range" [min]="priceBounds.min" [max]="priceBounds.max" [(ngModel)]="priceFrom" name="priceFrom" (input)="onPriceFromChange()">
+              <input type="range" [min]="priceBounds.min" [max]="priceBounds.max" [(ngModel)]="priceTo" name="priceTo" (input)="onPriceToChange()">
+            </div>
+            <div class="price-range-labels">
+              <span>₹{{priceFrom}}</span>
+              <span>₹{{priceTo}}</span>
+            </div>
+          </div>
+        </aside>
+
+        <div class="dash-grid-column">
+          <div class="grid-toolbar">
+            <span class="count-label">Showing {{visibleModel.length}} of {{filteredModel.length}} item(s)</span>
+            <div class="toolbar-controls">
+              <label>Sort by
+                <select [(ngModel)]="sortBy" name="sortBy">
+                  <option value="default">Default</option>
+                  <option value="priceAsc">Price: low to high</option>
+                  <option value="priceDesc">Price: high to low</option>
+                  <option value="nameAsc">Name: A to Z</option>
+                </select>
+              </label>
+              <label>Show
+                <select [(ngModel)]="showCount" name="showCount">
+                  <option [ngValue]="8">8</option>
+                  <option [ngValue]="12">12</option>
+                  <option [ngValue]="24">24</option>
+                  <option [ngValue]="1000">All</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="menu-grid">
+            <div class="menu-card" *ngFor="let m of visibleModel">
+              <div class="photo">
+                <img src="{{m.url}}" alt="{{m.item}}">
+              </div>
+              <div class="body">
+                <h3>{{m.item}}</h3>
+                <div class="price-row">
+                  <span class="price">{{m.price}}</span>
+                  <span>{{m.quantity}} left</span>
+                </div>
+                <div class="qty-row">
+                  <div class="stepper">
+                    <button type="button" (click)="decrement(m)" [disabled]="quantityOf(m)===0" aria-label="Remove one">−</button>
+                    <span class="num">{{quantityOf(m)}}</span>
+                    <button type="button" (click)="increment(m)" [disabled]="quantityOf(m)>=m.quantity" aria-label="Add one">+</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div *ngIf="filteredModel.length===0" class="notice center">Nothing matches that search.</div>
+        </div>
+      </div>
+    </ng-container>
+  </main>
+
+  <aside class="dash-summary">
+    <div class="ticket" style="max-width: none;">
+      <span class="punch left"></span>
+      <span class="punch right"></span>
+      <h2>Your order</h2>
+
+      <div *ngIf="cartLines.length===0" class="muted" style="font-size: 0.88rem;">Nothing yet — tap + on an item to add it.</div>
+
+      <ul class="detail-list" *ngIf="cartLines.length>0">
+        <li *ngFor="let line of cartLines">
+          <span class="label">{{line.food.item}} <span class="num">×{{line.quantity}}</span></span>
+          <span class="value price">{{line.lineTotal}}</span>
+        </li>
+      </ul>
+
+      <hr class="rule">
+
+      <div class="cart-total" style="max-width: none; margin-top: 0; border-top: none; padding-top: 0;">
+        <span>Total</span>
+        <span class="price">{{cartTotal}}</span>
+      </div>
+
+      <div class="btn-row">
+        <button type="button" class="btn btn-accent" style="width: 100%;" [disabled]="ordering || cartLines.length===0" (click)="checkout()">{{ordering ? 'Placing order…' : 'Checkout'}}</button>
+      </div>
+    </div>
+  </aside>
+</div>

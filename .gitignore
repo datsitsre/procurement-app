@@ -1,0 +1,17 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Claude Code session/tooling state - not project source
+.claude/
+
+# environment secrets - never commit real values
+.env
+.env.*
+!.env.example
+
+# database dump (kept for reference, but not runtime state)
+# (leave xwiggy-back and xwiggy-app's own .gitignore to cover build output)

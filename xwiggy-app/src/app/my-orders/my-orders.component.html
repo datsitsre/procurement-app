@@ -1,0 +1,47 @@
+<div class="dash">
+  <aside class="dash-nav">
+    <div class="dash-nav-mark">SpringFood</div>
+    <nav>
+      <a routerLink="/menu">Menu</a>
+      <a class="active">My orders</a>
+      <a routerLink="/contactUs">Contact us</a>
+      <a routerLink="/home" (click)="clearLocal()">Log out</a>
+    </nav>
+  </aside>
+
+  <main class="dash-main">
+    <div class="dash-topbar">
+      <div>
+        <h1>My orders</h1>
+        <div class="sub">everything you've ordered, and where it stands</div>
+      </div>
+    </div>
+
+    <div *ngIf="loading" class="notice" aria-live="polite">Loading your orders…</div>
+
+    <div *ngIf="loadError" class="notice error" role="alert">
+      {{loadError}}
+      <div class="btn-row" style="margin-top: 10px;">
+        <button type="button" class="btn btn-ghost" (click)="getOrders()">Retry</button>
+      </div>
+    </div>
+
+    <ng-container *ngIf="!loading && !loadError">
+      <div *ngIf="orders.length===0" class="notice">
+        No orders yet - <a routerLink="/menu">browse the menu</a> to place your first one.
+      </div>
+
+      <div class="order-list">
+        <a class="order-row" *ngFor="let o of orders" [routerLink]="['/myOrders', o.id]">
+          <div class="row-main">
+            <div class="row-id">Order #{{o.id}}</div>
+            <div class="row-meta">{{itemCount(o)}} item{{itemCount(o)===1 ? '' : 's'}} · {{o.orderDate | date:'medium'}}</div>
+          </div>
+          <div class="row-total">₹{{o.total}}</div>
+          <span class="status-pill" [ngClass]="o.status.toLowerCase()">{{statusLabel(o.status)}}</span>
+          <button type="button" class="btn btn-accent resume-btn" *ngIf="o.status==='PENDING'" (click)="resumePayment(o, $event)">Complete payment</button>
+        </a>
+      </div>
+    </ng-container>
+  </main>
+</div>
