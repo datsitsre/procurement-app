@@ -1,5 +1,0 @@
-target/
-.mvn/wrapper/*.jar
-*.log
-.idea/
-.vscode/

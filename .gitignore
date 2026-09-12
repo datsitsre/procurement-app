@@ -13,5 +13,38 @@ Thumbs.db
 .env.*
 !.env.example
 
-# database dump (kept for reference, but not runtime state)
-# (leave xwiggy-back and xwiggy-app's own .gitignore to cover build output)
+# ---------- Next.js ----------
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js build output
+/.next/
+/out/
+/build
+
+# misc
+*.pem
+
+# debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts

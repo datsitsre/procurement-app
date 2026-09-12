@@ -1,0 +1,182 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens for the B2B procurement platform. This is a deliberately restrained,
+ * enterprise-SaaS palette (trust/reliability over consumer-shopping color and motion) - see
+ * the product brief's "Design direction" and "Color system" sections. Every color, radius,
+ * and shadow used anywhere in the app should trace back to a token defined here rather than
+ * a one-off hex value in a component.
+ */
+:root {
+  /* ---- Brand / semantic colors ---- */
+  --color-primary: #111827;
+  --color-primary-foreground: #f9fafb;
+
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-foreground: #ffffff;
+
+  --color-success: #16a34a;
+  --color-success-bg: #f0fdf4;
+  --color-success-border: #bbf7d0;
+
+  --color-warning: #f59e0b;
+  --color-warning-bg: #fffbeb;
+  --color-warning-border: #fde68a;
+
+  --color-danger: #dc2626;
+  --color-danger-bg: #fef2f2;
+  --color-danger-border: #fecaca;
+
+  --color-info: #2563eb;
+  --color-info-bg: #eff6ff;
+  --color-info-border: #bfdbfe;
+
+  --color-neutral-bg: #f1f5f9;
+  --color-neutral-border: #e2e8f0;
+  --color-neutral-text: #475569;
+
+  /* ---- Surfaces ---- */
+  --color-background: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f8fafc;
+  --color-border: #e5e7eb;
+
+  /* ---- Text ---- */
+  --color-text-primary: #111827;
+  --color-text-secondary: #4b5563;
+  --color-text-tertiary: #6b7280;
+
+  /* ---- Radius: restrained, not "excessive rounded cards" ---- */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* ---- Shadows: subtle, functional elevation only ---- */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 8px rgba(15, 23, 42, 0.06), 0 2px 4px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 12px 24px rgba(15, 23, 42, 0.08), 0 4px 8px rgba(15, 23, 42, 0.04);
+
+  /* ---- Layout ---- */
+  --sidebar-width: 248px;
+  --topbar-height: 60px;
+  --bottom-nav-height: 60px;
+}
+
+/* Maps the tokens above into Tailwind utilities, e.g. bg-primary, text-text-secondary,
+ * border-border, shadow-md, rounded-lg. Tailwind v4's CSS-first config. */
+@theme inline {
+  --color-primary: var(--color-primary);
+  --color-primary-foreground: var(--color-primary-foreground);
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-accent-foreground: var(--color-accent-foreground);
+
+  --color-success: var(--color-success);
+  --color-success-bg: var(--color-success-bg);
+  --color-success-border: var(--color-success-border);
+  --color-warning: var(--color-warning);
+  --color-warning-bg: var(--color-warning-bg);
+  --color-warning-border: var(--color-warning-border);
+  --color-danger: var(--color-danger);
+  --color-danger-bg: var(--color-danger-bg);
+  --color-danger-border: var(--color-danger-border);
+  --color-info: var(--color-info);
+  --color-info-bg: var(--color-info-bg);
+  --color-info-border: var(--color-info-border);
+  --color-neutral-bg: var(--color-neutral-bg);
+  --color-neutral-border: var(--color-neutral-border);
+  --color-neutral-text: var(--color-neutral-text);
+
+  --color-background: var(--color-background);
+  --color-surface: var(--color-surface);
+  --color-surface-hover: var(--color-surface-hover);
+  --color-border: var(--color-border);
+
+  --color-text-primary: var(--color-text-primary);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-tertiary: var(--color-text-tertiary);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-text-primary);
+}
+
+/* ---------- Typography scale (section 7) ----------
+ * Applied via className="text-h1" etc. rather than ad hoc text-3xl/font-bold combinations
+ * scattered per component, so every heading in the app is guaranteed consistent. */
+@layer components {
+  .text-h1 {
+    font-size: 1.875rem; /* 30px */
+    line-height: 2.25rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .text-h2 {
+    font-size: 1.5rem; /* 24px */
+    line-height: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .text-h3 {
+    font-size: 1.125rem; /* 18px */
+    line-height: 1.625rem;
+    font-weight: 600;
+  }
+  .text-body {
+    font-size: 0.9375rem; /* 15px */
+    line-height: 1.5rem;
+    font-weight: 400;
+  }
+  .text-caption {
+    font-size: 0.8125rem; /* 13px */
+    line-height: 1.125rem;
+    font-weight: 400;
+    color: var(--color-text-secondary);
+  }
+  .text-table {
+    font-size: 0.875rem; /* 14px */
+    line-height: 1.25rem;
+    font-weight: 400;
+  }
+  .text-metadata {
+    font-size: 0.75rem; /* 12px */
+    line-height: 1rem;
+    font-weight: 500;
+    color: var(--color-text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+}
+
+/* ---------- Accessibility: reduced motion (section 57) ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- Focus visibility (section 57: focus indicators) ---------- */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}

@@ -1,0 +1,62 @@
+/** Shared primitive types used across every domain model. */
+
+/** All entity IDs are UUIDs (never predictable sequential integers) - see section 48 of the
+ *  product brief. Public-facing reference numbers (e.g. "PO-2026-00182") are a separate,
+ *  human-readable display field, not the primary key. */
+export type UUID = string;
+
+export type ISODateTime = string;
+
+export type CurrencyCode = 'GHS' | 'NGN' | 'KES' | 'ZAR' | 'XOF' | 'USD';
+
+export type CountryCode = 'GH' | 'NG' | 'KE' | 'ZA' | 'CI';
+
+export interface Money {
+  amount: number;
+  currency: CurrencyCode;
+}
+
+export interface Address {
+  id: UUID;
+  label: string;
+  line1: string;
+  line2?: string;
+  city: string;
+  region?: string;
+  country: CountryCode;
+  postalCode?: string;
+  isDefault?: boolean;
+}
+
+/** A single point in an audit trail - see AuditLog in section 48/62. */
+export interface AuditEntry {
+  id: UUID;
+  actorId: UUID;
+  actorName: string;
+  action: string;
+  entityType: string;
+  entityId: UUID;
+  previousValue?: unknown;
+  newValue?: unknown;
+  timestamp: ISODateTime;
+  ipAddress?: string;
+}
+
+/** Standard paginated list envelope every list-returning service method resolves to. */
+export interface Page<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/** Standard shape for a failed service/API call - components branch on `ok`. */
+export interface ServiceError {
+  code: string;
+  message: string;
+  fieldErrors?: Record<string, string>;
+}
+
+export type ServiceResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: ServiceError };
