@@ -3,6 +3,7 @@
 import { Search } from 'lucide-react';
 import { CompanySwitcher } from './CompanySwitcher';
 import { NotificationBell } from './NotificationBell';
+import { CartButton } from './CartButton';
 import { UserMenu } from './UserMenu';
 
 /** Top bar shown above the workspace on every authenticated page, on both desktop (beside the
@@ -20,6 +21,7 @@ export function Topbar() {
       </div>
       <div className="flex flex-1 items-center justify-end gap-2 md:flex-none">
         <CompanySwitcher />
+        <CartButton />
         <NotificationBell />
         <UserMenu />
       </div>

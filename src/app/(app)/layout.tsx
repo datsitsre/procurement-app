@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth, useWorkspace } from '@/hooks/useAuth';
+import { CartProvider } from '@/hooks/useCart';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Topbar } from '@/components/layout/Topbar';
 import { BottomNav } from '@/components/layout/BottomNav';
@@ -48,13 +49,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const navItems = navByWorkspace[workspace];
 
   return (
-    <div className="min-h-screen bg-background">
-      <Sidebar items={navItems} brandLabel={brandByWorkspace[workspace]} />
-      <div className="flex flex-col lg:pl-(--sidebar-width)">
-        <Topbar />
-        <main className="flex-1 px-4 pt-6 pb-24 lg:px-6 lg:pb-10">{children}</main>
+    <CartProvider>
+      <div className="min-h-screen bg-background">
+        <Sidebar items={navItems} brandLabel={brandByWorkspace[workspace]} />
+        <div className="flex flex-col lg:pl-(--sidebar-width)">
+          <Topbar />
+          <main className="flex-1 px-4 pt-6 pb-24 lg:px-6 lg:pb-10">{children}</main>
+        </div>
+        {workspace === 'buyer' && <BottomNav items={buyerBottomNav} moreHref="/more" />}
       </div>
-      {workspace === 'buyer' && <BottomNav items={buyerBottomNav} moreHref="/more" />}
-    </div>
+    </CartProvider>
   );
 }
