@@ -3,6 +3,7 @@
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Check, Circle, X } from 'lucide-react';
+import { useTenantContext } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { procurementService } from '@/services/procurement.service';
 import { purchaseOrderService } from '@/services/purchase-order.service';
@@ -19,7 +20,8 @@ import type { PurchaseRequest, PurchaseOrder } from '@/types/procurement';
 export default function PurchaseRequestDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { data: pr, loading, error } = useAsyncData<PurchaseRequest>(params.id, () => procurementService.getPurchaseRequest(params.id));
+  const tenant = useTenantContext();
+  const { data: pr, loading, error } = useAsyncData<PurchaseRequest>(params.id, () => procurementService.getPurchaseRequest(params.id, tenant));
   const posKey = pr && pr.status === 'CONVERTED_TO_PO' ? pr.id : null;
   const { data: purchaseOrders } = useAsyncData<PurchaseOrder[]>(posKey, () => purchaseOrderService.listForPurchaseRequest(params.id));
 

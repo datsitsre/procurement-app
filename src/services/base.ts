@@ -1,4 +1,4 @@
-import type { ServiceError, ServiceResult } from '@/types/common';
+import type { ServiceError, ServiceResult, TenantContext } from '@/types/common';
 import { hasPermission, type Permission, type Role } from '@/config/rbac';
 
 /** Simulates real network latency so loading states (skeletons, disabled buttons) are
@@ -13,6 +13,26 @@ export function ok<T>(data: T): ServiceResult<T> {
 
 export function fail<T>(code: string, message: string, fieldErrors?: Record<string, string>): ServiceResult<T> {
   return { ok: false, error: { code, message, fieldErrors } as ServiceError };
+}
+
+/**
+ * True if `caller` is allowed to see a record owned by `recordCompanyId` and/or
+ * `recordSupplierId` - a platform admin may see anything, a buyer only their own company's
+ * records, a supplier only their own supplier id's records. Pass whichever owner field(s) the
+ * record actually has; an `undefined` field is never matched.
+ */
+export function ownsRecord(caller: TenantContext, recordCompanyId?: string, recordSupplierId?: string): boolean {
+  if (caller.isPlatformAdmin) return true;
+  if (caller.companyId !== undefined && recordCompanyId === caller.companyId) return true;
+  if (caller.supplierId !== undefined && recordSupplierId === caller.supplierId) return true;
+  return false;
+}
+
+/** A deliberately generic "not found" for a failed ownership check - never a distinct
+ *  "forbidden", so a probing request can't tell an ID that exists-but-isn't-yours apart from
+ *  one that doesn't exist at all (the standard IDOR mitigation). */
+export function failNotFound<T>(message: string): ServiceResult<T> {
+  return fail('NOT_FOUND', message);
 }
 
 /**

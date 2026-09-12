@@ -1,4 +1,4 @@
-import { assertPermission, delay, fail, ok } from './base';
+import { assertPermission, delay, fail, ok, ownsRecord } from './base';
 import { FLAT_DELIVERY_FEE, calculateTax } from '@/utils/pricing';
 import {
   demoApprovalRules,
@@ -8,7 +8,7 @@ import {
   demoRfqs,
 } from '@/lib/demo-data/procurement';
 import { demoSuppliers } from '@/lib/demo-data/catalog';
-import type { ServiceResult, UUID } from '@/types/common';
+import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type {
   ApprovalStep,
   NegotiationMessage,
@@ -144,7 +144,10 @@ export interface ProcurementService {
   /** RFQs a supplier has been invited to respond to (section 18/44) - the supplier-workspace
    *  counterpart to `listRfqs`, which is keyed by the *buyer's* company id instead. */
   listRfqsForSupplier(supplierId: UUID): Promise<ServiceResult<RFQ[]>>;
-  getRfq(id: UUID): Promise<ServiceResult<RFQ>>;
+  /** Fetched by a URL path segment (section 9.2) - `caller` must be the buying company, an
+   *  invited supplier, or a platform admin, or this returns NOT_FOUND rather than leaking
+   *  another tenant's RFQ (pricing, requirements, negotiation history). */
+  getRfq(id: UUID, caller: TenantContext): Promise<ServiceResult<RFQ>>;
   createRfq(input: CreateRfqInput, callerRole: Role): Promise<ServiceResult<RFQ>>;
   listQuotesForRfq(rfqId: UUID): Promise<ServiceResult<Quote[]>>;
   /** Every quote a supplier has ever submitted, across every RFQ - analytics' RFQ win-rate
@@ -168,16 +171,21 @@ export interface ProcurementService {
     quoteId: UUID,
     authorizedByName: string,
     callerRole: Role,
+    caller: TenantContext,
   ): Promise<ServiceResult<{ purchaseOrderId: UUID }>>;
 
   listPurchaseRequests(companyId: UUID): Promise<ServiceResult<PurchaseRequest[]>>;
-  getPurchaseRequest(id: UUID): Promise<ServiceResult<PurchaseRequest>>;
+  /** Fetched by a URL path segment (section 9.2) - `caller` must belong to the request's own
+   *  company or be a platform admin, or this returns NOT_FOUND rather than leaking another
+   *  tenant's purchase request. */
+  getPurchaseRequest(id: UUID, caller: TenantContext): Promise<ServiceResult<PurchaseRequest>>;
   createPurchaseRequest(input: CreatePurchaseRequestInput, callerRole: Role): Promise<ServiceResult<PurchaseRequest>>;
   listPendingApprovals(companyId: UUID, role: Role): Promise<ServiceResult<PurchaseRequest[]>>;
   decideStep(
     purchaseRequestId: UUID,
     callerRole: Role,
     decision: 'APPROVED' | 'REJECTED',
+    caller: TenantContext,
     comment?: string,
     callerName?: string,
   ): Promise<ServiceResult<PurchaseRequest>>;
@@ -200,10 +208,13 @@ class MockProcurementService implements ProcurementService {
     );
   }
 
-  async getRfq(id: UUID): Promise<ServiceResult<RFQ>> {
+  async getRfq(id: UUID, caller: TenantContext): Promise<ServiceResult<RFQ>> {
     await delay(200);
     const rfq = allRfqs().find((r) => r.id === id);
-    if (!rfq) return fail('NOT_FOUND', 'That RFQ could not be found.');
+    const invited = !!rfq && !!caller.supplierId && rfq.suppliers.some((s) => s.supplierId === caller.supplierId);
+    if (!rfq || !(ownsRecord(caller, rfq.companyId) || invited)) {
+      return fail('NOT_FOUND', 'That RFQ could not be found.');
+    }
     return ok(rfq);
   }
 
@@ -348,6 +359,7 @@ class MockProcurementService implements ProcurementService {
     quoteId: UUID,
     authorizedByName: string,
     callerRole: Role,
+    caller: TenantContext,
   ): Promise<ServiceResult<{ purchaseOrderId: UUID }>> {
     await delay(400);
     const permissionError = assertPermission(callerRole, Permission.PURCHASE_ORDER_CREATE);
@@ -355,7 +367,9 @@ class MockProcurementService implements ProcurementService {
 
     const rfq = allRfqs().find((r) => r.id === rfqId);
     const quote = allQuotes().find((q) => q.id === quoteId);
-    if (!rfq || !quote) return fail('NOT_FOUND', 'That RFQ or quote could not be found.');
+    // Without this, a buyer at any company could accept a quote - and commit another company
+    // to a real purchase order - on an RFQ that isn't theirs at all (section 9.2).
+    if (!rfq || !quote || !ownsRecord(caller, rfq.companyId)) return fail('NOT_FOUND', 'That RFQ or quote could not be found.');
 
     writeStore(RFQ_STORE_KEY, rfq.id, { ...rfq, status: 'ACCEPTED' as const, acceptedQuoteId: quote.id });
 
@@ -373,10 +387,10 @@ class MockProcurementService implements ProcurementService {
     return ok(allPurchaseRequests().filter((pr) => pr.companyId === companyId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
   }
 
-  async getPurchaseRequest(id: UUID): Promise<ServiceResult<PurchaseRequest>> {
+  async getPurchaseRequest(id: UUID, caller: TenantContext): Promise<ServiceResult<PurchaseRequest>> {
     await delay(200);
     const pr = allPurchaseRequests().find((p) => p.id === id);
-    if (!pr) return fail('NOT_FOUND', 'That purchase request could not be found.');
+    if (!pr || !ownsRecord(caller, pr.companyId)) return fail('NOT_FOUND', 'That purchase request could not be found.');
     return ok(pr);
   }
 
@@ -426,6 +440,7 @@ class MockProcurementService implements ProcurementService {
     purchaseRequestId: UUID,
     callerRole: Role,
     decision: 'APPROVED' | 'REJECTED',
+    caller: TenantContext,
     comment?: string,
     callerName?: string,
   ): Promise<ServiceResult<PurchaseRequest>> {
@@ -434,7 +449,10 @@ class MockProcurementService implements ProcurementService {
     if (permissionError) return fail(permissionError.code, permissionError.message);
 
     const pr = allPurchaseRequests().find((p) => p.id === purchaseRequestId);
-    if (!pr) return fail('NOT_FOUND', 'That purchase request could not be found.');
+    // Having PURCHASE_REQUEST_APPROVE and the right role for the pending step only proves this
+    // caller can approve *some* company's requests - without this, a Finance Manager at any
+    // company could approve or reject another company's purchase request outright (section 9.2).
+    if (!pr || !ownsRecord(caller, pr.companyId)) return fail('NOT_FOUND', 'That purchase request could not be found.');
 
     const stepIndex = pr.approvalSteps.findIndex((s) => s.status === 'PENDING');
     const step = pr.approvalSteps[stepIndex];

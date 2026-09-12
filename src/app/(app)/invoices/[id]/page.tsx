@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Printer } from 'lucide-react';
-import { useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
+import { useActiveCompany, useActiveMembership, useTenantContext, useWorkspace } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { invoicesService } from '@/services/invoices.service';
 import { allCompanies } from '@/services/auth.service';
@@ -25,7 +25,8 @@ export default function InvoiceDetailPage() {
   const workspace = useWorkspace();
   const company = useActiveCompany();
   const membership = useActiveMembership();
-  const { data: invoice, loading, error, reload } = useAsyncData<Invoice>(params.id, () => invoicesService.getInvoice(params.id));
+  const tenant = useTenantContext();
+  const { data: invoice, loading, error, reload } = useAsyncData<Invoice>(params.id, () => invoicesService.getInvoice(params.id, tenant));
 
   const [paying, setPaying] = useState(false);
   const [method, setMethod] = useState<PaymentMethod | null>(null);
@@ -68,7 +69,7 @@ export default function InvoiceDetailPage() {
     setSubmitting(true);
     setPayError(null);
     const chargeDetails = method === 'CREDIT_TERMS' ? { creditAvailable: String(company?.creditAvailable ?? 0) } : details;
-    const result = await invoicesService.payInvoice(params.id, method, chargeDetails, membership.role);
+    const result = await invoicesService.payInvoice(params.id, method, chargeDetails, membership.role, tenant);
     setSubmitting(false);
     if (!result.ok) {
       setPayError(result.error.message);

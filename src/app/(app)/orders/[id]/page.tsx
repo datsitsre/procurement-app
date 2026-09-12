@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Check, MapPin, Truck, TriangleAlert } from 'lucide-react';
-import { useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
+import { useActiveCompany, useActiveMembership, useTenantContext, useWorkspace } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { ordersService } from '@/services/orders.service';
 import { invoicesService } from '@/services/invoices.service';
@@ -18,6 +18,7 @@ import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
 import { formatDate, formatDateTime } from '@/utils/format';
 import { hasPermission, Permission, type Role } from '@/config/rbac';
 import type { Delivery, Dispute, Invoice, Order, OrderTimelineEvent, Shipment } from '@/types/orders';
+import type { TenantContext } from '@/types/common';
 
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
@@ -25,7 +26,8 @@ export default function OrderDetailPage() {
   const workspace = useWorkspace();
   const company = useActiveCompany();
   const membership = useActiveMembership();
-  const { data: order, loading, error, reload: reloadOrder } = useAsyncData<Order>(params.id, () => ordersService.getOrder(params.id));
+  const tenant = useTenantContext();
+  const { data: order, loading, error, reload: reloadOrder } = useAsyncData<Order>(params.id, () => ordersService.getOrder(params.id, tenant));
   const { data: timeline, reload: reloadTimeline } = useAsyncData<OrderTimelineEvent[]>(params.id, () => ordersService.listTimeline(params.id));
   const { data: shipments, reload: reloadShipments } = useAsyncData<Shipment[]>(params.id, () => ordersService.listShipments(params.id));
   const { data: deliveries, reload: reloadDeliveries } = useAsyncData<Delivery[]>(params.id, () => ordersService.listDeliveries(params.id));
@@ -124,13 +126,13 @@ export default function OrderDetailPage() {
           )}
 
           {workspace === 'buyer' && company && (order.status === 'DELIVERED' || order.status === 'PARTIALLY_DELIVERED') && (
-            <DisputePanel order={order} companyId={company.id} dispute={dispute ?? null} onChanged={reloadDispute} />
+            <DisputePanel order={order} tenant={tenant} dispute={dispute ?? null} onChanged={reloadDispute} />
           )}
         </div>
 
         <div className="flex flex-col gap-6">
           {workspace === 'supplier' && membership && hasPermission(membership.role, Permission.ORDERS_FULFILL) && (
-            <FulfillmentPanel order={order} shipment={(shipments ?? [])[0]} callerRole={membership.role} onChanged={reloadAll} />
+            <FulfillmentPanel order={order} shipment={(shipments ?? [])[0]} callerRole={membership.role} tenant={tenant} onChanged={reloadAll} />
           )}
 
           <div className="rounded-lg border border-border bg-surface p-5">
@@ -209,11 +211,13 @@ function FulfillmentPanel({
   order,
   shipment,
   callerRole,
+  tenant,
   onChanged,
 }: {
   order: Order;
   shipment: Shipment | undefined;
   callerRole: Role;
+  tenant: TenantContext;
   onChanged: () => void;
 }) {
   const [driverName, setDriverName] = useState('');
@@ -245,7 +249,7 @@ function FulfillmentPanel({
       {error && <p className="mb-3 rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
 
       {order.status === 'CONFIRMED' && (
-        <Button className="w-full" loading={submitting} onClick={() => run(() => ordersService.markProcessing(order.id, callerRole))}>
+        <Button className="w-full" loading={submitting} onClick={() => run(() => ordersService.markProcessing(order.id, callerRole, tenant))}>
           Start processing
         </Button>
       )}
@@ -263,7 +267,7 @@ function FulfillmentPanel({
             <Button variant="outline" className="flex-1" onClick={() => setShowDispatchForm(false)} disabled={submitting}>
               Cancel
             </Button>
-            <Button className="flex-1" loading={submitting} onClick={() => run(() => ordersService.dispatchOrder(order.id, driverName, callerRole))}>
+            <Button className="flex-1" loading={submitting} onClick={() => run(() => ordersService.dispatchOrder(order.id, driverName, callerRole, tenant))}>
               Confirm dispatch
             </Button>
           </div>
@@ -271,7 +275,7 @@ function FulfillmentPanel({
       )}
 
       {order.status === 'SHIPPED' && (
-        <Button className="w-full" loading={submitting} onClick={() => run(() => ordersService.markDelivered(order.id, callerRole))}>
+        <Button className="w-full" loading={submitting} onClick={() => run(() => ordersService.markDelivered(order.id, callerRole, tenant))}>
           Mark delivered
         </Button>
       )}
@@ -283,12 +287,12 @@ function FulfillmentPanel({
 
 function DisputePanel({
   order,
-  companyId,
+  tenant,
   dispute,
   onChanged,
 }: {
   order: Order;
-  companyId: string;
+  tenant: TenantContext;
   dispute: Dispute | null;
   onChanged: () => void;
 }) {
@@ -320,14 +324,7 @@ function DisputePanel({
   async function submit() {
     setSubmitting(true);
     setError(null);
-    const result = await disputesService.createDispute({
-      orderId: order.id,
-      orderReference: order.reference,
-      companyId,
-      supplierId: order.supplierId,
-      reason,
-      description,
-    });
+    const result = await disputesService.createDispute({ orderId: order.id, reason, description }, tenant);
     setSubmitting(false);
     if (!result.ok) {
       setError(result.error.message);

@@ -2,7 +2,7 @@ import { assertPermission, delay, fail, ok } from './base';
 import { auditLogService } from './audit-log.service';
 import { demoDisputes } from '@/lib/demo-data/disputes';
 import { Permission, type Role } from '@/config/rbac';
-import type { ServiceResult, UUID } from '@/types/common';
+import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { Dispute } from '@/types/orders';
 import type { Actor } from './catalog.service';
 
@@ -59,9 +59,6 @@ function allDisputes(): Dispute[] {
 
 export interface NewDisputeInput {
   orderId: UUID;
-  orderReference: string;
-  companyId: UUID;
-  supplierId: UUID;
   reason: string;
   description: string;
 }
@@ -72,8 +69,11 @@ export interface DisputesService {
   getDisputeForOrder(orderId: UUID): Promise<ServiceResult<Dispute | null>>;
   /** Every dispute across every company - the admin dispute queue (section 46/49). */
   listAllDisputes(): Promise<ServiceResult<Dispute[]>>;
-  /** A buyer reports an issue with a delivered order (section 46). */
-  createDispute(input: NewDisputeInput): Promise<ServiceResult<Dispute>>;
+  /** A buyer reports an issue with a delivered order (section 46). `orderReference`,
+   *  `companyId`, and `supplierId` are derived from the real order record, never trusted from
+   *  the caller directly - otherwise a buyer could fabricate a dispute against an order that
+   *  isn't theirs (section 9.2), which `caller` (their own company id) is checked against. */
+  createDispute(input: NewDisputeInput, caller: TenantContext): Promise<ServiceResult<Dispute>>;
   /** A platform admin closes out a dispute - RESOLVED_REFUND also marks the underlying order's
    *  payment REFUNDED (via orders.service, imported lazily to avoid a circular import). */
   resolveDispute(
@@ -106,18 +106,26 @@ class MockDisputesService implements DisputesService {
     return ok(allDisputes().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
   }
 
-  async createDispute(input: NewDisputeInput): Promise<ServiceResult<Dispute>> {
+  async createDispute(input: NewDisputeInput, caller: TenantContext): Promise<ServiceResult<Dispute>> {
     await delay(350);
     if (!input.reason.trim() || !input.description.trim()) {
       return fail('EMPTY', 'Describe the issue before submitting.');
     }
 
+    // Look up the real order rather than trusting orderReference/companyId/supplierId from the
+    // client - without this, a buyer could file a dispute that *claims* to be about any order
+    // id, company, or supplier at all, regardless of who actually placed it.
+    const { ordersService } = await import('./orders.service');
+    const orderResult = await ordersService.getOrder(input.orderId, caller);
+    if (!orderResult.ok) return fail('NOT_FOUND', 'That order could not be found.');
+    const order = orderResult.data;
+
     const dispute: Dispute = {
       id: newId('dispute'),
-      orderId: input.orderId,
-      orderReference: input.orderReference,
-      companyId: input.companyId,
-      supplierId: input.supplierId,
+      orderId: order.id,
+      orderReference: order.reference,
+      companyId: order.companyId,
+      supplierId: order.supplierId,
       reason: input.reason,
       description: input.description,
       evidenceUrls: [],

@@ -3,7 +3,7 @@
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { useActiveCompany } from '@/hooks/useAuth';
+import { useActiveCompany, useTenantContext } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { purchaseOrderService } from '@/services/purchase-order.service';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
@@ -17,7 +17,8 @@ export default function PurchaseOrderDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const company = useActiveCompany();
-  const { data: po, loading, error } = useAsyncData<PurchaseOrder>(params.id, () => purchaseOrderService.getPurchaseOrder(params.id));
+  const tenant = useTenantContext();
+  const { data: po, loading, error } = useAsyncData<PurchaseOrder>(params.id, () => purchaseOrderService.getPurchaseOrder(params.id, tenant));
 
   if (loading) {
     return (

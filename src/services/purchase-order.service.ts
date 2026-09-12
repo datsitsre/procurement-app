@@ -1,8 +1,8 @@
-import { delay, fail, ok } from './base';
+import { delay, fail, ok, ownsRecord } from './base';
 import { demoPurchaseOrders } from '@/lib/demo-data/purchase-orders';
 import { demoCompanies } from '@/lib/demo-data/companies';
 import { FLAT_DELIVERY_FEE, calculateTax } from '@/utils/pricing';
-import type { ServiceResult, UUID } from '@/types/common';
+import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { PurchaseOrder, PurchaseRequest, Quote, RFQ } from '@/types/procurement';
 
 const PO_STORE_KEY = 'procurement.purchase-orders.v1.list';
@@ -63,7 +63,10 @@ function allPurchaseOrders(): PurchaseOrder[] {
 
 export interface PurchaseOrderService {
   listPurchaseOrders(companyId: UUID): Promise<ServiceResult<PurchaseOrder[]>>;
-  getPurchaseOrder(id: UUID): Promise<ServiceResult<PurchaseOrder>>;
+  /** Fetched by a URL path segment (section 9.2) - `caller` must be the buying company, the
+   *  fulfilling supplier, or a platform admin, or this returns NOT_FOUND rather than leaking
+   *  another tenant's purchase order. */
+  getPurchaseOrder(id: UUID, caller: TenantContext): Promise<ServiceResult<PurchaseOrder>>;
   listForPurchaseRequest(purchaseRequestId: UUID): Promise<ServiceResult<PurchaseOrder[]>>;
   /** Builds and persists a PurchaseOrder from an accepted RFQ quote (section 24). Not part of
    *  the public ProcurementService interface - procurement.service.ts calls this internally
@@ -85,10 +88,12 @@ class MockPurchaseOrderService implements PurchaseOrderService {
     return ok(allPurchaseOrders().filter((po) => po.companyId === companyId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
   }
 
-  async getPurchaseOrder(id: UUID): Promise<ServiceResult<PurchaseOrder>> {
+  async getPurchaseOrder(id: UUID, caller: TenantContext): Promise<ServiceResult<PurchaseOrder>> {
     await delay(200);
     const po = allPurchaseOrders().find((p) => p.id === id);
-    if (!po) return fail('NOT_FOUND', 'That purchase order could not be found.');
+    if (!po || !ownsRecord(caller, po.companyId, po.supplierId)) {
+      return fail('NOT_FOUND', 'That purchase order could not be found.');
+    }
     return ok(po);
   }
 

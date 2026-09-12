@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Check, CircleCheck } from 'lucide-react';
-import { useActiveCompany, useActiveMembership } from '@/hooks/useAuth';
+import { useActiveCompany, useActiveMembership, useTenantContext } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { purchaseOrderService } from '@/services/purchase-order.service';
 import { ordersService } from '@/services/orders.service';
@@ -27,7 +27,8 @@ export default function CheckoutPage() {
   const router = useRouter();
   const company = useActiveCompany();
   const membership = useActiveMembership();
-  const { data: po, loading, error } = useAsyncData<PurchaseOrder>(params.id, () => purchaseOrderService.getPurchaseOrder(params.id));
+  const tenant = useTenantContext();
+  const { data: po, loading, error } = useAsyncData<PurchaseOrder>(params.id, () => purchaseOrderService.getPurchaseOrder(params.id, tenant));
 
   const [stepIndex, setStepIndex] = useState(0);
   const [addressId, setAddressId] = useState<string | null>(null);

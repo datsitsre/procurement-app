@@ -1,8 +1,8 @@
-import { assertPermission, delay, fail, ok } from './base';
+import { assertPermission, delay, fail, ok, ownsRecord } from './base';
 import { demoOrders } from '@/lib/demo-data/orders';
 import { demoOrderTimelineEvents, demoShipments, demoDeliveries } from '@/lib/demo-data/order-tracking';
 import { Permission, type Role } from '@/config/rbac';
-import type { ServiceResult, UUID } from '@/types/common';
+import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { Delivery, Order, OrderTimelineEvent, PaymentMethod, Shipment } from '@/types/orders';
 import type { PurchaseOrder } from '@/types/procurement';
 
@@ -97,7 +97,10 @@ export interface OrdersService {
   listOrders(companyId: UUID): Promise<ServiceResult<Order[]>>;
   /** Every order across every company - the platform admin overview (section 46). */
   listAllOrders(): Promise<ServiceResult<Order[]>>;
-  getOrder(id: UUID): Promise<ServiceResult<Order>>;
+  /** Fetched by a URL path segment (section 9.2) - `caller` must own the order (as the buying
+   *  company or the fulfilling supplier) or be a platform admin, or this returns NOT_FOUND the
+   *  same way a truly missing id would, rather than leaking another tenant's order data. */
+  getOrder(id: UUID, caller: TenantContext): Promise<ServiceResult<Order>>;
   getOrderForPurchaseOrder(purchaseOrderId: UUID): Promise<ServiceResult<Order | null>>;
   listTimeline(orderId: UUID): Promise<ServiceResult<OrderTimelineEvent[]>>;
   listShipments(orderId: UUID): Promise<ServiceResult<Shipment[]>>;
@@ -110,14 +113,16 @@ export interface OrdersService {
   /** Orders a supplier needs to fulfill (section 44) - the supplier-workspace counterpart to
    *  `listOrders`, which is keyed by the *buyer's* company id instead. */
   listOrdersForSupplier(supplierId: UUID): Promise<ServiceResult<Order[]>>;
-  /** CONFIRMED -> PROCESSING: the supplier has started preparing the order. */
-  markProcessing(orderId: UUID, callerRole: Role): Promise<ServiceResult<Order>>;
+  /** CONFIRMED -> PROCESSING: the supplier has started preparing the order. `caller` must be
+   *  the fulfilling supplier (section 9.2) - ORDERS_FULFILL alone only proves the role can
+   *  fulfill *some* order, not that this one is theirs. */
+  markProcessing(orderId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Order>>;
   /** PROCESSING -> SHIPPED: hands the order to a driver, moving its shipment to IN_TRANSIT. */
-  dispatchOrder(orderId: UUID, driverName: string, callerRole: Role): Promise<ServiceResult<Order>>;
+  dispatchOrder(orderId: UUID, driverName: string, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Order>>;
   /** SHIPPED -> DELIVERED: records a full delivery for every line and closes out the
    *  shipment. Partial delivery (section 29) is modeled in the type but not yet exposed as a
    *  supplier action here - a future refinement, not a gap in what's demoed today. */
-  markDelivered(orderId: UUID, callerRole: Role): Promise<ServiceResult<Order>>;
+  markDelivered(orderId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Order>>;
   /** Marks an order's payment REFUNDED - called by disputes.service once a platform admin
    *  resolves a dispute in the buyer's favor. Not permission-gated here: the caller has already
    *  checked PLATFORM_MANAGE before reaching this, the same "checked once, upstream" pattern
@@ -136,10 +141,12 @@ class MockOrdersService implements OrdersService {
     return ok(allOrders().sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
   }
 
-  async getOrder(id: UUID): Promise<ServiceResult<Order>> {
+  async getOrder(id: UUID, caller: TenantContext): Promise<ServiceResult<Order>> {
     await delay(200);
     const order = allOrders().find((o) => o.id === id);
-    if (!order) return fail('NOT_FOUND', 'That order could not be found.');
+    if (!order || !ownsRecord(caller, order.companyId, order.supplierId)) {
+      return fail('NOT_FOUND', 'That order could not be found.');
+    }
     return ok(order);
   }
 
@@ -221,13 +228,13 @@ class MockOrdersService implements OrdersService {
     return ok(allOrders().filter((o) => o.supplierId === supplierId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
   }
 
-  async markProcessing(orderId: UUID, callerRole: Role): Promise<ServiceResult<Order>> {
+  async markProcessing(orderId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Order>> {
     await delay(300);
     const permissionError = assertPermission(callerRole, Permission.ORDERS_FULFILL);
     if (permissionError) return fail(permissionError.code, permissionError.message);
 
     const order = allOrders().find((o) => o.id === orderId);
-    if (!order) return fail('NOT_FOUND', 'That order could not be found.');
+    if (!order || !ownsRecord(caller, undefined, order.supplierId)) return fail('NOT_FOUND', 'That order could not be found.');
     if (order.status !== 'CONFIRMED') return fail('INVALID_STATE', 'Only a confirmed order can start processing.');
 
     const updated: Order = { ...order, status: 'PROCESSING' };
@@ -236,13 +243,13 @@ class MockOrdersService implements OrdersService {
     return ok(updated);
   }
 
-  async dispatchOrder(orderId: UUID, driverName: string, callerRole: Role): Promise<ServiceResult<Order>> {
+  async dispatchOrder(orderId: UUID, driverName: string, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Order>> {
     await delay(300);
     const permissionError = assertPermission(callerRole, Permission.ORDERS_FULFILL);
     if (permissionError) return fail(permissionError.code, permissionError.message);
 
     const order = allOrders().find((o) => o.id === orderId);
-    if (!order) return fail('NOT_FOUND', 'That order could not be found.');
+    if (!order || !ownsRecord(caller, undefined, order.supplierId)) return fail('NOT_FOUND', 'That order could not be found.');
     if (order.status !== 'PROCESSING') return fail('INVALID_STATE', 'Only a processing order can be dispatched.');
 
     const shipment = allShipments().find((s) => s.orderId === orderId);
@@ -256,13 +263,13 @@ class MockOrdersService implements OrdersService {
     return ok(updated);
   }
 
-  async markDelivered(orderId: UUID, callerRole: Role): Promise<ServiceResult<Order>> {
+  async markDelivered(orderId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Order>> {
     await delay(300);
     const permissionError = assertPermission(callerRole, Permission.ORDERS_FULFILL);
     if (permissionError) return fail(permissionError.code, permissionError.message);
 
     const order = allOrders().find((o) => o.id === orderId);
-    if (!order) return fail('NOT_FOUND', 'That order could not be found.');
+    if (!order || !ownsRecord(caller, undefined, order.supplierId)) return fail('NOT_FOUND', 'That order could not be found.');
     if (order.status !== 'SHIPPED') return fail('INVALID_STATE', 'Only a shipped order can be marked delivered.');
 
     const shipment = allShipments().find((s) => s.orderId === orderId);

@@ -1,8 +1,8 @@
-import { assertPermission, delay, ok, fail } from './base';
+import { assertPermission, delay, ok, fail, ownsRecord } from './base';
 import { auditLogService } from './audit-log.service';
 import { demoCategories, demoProducts, demoSuppliers, demoWarehouses } from '@/lib/demo-data/catalog';
 import { Permission, type Role } from '@/config/rbac';
-import type { ServiceResult, UUID } from '@/types/common';
+import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { Category, Product, SupplierProfile, Warehouse } from '@/types/catalog';
 
 /** Who performed a mutating action - threaded through from the caller's session so the audit
@@ -143,8 +143,13 @@ export interface CatalogService {
   /** A supplier's own listing, for the Products & Inventory page (section 34). */
   listProductsForSupplier(supplierId: UUID): Promise<ServiceResult<Product[]>>;
   listWarehousesForSupplier(supplierId: UUID): Promise<ServiceResult<Warehouse[]>>;
-  createProduct(input: NewProductInput, callerRole: Role): Promise<ServiceResult<Product>>;
-  updateProduct(productId: UUID, patch: ProductPatch, callerRole: Role): Promise<ServiceResult<Product>>;
+  /** `caller.supplierId` must match `input.supplierId` (section 9.2) - otherwise any supplier
+   *  account could create a listing attributed to a competitor's supplier id. */
+  createProduct(input: NewProductInput, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Product>>;
+  /** `caller` must own the product being edited (its supplierId) or be a platform admin -
+   *  PRODUCTS_MANAGE alone only proves the role can manage *some* supplier's products, not that
+   *  this one is theirs (section 9.2/9.3's "supplier modifying another supplier's product"). */
+  updateProduct(productId: UUID, patch: ProductPatch, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Product>>;
   /** Every product across every supplier, unfiltered by moderation status - the admin
    *  product-moderation queue (section 46) reads this, not the buyer-facing `listProducts`. */
   listAllProductsForModeration(): Promise<ServiceResult<Product[]>>;
@@ -164,6 +169,7 @@ export interface CatalogService {
     warehouseId: UUID,
     patch: { stock?: number; lowStockThreshold?: number },
     callerRole: Role,
+    caller: TenantContext,
   ): Promise<ServiceResult<Product>>;
 }
 
@@ -289,10 +295,13 @@ class MockCatalogService implements CatalogService {
     return ok(demoWarehouses.filter((w) => w.supplierId === supplierId));
   }
 
-  async createProduct(input: NewProductInput, callerRole: Role): Promise<ServiceResult<Product>> {
+  async createProduct(input: NewProductInput, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Product>> {
     await delay(350);
     const permissionError = assertPermission(callerRole, Permission.PRODUCTS_MANAGE);
     if (permissionError) return fail(permissionError.code, permissionError.message);
+    if (!ownsRecord(caller, undefined, input.supplierId)) {
+      return fail('FORBIDDEN', 'You can only add products under your own supplier account.');
+    }
     if (!input.name.trim()) return fail('EMPTY', 'Give the product a name.');
     if (input.basePrice <= 0) return fail('INVALID_PRICE', 'Set a base price greater than zero.');
 
@@ -323,13 +332,15 @@ class MockCatalogService implements CatalogService {
     return ok(product);
   }
 
-  async updateProduct(productId: UUID, patch: ProductPatch, callerRole: Role): Promise<ServiceResult<Product>> {
+  async updateProduct(productId: UUID, patch: ProductPatch, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Product>> {
     await delay(300);
     const permissionError = assertPermission(callerRole, Permission.PRODUCTS_MANAGE);
     if (permissionError) return fail(permissionError.code, permissionError.message);
 
     const product = allProducts().find((p) => p.id === productId);
-    if (!product) return fail('NOT_FOUND', 'That product could not be found.');
+    if (!product || !ownsRecord(caller, undefined, product.supplierId)) {
+      return fail('NOT_FOUND', 'That product could not be found.');
+    }
 
     const updated: Product = { ...product, ...patch };
     writeOverride(updated);
@@ -341,13 +352,16 @@ class MockCatalogService implements CatalogService {
     warehouseId: UUID,
     patch: { stock?: number; lowStockThreshold?: number },
     callerRole: Role,
+    caller: TenantContext,
   ): Promise<ServiceResult<Product>> {
     await delay(300);
     const permissionError = assertPermission(callerRole, Permission.PRODUCTS_MANAGE);
     if (permissionError) return fail(permissionError.code, permissionError.message);
 
     const product = allProducts().find((p) => p.id === productId);
-    if (!product) return fail('NOT_FOUND', 'That product could not be found.');
+    if (!product || !ownsRecord(caller, undefined, product.supplierId)) {
+      return fail('NOT_FOUND', 'That product could not be found.');
+    }
 
     const hasRecord = product.inventory.some((i) => i.warehouseId === warehouseId);
     const inventory = hasRecord

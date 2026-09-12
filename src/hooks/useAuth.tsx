@@ -10,8 +10,9 @@ import {
   type RegisterInput,
   type Session,
 } from '@/services/auth.service';
+import { catalogService } from '@/services/catalog.service';
 import { hasPermission, type Permission } from '@/config/rbac';
-import type { ServiceError } from '@/types/common';
+import type { ServiceError, TenantContext } from '@/types/common';
 
 interface AuthContextValue {
   session: Session | null;
@@ -111,4 +112,24 @@ export function useActiveMembership() {
 export function useWorkspace() {
   const { session } = useAuth();
   return session ? activeWorkspaceOf(session) : 'buyer';
+}
+
+/**
+ * The current caller's tenant identity, for services' `ownsRecord` ownership checks (section
+ * 9.2) - every page that fetches an entity by a URL path segment (an order id, an RFQ id, an
+ * invoice id, ...) must pass this through to the service call instead of trusting the id alone.
+ */
+export function useTenantContext(): TenantContext {
+  const company = useActiveCompany();
+  const workspace = useWorkspace();
+
+  return useMemo(() => {
+    if (workspace === 'platform') return { isPlatformAdmin: true };
+    if (!company) return {};
+    if (workspace === 'supplier') {
+      const supplier = catalogService.getSupplierByCompanyId(company.id);
+      return { supplierId: supplier?.id };
+    }
+    return { companyId: company.id };
+  }, [company, workspace]);
 }

@@ -1,9 +1,9 @@
-import { delay, fail, ok } from './base';
+import { delay, fail, ok, ownsRecord } from './base';
 import { demoInvoices } from '@/lib/demo-data/invoices';
 import { demoCompanies } from '@/lib/demo-data/companies';
 import { paymentService, dueDaysFor } from './payment.service';
 import type { Role } from '@/config/rbac';
-import type { ServiceResult, UUID } from '@/types/common';
+import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { Invoice, Order, PaymentMethod } from '@/types/orders';
 
 const INVOICES_STORE_KEY = 'procurement.invoices.v1';
@@ -59,7 +59,10 @@ function allInvoices(): Invoice[] {
 
 export interface InvoicesService {
   listInvoices(companyId: UUID): Promise<ServiceResult<Invoice[]>>;
-  getInvoice(id: UUID): Promise<ServiceResult<Invoice>>;
+  /** Fetched by a URL path segment (section 9.2) - `caller` must be the billed company, the
+   *  issuing supplier, or a platform admin, or this returns NOT_FOUND rather than leaking
+   *  another tenant's invoice. */
+  getInvoice(id: UUID, caller: TenantContext): Promise<ServiceResult<Invoice>>;
   getInvoiceForOrder(orderId: UUID): Promise<ServiceResult<Invoice | null>>;
   /** Invoices a supplier has issued (section 44) - the supplier-workspace counterpart to
    *  `listInvoices`, which is keyed by the *buyer's* company id instead. */
@@ -69,7 +72,13 @@ export interface InvoicesService {
   createForOrder(order: Order): Promise<Invoice>;
   /** Pays down (or fully settles) an invoice through the payment abstraction, updating
    *  `amountPaid`/`status` from the resulting charge. */
-  payInvoice(invoiceId: UUID, method: PaymentMethod, details: Record<string, string>, callerRole: Role): Promise<ServiceResult<Invoice>>;
+  payInvoice(
+    invoiceId: UUID,
+    method: PaymentMethod,
+    details: Record<string, string>,
+    callerRole: Role,
+    caller: TenantContext,
+  ): Promise<ServiceResult<Invoice>>;
 }
 
 class MockInvoicesService implements InvoicesService {
@@ -78,10 +87,12 @@ class MockInvoicesService implements InvoicesService {
     return ok(allInvoices().filter((i) => i.companyId === companyId).sort((a, b) => (a.issuedAt < b.issuedAt ? 1 : -1)));
   }
 
-  async getInvoice(id: UUID): Promise<ServiceResult<Invoice>> {
+  async getInvoice(id: UUID, caller: TenantContext): Promise<ServiceResult<Invoice>> {
     await delay(200);
     const invoice = allInvoices().find((i) => i.id === id);
-    if (!invoice) return fail('NOT_FOUND', 'That invoice could not be found.');
+    if (!invoice || !ownsRecord(caller, invoice.companyId, invoice.supplierId)) {
+      return fail('NOT_FOUND', 'That invoice could not be found.');
+    }
     return ok(invoice);
   }
 
@@ -127,9 +138,12 @@ class MockInvoicesService implements InvoicesService {
     method: PaymentMethod,
     details: Record<string, string>,
     callerRole: Role,
+    caller: TenantContext,
   ): Promise<ServiceResult<Invoice>> {
     const invoice = allInvoices().find((i) => i.id === invoiceId);
-    if (!invoice) return fail('NOT_FOUND', 'That invoice could not be found.');
+    // Without this, any authenticated buyer with PAYMENTS_CREATE could pay off (and mark PAID)
+    // an invoice belonging to a company they have no relationship to at all (section 9.2).
+    if (!invoice || !ownsRecord(caller, invoice.companyId)) return fail('NOT_FOUND', 'That invoice could not be found.');
     if (invoice.status === 'PAID') return fail('ALREADY_PAID', 'This invoice is already paid in full.');
 
     const amountDue = invoice.total - invoice.amountPaid;

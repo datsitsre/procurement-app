@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, MessageSquare, Star, Trophy } from 'lucide-react';
-import { useAuth, useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
+import { useAuth, useActiveCompany, useActiveMembership, useTenantContext, useWorkspace } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { procurementService } from '@/services/procurement.service';
 import { catalogService } from '@/services/catalog.service';
@@ -24,8 +24,9 @@ export default function RfqDetailPage() {
   const workspace = useWorkspace();
   const company = useActiveCompany();
   const membership = useActiveMembership();
+  const tenant = useTenantContext();
 
-  const { data: rfq, loading: rfqLoading, error: rfqError } = useAsyncData<RFQ>(params.id, () => procurementService.getRfq(params.id));
+  const { data: rfq, loading: rfqLoading, error: rfqError } = useAsyncData<RFQ>(params.id, () => procurementService.getRfq(params.id, tenant));
 
   if (workspace === 'supplier') {
     if (rfqLoading) {
@@ -88,6 +89,7 @@ function BuyerRfqDetail({
   const router = useRouter();
   const { session } = useAuth();
   const membership = useActiveMembership();
+  const tenant = useTenantContext();
   const { data: quotes } = useAsyncData<Quote[]>(rfqId, () => procurementService.listQuotesForRfq(rfqId));
 
   const [openThreadQuoteId, setOpenThreadQuoteId] = useState<string | null>(null);
@@ -119,7 +121,7 @@ function BuyerRfqDetail({
     if (!rfq || !session || !membership) return;
     setMessage(null);
     setAcceptingId(quote.id);
-    const result = await procurementService.acceptQuote(rfq.id, quote.id, session.user.name, membership.role);
+    const result = await procurementService.acceptQuote(rfq.id, quote.id, session.user.name, membership.role, tenant);
     setAcceptingId(null);
     if (!result.ok) {
       setMessage(result.error.message);

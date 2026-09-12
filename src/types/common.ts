@@ -60,3 +60,17 @@ export interface ServiceError {
 export type ServiceResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: ServiceError };
+
+/**
+ * Who is calling, for tenant-ownership checks (section 9.2) - distinct from `Role`, which only
+ * says what *type* of action the caller may perform, never which company's records they may
+ * see. A `get<Entity>ById` fetched by a URL path segment is exactly the shape of an IDOR: the
+ * id is attacker-controlled, so every such lookup must verify the record actually belongs to
+ * this caller before returning it, not just that the record exists. See
+ * services/base.ts's `ownsRecord` and hooks/useAuth.tsx's `useTenantContext`.
+ */
+export interface TenantContext {
+  companyId?: UUID;
+  supplierId?: UUID;
+  isPlatformAdmin?: boolean;
+}

@@ -143,7 +143,10 @@ class MockAnalyticsService implements AnalyticsService {
     const quotesResult = await procurementService.listQuotesForSupplier(supplierId);
     const quotes = quotesResult.ok ? quotesResult.data : [];
     // Parallel, for the same reason as getBuyerAnalytics's product lookups above.
-    const rfqResults = await Promise.all(quotes.map((q) => procurementService.getRfq(q.rfqId)));
+    // Trusted internal aggregation, already scoped to this supplier's own quotes above - not a
+    // URL-driven fetch, so it bypasses getRfq's tenant-ownership check the same deliberate way
+    // audit-log.service's `record` bypasses its own permission check (see that file's comment).
+    const rfqResults = await Promise.all(quotes.map((q) => procurementService.getRfq(q.rfqId, { isPlatformAdmin: true })));
     const quotesWon = quotes.filter((q, i) => rfqResults[i].ok && rfqResults[i].data.acceptedQuoteId === q.id).length;
 
     return ok({

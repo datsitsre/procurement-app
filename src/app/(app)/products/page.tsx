@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Package, Plus, AlertTriangle } from 'lucide-react';
-import { useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
+import { useActiveCompany, useActiveMembership, useTenantContext, useWorkspace } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { catalogService } from '@/services/catalog.service';
 import { Button } from '@/components/ui/Button';
@@ -15,11 +15,13 @@ import { SkeletonTable } from '@/components/ui/Skeleton';
 import { availableStock } from '@/types/catalog';
 import type { Product, SupplierProfile, Warehouse } from '@/types/catalog';
 import type { Role } from '@/config/rbac';
+import type { TenantContext } from '@/types/common';
 
 export default function ProductsPage() {
   const workspace = useWorkspace();
   const company = useActiveCompany();
   const membership = useActiveMembership();
+  const tenant = useTenantContext();
 
   if (workspace !== 'supplier') {
     return (
@@ -34,10 +36,10 @@ export default function ProductsPage() {
   const supplier = catalogService.getSupplierByCompanyId(company.id);
   if (!supplier) return null;
 
-  return <ProductsManager key={supplier.id} supplier={supplier} callerRole={membership.role} />;
+  return <ProductsManager key={supplier.id} supplier={supplier} callerRole={membership.role} tenant={tenant} />;
 }
 
-function ProductsManager({ supplier, callerRole }: { supplier: SupplierProfile; callerRole: Role }) {
+function ProductsManager({ supplier, callerRole, tenant }: { supplier: SupplierProfile; callerRole: Role; tenant: TenantContext }) {
   const { data: products, reload } = useAsyncData<Product[]>(supplier.id, () => catalogService.listProductsForSupplier(supplier.id));
   const { data: warehouses } = useAsyncData<Warehouse[]>(supplier.id, () => catalogService.listWarehousesForSupplier(supplier.id));
 
@@ -62,6 +64,7 @@ function ProductsManager({ supplier, callerRole }: { supplier: SupplierProfile; 
           supplierId={supplier.id}
           warehouses={warehouses}
           callerRole={callerRole}
+          tenant={tenant}
           onCreated={() => {
             setCreating(false);
             reload();
@@ -109,7 +112,7 @@ function ProductsManager({ supplier, callerRole }: { supplier: SupplierProfile; 
                 )}
 
                 {expandedId === product.id && (
-                  <ProductEditPanel product={product} callerRole={callerRole} onSaved={reload} />
+                  <ProductEditPanel product={product} callerRole={callerRole} tenant={tenant} onSaved={reload} />
                 )}
               </div>
             );
@@ -120,7 +123,17 @@ function ProductsManager({ supplier, callerRole }: { supplier: SupplierProfile; 
   );
 }
 
-function ProductEditPanel({ product, callerRole, onSaved }: { product: Product; callerRole: Role; onSaved: () => void }) {
+function ProductEditPanel({
+  product,
+  callerRole,
+  tenant,
+  onSaved,
+}: {
+  product: Product;
+  callerRole: Role;
+  tenant: TenantContext;
+  onSaved: () => void;
+}) {
   const [basePrice, setBasePrice] = useState(String(product.basePrice));
   const [moq, setMoq] = useState(String(product.moq));
   const [stockByWarehouse, setStockByWarehouse] = useState<Record<string, string>>(
@@ -133,7 +146,7 @@ function ProductEditPanel({ product, callerRole, onSaved }: { product: Product; 
     setSaving(true);
     setError(null);
 
-    const priceResult = await catalogService.updateProduct(product.id, { basePrice: Number(basePrice), moq: Number(moq) }, callerRole);
+    const priceResult = await catalogService.updateProduct(product.id, { basePrice: Number(basePrice), moq: Number(moq) }, callerRole, tenant);
     if (!priceResult.ok) {
       setError(priceResult.error.message);
       setSaving(false);
@@ -143,7 +156,7 @@ function ProductEditPanel({ product, callerRole, onSaved }: { product: Product; 
     for (const record of product.inventory) {
       const nextStock = Number(stockByWarehouse[record.warehouseId]);
       if (nextStock !== record.stock) {
-        const invResult = await catalogService.updateInventory(product.id, record.warehouseId, { stock: nextStock }, callerRole);
+        const invResult = await catalogService.updateInventory(product.id, record.warehouseId, { stock: nextStock }, callerRole, tenant);
         if (!invResult.ok) {
           setError(invResult.error.message);
           setSaving(false);
@@ -194,12 +207,14 @@ function NewProductForm({
   supplierId,
   warehouses,
   callerRole,
+  tenant,
   onCreated,
   onCancel,
 }: {
   supplierId: string;
   warehouses: Warehouse[];
   callerRole: Role;
+  tenant: TenantContext;
   onCreated: () => void;
   onCancel: () => void;
 }) {
@@ -235,6 +250,7 @@ function NewProductForm({
         lowStockThreshold: Math.max(1, Math.round((Number(stock) || 0) * 0.2)),
       },
       callerRole,
+      tenant,
     );
     setSaving(false);
     if (!result.ok) {
