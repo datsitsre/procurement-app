@@ -15,6 +15,7 @@ export const demoPurchaseOrders: PurchaseOrder[] = [
     paymentTerms: 'Net 30',
     deliveryLocation: 'Accra Warehouse',
     authorizedByName: 'Sarah Smith',
+    orderId: 'order-10082',
     createdAt: '2026-09-08T15:30:00Z',
   },
 ];

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowLeft, Check, Circle, X } from 'lucide-react';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { procurementService } from '@/services/procurement.service';
+import { purchaseOrderService } from '@/services/purchase-order.service';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -13,12 +14,14 @@ import { RoleLabels, type Role } from '@/config/rbac';
 import { formatDate } from '@/utils/format';
 import { cn } from '@/utils/cn';
 import { FLAT_DELIVERY_FEE, calculateTax } from '@/utils/pricing';
-import type { PurchaseRequest } from '@/types/procurement';
+import type { PurchaseRequest, PurchaseOrder } from '@/types/procurement';
 
 export default function PurchaseRequestDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const { data: pr, loading, error } = useAsyncData<PurchaseRequest>(params.id, () => procurementService.getPurchaseRequest(params.id));
+  const posKey = pr && pr.status === 'CONVERTED_TO_PO' ? pr.id : null;
+  const { data: purchaseOrders } = useAsyncData<PurchaseOrder[]>(posKey, () => purchaseOrderService.listForPurchaseRequest(params.id));
 
   if (loading) {
     return (
@@ -123,6 +126,27 @@ export default function PurchaseRequestDetailPage() {
           ))}
         </ol>
       </div>
+
+      {purchaseOrders && purchaseOrders.length > 0 && (
+        <div className="rounded-lg border border-border bg-surface p-5">
+          <p className="mb-3 text-h3">Purchase orders</p>
+          <ul className="flex flex-col gap-2">
+            {purchaseOrders.map((po) => (
+              <li key={po.id}>
+                <Link
+                  href={`/purchase-orders/${po.id}`}
+                  className="flex items-center justify-between rounded-md border border-border px-4 py-3 text-sm hover:bg-neutral-bg"
+                >
+                  <span>
+                    <span className="font-medium">{po.reference}</span> · {po.supplierName}
+                  </span>
+                  <PriceDisplay amount={po.total} size="sm" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

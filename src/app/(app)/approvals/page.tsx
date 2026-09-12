@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { CheckSquare } from 'lucide-react';
-import { useActiveCompany, useActiveMembership } from '@/hooks/useAuth';
+import { useActiveCompany, useActiveMembership, useAuth } from '@/hooks/useAuth';
 import { procurementService } from '@/services/procurement.service';
 import { Button } from '@/components/ui/Button';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
@@ -14,6 +14,7 @@ import type { PurchaseRequest } from '@/types/procurement';
 export default function ApprovalsPage() {
   const company = useActiveCompany();
   const membership = useActiveMembership();
+  const { session } = useAuth();
   const [requests, setRequests] = useState<PurchaseRequest[] | null>(null);
   const [decidingId, setDecidingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -33,7 +34,7 @@ export default function ApprovalsPage() {
     if (!membership) return;
     setMessage(null);
     setDecidingId(id);
-    const result = await procurementService.decideStep(id, membership.role, decision);
+    const result = await procurementService.decideStep(id, membership.role, decision, undefined, session?.user.name);
     setDecidingId(null);
     if (!result.ok) {
       setMessage(result.error.message);

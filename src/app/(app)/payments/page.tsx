@@ -1,13 +1,55 @@
+'use client';
+
 import { Wallet } from 'lucide-react';
-import { PhasePlaceholder } from '@/components/layout/PhasePlaceholder';
+import { useActiveCompany } from '@/hooks/useAuth';
+import { useAsyncData } from '@/hooks/useAsyncData';
+import { paymentService } from '@/services/payment.service';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { PriceDisplay } from '@/components/ui/PriceDisplay';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { SkeletonTable } from '@/components/ui/Skeleton';
+import { PaymentMethodConfigs } from '@/config/payment-methods';
+import { formatDateTime } from '@/utils/format';
+import type { Payment } from '@/types/orders';
 
 export default function PaymentsPage() {
+  const company = useActiveCompany();
+  const companyId = company?.id ?? null;
+  const { data: payments } = useAsyncData<Payment[]>(companyId, () => paymentService.listPayments(companyId!));
+
   return (
-    <PhasePlaceholder
-      icon={Wallet}
-      title="Payments"
-      description="Card, mobile money, bank transfer, and credit-term payments will appear here once the payment abstraction is built (Phase 4)."
-      phase="Phase 4"
-    />
+    <div className="flex flex-col gap-6">
+      <div>
+        <h1 className="text-h1">Payments</h1>
+        <p className="text-body text-text-secondary">Every payment {company?.name} has made through the platform.</p>
+      </div>
+
+      {payments === null ? (
+        <SkeletonTable rows={4} columns={4} />
+      ) : payments.length === 0 ? (
+        <EmptyState
+          icon={Wallet}
+          title="No payments yet"
+          description="Payments you make against purchase orders and invoices will appear here."
+        />
+      ) : (
+        <div className="flex flex-col gap-3">
+          {payments.map((p) => (
+            <div key={p.id} className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold">{PaymentMethodConfigs[p.method].label}</p>
+                <p className="text-caption">
+                  {p.reference} · {formatDateTime(p.createdAt)}
+                </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <PriceDisplay amount={p.amount} size="sm" />
+                <StatusBadge domain="payment" status={p.status} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

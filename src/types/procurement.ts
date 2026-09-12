@@ -147,5 +147,8 @@ export interface PurchaseOrder {
   paymentTerms: string;
   deliveryLocation: string;
   authorizedByName: string;
+  /** Set once checkout (section 25) has run for this PO and produced an Order - lets the PO
+   *  detail page show "View order" instead of "Proceed to checkout" for a PO already paid. */
+  orderId?: UUID;
   createdAt: ISODateTime;
 }

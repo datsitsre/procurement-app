@@ -149,7 +149,13 @@ export interface ProcurementService {
   getPurchaseRequest(id: UUID): Promise<ServiceResult<PurchaseRequest>>;
   createPurchaseRequest(input: CreatePurchaseRequestInput): Promise<ServiceResult<PurchaseRequest>>;
   listPendingApprovals(companyId: UUID, role: Role): Promise<ServiceResult<PurchaseRequest[]>>;
-  decideStep(purchaseRequestId: UUID, callerRole: Role, decision: 'APPROVED' | 'REJECTED', comment?: string): Promise<ServiceResult<PurchaseRequest>>;
+  decideStep(
+    purchaseRequestId: UUID,
+    callerRole: Role,
+    decision: 'APPROVED' | 'REJECTED',
+    comment?: string,
+    callerName?: string,
+  ): Promise<ServiceResult<PurchaseRequest>>;
 }
 
 class MockProcurementService implements ProcurementService {
@@ -330,6 +336,7 @@ class MockProcurementService implements ProcurementService {
     callerRole: Role,
     decision: 'APPROVED' | 'REJECTED',
     comment?: string,
+    callerName?: string,
   ): Promise<ServiceResult<PurchaseRequest>> {
     await delay(300);
     const permissionError = assertPermission(callerRole, Permission.PURCHASE_REQUEST_APPROVE);
@@ -355,11 +362,21 @@ class MockProcurementService implements ProcurementService {
     if (decision === 'REJECTED') {
       status = 'REJECTED';
     } else if (updatedSteps.every((s) => s.status === 'APPROVED')) {
-      status = 'APPROVED';
+      // Every step signed off - section 64's flow says the request becomes a purchase order
+      // automatically at this point, one PO per supplier represented in the request's items.
+      // Building it is purchase-order.service's job - imported lazily to avoid a circular
+      // import, the same pattern acceptQuote already uses above.
+      status = 'CONVERTED_TO_PO';
     }
 
     const next: PurchaseRequest = { ...pr, approvalSteps: updatedSteps, status };
     writeStore(PR_STORE_KEY, next.id, next);
+
+    if (status === 'CONVERTED_TO_PO') {
+      const { purchaseOrderService } = await import('./purchase-order.service');
+      await purchaseOrderService.createFromPurchaseRequest(next, callerName ?? RoleLabels[callerRole] ?? 'Approver');
+    }
+
     return ok(next);
   }
 }

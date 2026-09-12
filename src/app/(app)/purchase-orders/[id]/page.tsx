@@ -7,6 +7,7 @@ import { useActiveCompany } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { purchaseOrderService } from '@/services/purchase-order.service';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
+import { Button } from '@/components/ui/Button';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
 import { formatDate } from '@/utils/format';
@@ -50,7 +51,20 @@ export default function PurchaseOrderDetailPage() {
             <p className="text-metadata">Purchase order</p>
             <h1 className="text-h1">{po.reference}</h1>
           </div>
-          <p className="text-caption">{formatDate(po.createdAt)}</p>
+          <div className="flex flex-col items-end gap-2">
+            <p className="text-caption">{formatDate(po.createdAt)}</p>
+            {po.orderId ? (
+              <Link href={`/orders/${po.orderId}`}>
+                <Button variant="outline" size="sm">
+                  View order
+                </Button>
+              </Link>
+            ) : (
+              <Link href={`/purchase-orders/${po.id}/checkout`}>
+                <Button size="sm">Proceed to checkout</Button>
+              </Link>
+            )}
+          </div>
         </div>
 
         <div className="mb-6 grid gap-6 sm:grid-cols-2">

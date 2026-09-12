@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { Receipt } from 'lucide-react';
 import { useActiveCompany } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
@@ -12,6 +13,7 @@ import { formatDate } from '@/utils/format';
 import type { Invoice } from '@/types/orders';
 
 export default function InvoicesPage() {
+  const router = useRouter();
   const company = useActiveCompany();
   const companyId = company?.id ?? null;
   const { data: invoices } = useAsyncData<Invoice[]>(companyId, () => invoicesService.listInvoices(companyId!));
@@ -30,7 +32,11 @@ export default function InvoicesPage() {
       ) : (
         <div className="flex flex-col gap-3">
           {invoices.map((inv) => (
-            <div key={inv.id} className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              key={inv.id}
+              className="flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-surface p-4 hover:bg-neutral-bg sm:flex-row sm:items-center sm:justify-between"
+              onClick={() => router.push(`/invoices/${inv.id}`)}
+            >
               <div>
                 <p className="text-sm font-semibold">{inv.reference}</p>
                 <p className="text-caption">{inv.supplierName} · due {formatDate(inv.dueDate)}</p>

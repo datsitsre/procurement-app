@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { Package } from 'lucide-react';
 import { useActiveCompany } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
@@ -12,6 +13,7 @@ import { formatDate } from '@/utils/format';
 import type { Order } from '@/types/orders';
 
 export default function OrdersPage() {
+  const router = useRouter();
   const company = useActiveCompany();
   const companyId = company?.id ?? null;
   const { data: orders } = useAsyncData<Order[]>(companyId, () => ordersService.listOrders(companyId!));
@@ -44,7 +46,7 @@ export default function OrdersPage() {
               </thead>
               <tbody>
                 {orders.map((o) => (
-                  <tr key={o.id} className="border-t border-border">
+                  <tr key={o.id} className="cursor-pointer border-t border-border hover:bg-neutral-bg" onClick={() => router.push(`/orders/${o.id}`)}>
                     <td className="p-4 font-medium">{o.reference}</td>
                     <td className="p-4">{o.supplierName}</td>
                     <td className="p-4 text-text-secondary">{formatDate(o.createdAt)}</td>
@@ -66,7 +68,11 @@ export default function OrdersPage() {
           {/* Mobile: cards (section 43 - tables become cards rather than horizontal scroll) */}
           <div className="flex flex-col gap-3 sm:hidden">
             {orders.map((o) => (
-              <div key={o.id} className="rounded-lg border border-border bg-surface p-4">
+              <div
+                key={o.id}
+                className="cursor-pointer rounded-lg border border-border bg-surface p-4"
+                onClick={() => router.push(`/orders/${o.id}`)}
+              >
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold">{o.reference}</span>
                   <PriceDisplay amount={o.total} size="sm" />
