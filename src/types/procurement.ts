@@ -30,6 +30,10 @@ export interface RFQ {
   attachmentIds: UUID[];
   suppliers: RFQSupplier[];
   status: RfqStatus;
+  /** Set once a quote is accepted (section 20) - lets analytics attribute a win to the exact
+   *  quote/supplier that got it, rather than assuming "the RFQ is ACCEPTED" means whichever
+   *  supplier is being asked, which breaks as soon as more than one supplier quoted. */
+  acceptedQuoteId?: UUID;
   createdAt: ISODateTime;
   expiresAt?: ISODateTime;
 }

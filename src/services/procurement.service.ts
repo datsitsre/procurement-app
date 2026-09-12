@@ -147,6 +147,10 @@ export interface ProcurementService {
   getRfq(id: UUID): Promise<ServiceResult<RFQ>>;
   createRfq(input: CreateRfqInput): Promise<ServiceResult<RFQ>>;
   listQuotesForRfq(rfqId: UUID): Promise<ServiceResult<Quote[]>>;
+  /** Every quote a supplier has ever submitted, across every RFQ - analytics' RFQ win-rate
+   *  reads this (section 45/63), joined against each RFQ's `acceptedQuoteId` to know which
+   *  quotes actually won rather than assuming "RFQ status ACCEPTED" means this supplier won. */
+  listQuotesForSupplier(supplierId: UUID): Promise<ServiceResult<Quote[]>>;
   /** A supplier's response to an RFQ (section 19) - marks their invitation QUOTED and moves
    *  the RFQ out of SENT/VIEWED once at least one quote exists. */
   submitQuote(input: SubmitQuoteInput, callerRole: Role): Promise<ServiceResult<Quote>>;
@@ -229,6 +233,11 @@ class MockProcurementService implements ProcurementService {
   async listQuotesForRfq(rfqId: UUID): Promise<ServiceResult<Quote[]>> {
     await delay(250);
     return ok(allQuotes().filter((q) => q.rfqId === rfqId));
+  }
+
+  async listQuotesForSupplier(supplierId: UUID): Promise<ServiceResult<Quote[]>> {
+    await delay(250);
+    return ok(allQuotes().filter((q) => q.supplierId === supplierId));
   }
 
   async submitQuote(input: SubmitQuoteInput, callerRole: Role): Promise<ServiceResult<Quote>> {
@@ -328,7 +337,7 @@ class MockProcurementService implements ProcurementService {
     const quote = allQuotes().find((q) => q.id === quoteId);
     if (!rfq || !quote) return fail('NOT_FOUND', 'That RFQ or quote could not be found.');
 
-    writeStore(RFQ_STORE_KEY, rfq.id, { ...rfq, status: 'ACCEPTED' as const });
+    writeStore(RFQ_STORE_KEY, rfq.id, { ...rfq, status: 'ACCEPTED' as const, acceptedQuoteId: quote.id });
 
     // Building a PurchaseOrder from an accepted quote is purchase-order.service's job -
     // imported lazily here to avoid a circular import between the two service modules.

@@ -9,14 +9,16 @@ import { AdminGuard } from '@/features/admin/AdminGuard';
 import { allCompanies } from '@/services/auth.service';
 import { catalogService } from '@/services/catalog.service';
 import { disputesService } from '@/services/disputes.service';
-import { ordersService } from '@/services/orders.service';
 import { auditLogService } from '@/services/audit-log.service';
+import { analyticsService } from '@/services/analytics.service';
 import { StatCard } from '@/components/ui/StatCard';
+import { BarChart, HorizontalBarList } from '@/components/ui/BarChart';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { formatMoney, formatDateTime } from '@/utils/format';
 import type { Product, SupplierProfile } from '@/types/catalog';
-import type { Dispute, Order } from '@/types/orders';
+import type { Dispute } from '@/types/orders';
 import type { AuditEntry } from '@/types/common';
+import type { PlatformAnalytics } from '@/services/analytics.service';
 
 export default function AdminDashboardPage() {
   return (
@@ -31,7 +33,7 @@ function AdminDashboard() {
   const { data: suppliers } = useAsyncData<SupplierProfile[]>('admin-suppliers', () => catalogService.listAllSuppliers());
   const { data: products } = useAsyncData<Product[]>('admin-products', () => catalogService.listAllProductsForModeration());
   const { data: disputes } = useAsyncData<Dispute[]>('admin-disputes', () => disputesService.listAllDisputes());
-  const { data: orders } = useAsyncData<Order[]>('admin-orders', () => ordersService.listAllOrders());
+  const { data: analytics } = useAsyncData<PlatformAnalytics>('admin-analytics', () => analyticsService.getPlatformAnalytics());
   const { data: auditEntries } = useAsyncData<AuditEntry[]>('admin-audit', () => auditLogService.listEntries());
 
   const buyerCompanies = useMemo(() => allCompanies().filter((c) => c.isBuyer), []);
@@ -41,9 +43,8 @@ function AdminDashboard() {
     () => disputes?.filter((d) => d.status === 'OPEN' || d.status === 'UNDER_REVIEW' || d.status === 'AWAITING_EVIDENCE').length ?? 0,
     [disputes],
   );
-  const gmv = useMemo(() => orders?.filter((o) => o.paymentStatus === 'PAID').reduce((sum, o) => sum + o.total, 0) ?? 0, [orders]);
 
-  const loading = suppliers === null || products === null || disputes === null || orders === null;
+  const loading = suppliers === null || products === null || disputes === null || analytics === null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -78,7 +79,33 @@ function AdminDashboard() {
         </div>
       )}
 
-      <StatCard label="Total platform GMV (paid orders)" value={formatMoney(gmv, 'GHS')} icon={Wallet} tone="accent" className="max-w-sm" />
+      <StatCard
+        label="Total platform GMV (paid orders)"
+        value={formatMoney(analytics?.totalGmv ?? 0, 'GHS')}
+        icon={Wallet}
+        tone="accent"
+        className="max-w-sm"
+      />
+
+      {analytics && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="rounded-lg border border-border bg-surface p-5">
+            <p className="mb-4 text-h3">Monthly GMV</p>
+            <BarChart data={analytics.monthlyGmv} valueFormatter={(v) => formatMoney(v, 'GHS')} />
+          </div>
+
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div className="rounded-lg border border-border bg-surface p-5">
+              <p className="mb-4 text-h3">Top suppliers</p>
+              <HorizontalBarList items={analytics.gmvBySupplier} valueFormatter={(v) => formatMoney(v, 'GHS')} />
+            </div>
+            <div className="rounded-lg border border-border bg-surface p-5">
+              <p className="mb-4 text-h3">Top buyers</p>
+              <HorizontalBarList items={analytics.gmvByBuyerCompany} valueFormatter={(v) => formatMoney(v, 'GHS')} />
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-lg border border-border bg-surface p-5">
