@@ -25,6 +25,7 @@ interface CartContextValue {
   subtotal: number;
   setQuantity: (productId: string, quantity: number) => Promise<ServiceError | null>;
   removeItem: (productId: string) => Promise<void>;
+  clear: () => Promise<void>;
 }
 
 const CartContext = createContext<CartContextValue | null>(null);
@@ -72,6 +73,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
     [companyId],
   );
 
+  const clear = useCallback(async () => {
+    if (!companyId) return;
+    const result = await cartService.clear(companyId);
+    if (result.ok) setLoaded({ companyId, cart: result.data });
+  }, [companyId]);
+
   const lines = useMemo<CartLine[]>(() => {
     if (!cart) return [];
     return cart.items
@@ -88,8 +95,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const subtotal = lines.reduce((sum, l) => sum + l.lineTotal, 0);
 
   const value = useMemo<CartContextValue>(
-    () => ({ cart, loading, lines, itemCount, subtotal, setQuantity, removeItem }),
-    [cart, loading, lines, itemCount, subtotal, setQuantity, removeItem],
+    () => ({ cart, loading, lines, itemCount, subtotal, setQuantity, removeItem, clear }),
+    [cart, loading, lines, itemCount, subtotal, setQuantity, removeItem, clear],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

@@ -68,7 +68,7 @@ export function ProductCard({ product, supplier, onAddToCart, onCompareToggle, c
             <Button size="sm" className="flex-1" disabled={stock === 0 || addingToCart} loading={addingToCart} onClick={() => onAddToCart?.(product)}>
               Add to cart
             </Button>
-            <Link href={`/rfqs?product=${product.id}`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'flex-1')}>
+            <Link href={`/rfqs/create?product=${product.id}`} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'flex-1')}>
               Request quote
             </Link>
           </div>

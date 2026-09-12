@@ -119,6 +119,10 @@ export const RolePermissions: Record<Role, Permission[]> = {
     Permission.ORDERS_CREATE,
     Permission.RFQ_CREATE,
     Permission.PURCHASE_REQUEST_CREATE,
+    // The default approval rules (section 23) name "Procurement manager" as the first-line
+    // approver for mid-tier spend bands, so this role must be able to act on that step -
+    // without it, a request routed to a procurement manager could never be approved by one.
+    Permission.PURCHASE_REQUEST_APPROVE,
     Permission.PURCHASE_ORDER_CREATE,
     Permission.SUPPLIERS_READ,
     Permission.SUPPLIERS_MANAGE,

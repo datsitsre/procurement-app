@@ -93,6 +93,19 @@ export interface ApprovalRule {
   requiredApproverRoles: string[];
 }
 
+/** A snapshot of one cart line at the moment a purchase request was submitted - the cart
+ *  itself is mutable (and gets cleared after submission), so the request needs its own copy
+ *  of what was actually requested, not a live reference back to the cart. */
+export interface PurchaseRequestItem {
+  id: UUID;
+  productId: UUID;
+  productName: string;
+  supplierId: UUID;
+  supplierName: string;
+  quantity: number;
+  unitPrice: number;
+}
+
 export interface PurchaseRequest {
   id: UUID;
   reference: string;
@@ -100,7 +113,7 @@ export interface PurchaseRequest {
   requesterUserId: UUID;
   requesterName: string;
   department?: string;
-  cartId: UUID;
+  items: PurchaseRequestItem[];
   totalAmount: number;
   reason: string;
   attachmentIds: UUID[];

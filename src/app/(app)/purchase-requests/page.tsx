@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { ClipboardCheck } from 'lucide-react';
 import { useActiveCompany } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
@@ -33,7 +34,7 @@ export default function PurchaseRequestsPage() {
           {requests.map((pr) => {
             const currentStep = pr.approvalSteps.find((s) => s.status === 'PENDING');
             return (
-              <div key={pr.id} className="rounded-lg border border-border bg-surface p-4">
+              <Link key={pr.id} href={`/purchase-requests/${pr.id}`} className="block rounded-lg border border-border bg-surface p-4 hover:border-accent">
                 <div className="flex items-start justify-between gap-4">
                   <div>
                     <p className="text-sm font-semibold">{pr.reference}</p>
@@ -52,7 +53,7 @@ export default function PurchaseRequestsPage() {
                     Waiting on {RoleLabels[currentStep.approverRole as Role] ?? currentStep.approverRole}
                   </p>
                 )}
-              </div>
+              </Link>
             );
           })}
         </div>

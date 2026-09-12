@@ -1,27 +1,32 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Minus, Plus, ShoppingCart, Trash2 } from 'lucide-react';
 import { useCart, type CartLine } from '@/hooks/useCart';
-import { useActiveCompany } from '@/hooks/useAuth';
+import { useAuth, useActiveCompany, useActiveMembership } from '@/hooks/useAuth';
 import { catalogService } from '@/services/catalog.service';
+import { procurementService } from '@/services/procurement.service';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
+import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { VAT_RATE, FLAT_DELIVERY_FEE, calculateTax } from '@/utils/pricing';
 import type { CurrencyCode } from '@/types/common';
-
-/** Flat placeholder rates - a real tax engine (per-country VAT rules, section 55) and a real
- *  delivery-fee calculation (by weight/distance/warehouse) are future work; these keep the
- *  cart's math honest about what it is: an illustrative estimate, not a quote. */
-const VAT_RATE = 0.125;
-const FLAT_DELIVERY_FEE = 2000;
+import type { PurchaseRequestItem } from '@/types/procurement';
 
 export default function CartPage() {
-  const { loading, lines, subtotal, setQuantity, removeItem } = useCart();
+  const router = useRouter();
+  const { session } = useAuth();
+  const { loading, lines, subtotal, setQuantity, removeItem, clear } = useCart();
   const company = useActiveCompany();
+  const membership = useActiveMembership();
   const [message, setMessage] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [showReasonPrompt, setShowReasonPrompt] = useState(false);
 
   const groupedBySupplier = useMemo(() => {
     const groups = new Map<string, CartLine[]>();
@@ -36,7 +41,7 @@ export default function CartPage() {
     }));
   }, [lines]);
 
-  const tax = Math.round(subtotal * VAT_RATE);
+  const tax = calculateTax(subtotal);
   const deliveryFee = lines.length > 0 ? FLAT_DELIVERY_FEE : 0;
   const total = subtotal + tax + deliveryFee;
 
@@ -46,6 +51,43 @@ export default function CartPage() {
     const err = await setQuantity(productId, Math.max(0, next));
     setPendingId(null);
     if (err) setMessage(err.message);
+  }
+
+  async function handleSubmitRequest() {
+    if (!company || !session) return;
+    if (!reason.trim()) {
+      setMessage('Add a reason for this purchase before submitting.');
+      return;
+    }
+    setMessage(null);
+    setSubmitting(true);
+
+    const items: PurchaseRequestItem[] = lines.map((l) => ({
+      id: l.item.id,
+      productId: l.product.id,
+      productName: l.product.name,
+      supplierId: l.product.supplierId,
+      supplierName: catalogService.getSupplierById(l.product.supplierId)?.name ?? 'Supplier',
+      quantity: l.item.quantity,
+      unitPrice: l.item.unitPrice,
+    }));
+
+    const result = await procurementService.createPurchaseRequest({
+      companyId: company.id,
+      requesterUserId: session.user.id,
+      requesterName: session.user.name,
+      department: membership?.department,
+      items,
+      reason: reason.trim(),
+    });
+
+    setSubmitting(false);
+    if (!result.ok) {
+      setMessage(result.error.message);
+      return;
+    }
+    await clear();
+    router.push(`/purchase-requests/${result.data.id}`);
   }
 
   if (loading) {
@@ -163,12 +205,28 @@ export default function CartPage() {
             <PriceDisplay amount={total} currency={company?.currency} size="lg" />
           </div>
 
-          <Link
-            href="/purchase-requests"
-            className="mt-4 flex w-full items-center justify-center rounded-md bg-accent px-4 py-2.5 text-sm font-medium text-accent-foreground hover:bg-accent-hover"
-          >
-            Request approval
-          </Link>
+          {showReasonPrompt ? (
+            <div className="mt-4 flex flex-col gap-2">
+              <label htmlFor="reason" className="text-sm font-medium">
+                Reason for this purchase
+              </label>
+              <textarea
+                id="reason"
+                rows={3}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="e.g. Network infrastructure upgrade"
+                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              />
+              <Button onClick={handleSubmitRequest} loading={submitting} className="w-full">
+                Submit for approval
+              </Button>
+            </div>
+          ) : (
+            <Button onClick={() => setShowReasonPrompt(true)} className="mt-4 w-full">
+              Request approval
+            </Button>
+          )}
           <p className="mt-2 text-caption">
             Submits this cart as a purchase request for your company&rsquo;s approval workflow.
           </p>

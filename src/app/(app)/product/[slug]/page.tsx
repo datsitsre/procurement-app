@@ -138,7 +138,7 @@ export default function ProductDetailPage() {
             <Button onClick={handleAddToCart} loading={adding} disabled={stock === 0 || belowMoq}>
               Add to cart
             </Button>
-            <Link href={`/rfqs?product=${product.id}`} className="text-sm font-medium text-accent hover:underline">
+            <Link href={`/rfqs/create?product=${product.id}`} className="text-sm font-medium text-accent hover:underline">
               Add to RFQ instead
             </Link>
           </div>
