@@ -74,6 +74,31 @@ export interface CostCenter {
   departmentId?: UUID;
 }
 
+export type BudgetPeriod = 'ANNUAL' | 'MONTHLY';
+export type BudgetScope = 'COMPANY' | 'DEPARTMENT' | 'COST_CENTER';
+
+/**
+ * A spending ceiling for one period (section 11.3) - scoped to the whole company, one
+ * department, or one cost center. Utilization is always computed on demand from real paid
+ * orders (budgets.service.ts), never stored as a running total here, so it can never drift out
+ * of sync with what was actually spent.
+ */
+export interface Budget {
+  id: UUID;
+  companyId: UUID;
+  scope: BudgetScope;
+  /** Set when scope is DEPARTMENT - the department name (matching Order.department/
+   *  PurchaseRequest.department, which are plain strings, not department ids). */
+  department?: string;
+  /** Set when scope is COST_CENTER. */
+  costCenterId?: UUID;
+  period: BudgetPeriod;
+  year: number;
+  /** 1-12, set only when period is MONTHLY. */
+  month?: number;
+  amount: number;
+}
+
 /** A named group of related companies (e.g. "Acme Technologies") shown in the switcher. */
 export interface CompanyGroup {
   id: UUID;

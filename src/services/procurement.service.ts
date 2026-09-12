@@ -406,6 +406,19 @@ class MockProcurementService implements ProcurementService {
     // the line-item subtotal, so this has to be computed the same way here as it was there.
     const subtotal = input.items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
     const totalAmount = subtotal + calculateTax(subtotal) + FLAT_DELIVERY_FEE;
+
+    // Spending limit (section 11.5) - a business rule layered on top of the permission check
+    // above, never a replacement for it: PURCHASE_REQUEST_CREATE says this role may submit a
+    // request at all, this says how large a single one from that role may be.
+    const { spendingLimitFor } = await import('./company.service');
+    const limit = spendingLimitFor(input.companyId, callerRole);
+    if (limit !== undefined && totalAmount > limit) {
+      return fail(
+        'SPENDING_LIMIT_EXCEEDED',
+        `This request totals ${totalAmount.toLocaleString()}, above your role's ${limit.toLocaleString()} limit per request. Ask someone with a higher limit to submit it, or split it into smaller requests.`,
+      );
+    }
+
     const pr: PurchaseRequest = {
       id: newId('pr'),
       reference: `PR-${Math.floor(10000 + Math.random() * 89999)}`,

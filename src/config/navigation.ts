@@ -12,6 +12,7 @@ import {
   Users,
   Settings,
   ShoppingCart,
+  PiggyBank,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { Permission } from './rbac';
@@ -35,6 +36,7 @@ export const buyerNav: NavItem[] = [
   { label: 'Purchase requests', href: '/purchase-requests', icon: ClipboardCheck, permission: 'purchase_request.create' },
   { label: 'Approvals', href: '/approvals', icon: CheckSquare, permission: 'purchase_request.approve' },
   { label: 'Purchase orders', href: '/purchase-orders', icon: ClipboardList, permission: 'purchase_order.create' },
+  { label: 'Budgets', href: '/budgets', icon: PiggyBank, permission: 'analytics.read' },
   { label: 'Invoices', href: '/invoices', icon: Receipt, permission: 'invoices.read' },
   { label: 'Payments', href: '/payments', icon: Wallet, permission: 'payments.read' },
   { label: 'Analytics', href: '/analytics', icon: BarChart3, permission: 'analytics.read' },

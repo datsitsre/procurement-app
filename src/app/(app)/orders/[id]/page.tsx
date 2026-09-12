@@ -3,8 +3,9 @@
 import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Check, MapPin, Truck, TriangleAlert } from 'lucide-react';
+import { ArrowLeft, Check, MapPin, Truck, TriangleAlert, RefreshCw } from 'lucide-react';
 import { useActiveCompany, useActiveMembership, useTenantContext, useWorkspace } from '@/hooks/useAuth';
+import { useCart } from '@/hooks/useCart';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { ordersService } from '@/services/orders.service';
 import { invoicesService } from '@/services/invoices.service';
@@ -17,6 +18,7 @@ import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
 import { formatDate, formatDateTime } from '@/utils/format';
 import { hasPermission, Permission, type Role } from '@/config/rbac';
+import { reorderOrder } from '@/features/orders/reorder';
 import type { Delivery, Dispute, Invoice, Order, OrderTimelineEvent, Shipment } from '@/types/orders';
 import type { TenantContext } from '@/types/common';
 
@@ -27,12 +29,29 @@ export default function OrderDetailPage() {
   const company = useActiveCompany();
   const membership = useActiveMembership();
   const tenant = useTenantContext();
+  const { refresh: refreshCart } = useCart();
   const { data: order, loading, error, reload: reloadOrder } = useAsyncData<Order>(params.id, () => ordersService.getOrder(params.id, tenant));
   const { data: timeline, reload: reloadTimeline } = useAsyncData<OrderTimelineEvent[]>(params.id, () => ordersService.listTimeline(params.id));
   const { data: shipments, reload: reloadShipments } = useAsyncData<Shipment[]>(params.id, () => ordersService.listShipments(params.id));
   const { data: deliveries, reload: reloadDeliveries } = useAsyncData<Delivery[]>(params.id, () => ordersService.listDeliveries(params.id));
   const { data: invoice } = useAsyncData<Invoice | null>(params.id, () => invoicesService.getInvoiceForOrder(params.id));
   const { data: dispute, reload: reloadDispute } = useAsyncData<Dispute | null>(params.id, () => disputesService.getDisputeForOrder(params.id));
+  const [reordering, setReordering] = useState(false);
+  const [reorderWarnings, setReorderWarnings] = useState<string[] | null>(null);
+
+  async function handleReorder() {
+    if (!order || !company) return;
+    setReordering(true);
+    setReorderWarnings(null);
+    const outcome = await reorderOrder(order, company.id);
+    setReordering(false);
+    await refreshCart();
+    if (outcome.warnings.length === 0 && outcome.addedCount > 0) {
+      router.push('/cart');
+      return;
+    }
+    setReorderWarnings(outcome.warnings.length > 0 ? outcome.warnings : ['None of these items could be added to your cart.']);
+  }
 
   function reloadAll() {
     reloadOrder();
@@ -74,11 +93,31 @@ export default function OrderDetailPage() {
             {order.supplierName} · Placed {formatDate(order.createdAt)}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <StatusBadge domain="payment" status={order.paymentStatus} />
           <StatusBadge domain="order" status={order.status} />
+          {workspace === 'buyer' && (
+            <Button variant="outline" size="sm" loading={reordering} onClick={handleReorder}>
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              Reorder
+            </Button>
+          )}
         </div>
       </div>
+
+      {reorderWarnings && (
+        <div className="rounded-md border border-warning/30 bg-warning-bg p-3 text-sm text-warning">
+          <p className="font-medium">Some items from this order need attention:</p>
+          <ul className="mt-1 list-inside list-disc">
+            {reorderWarnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+          <Link href="/cart" className="mt-2 inline-block font-medium underline">
+            Go to cart
+          </Link>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="flex flex-col gap-6 lg:col-span-2">

@@ -164,3 +164,54 @@ export interface PurchaseOrder {
   orderId?: UUID;
   createdAt: ISODateTime;
 }
+
+// ---------- Purchase templates + recurring purchases (section 11) ----------
+
+export interface PurchaseTemplateItem {
+  productId: UUID;
+  productName: string;
+  quantity: number;
+}
+
+/** A reusable list of products a buyer saves under a name (e.g. "Office Setup Package",
+ *  section 11.0) so building the same cart again is one click ("Order again") instead of
+ *  re-adding every line. Holds no prices - applying a template always re-fetches current
+ *  pricing/stock the same way reordering a past order does (see features/orders/reorder.ts). */
+export interface PurchaseTemplate {
+  id: UUID;
+  companyId: UUID;
+  name: string;
+  items: PurchaseTemplateItem[];
+  createdByUserId: UUID;
+  createdAt: ISODateTime;
+}
+
+export type RecurringFrequency = 'WEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'CUSTOM';
+
+/**
+ * A standing order to submit the same purchase request on a schedule (section 11.2) - e.g.
+ * "order office supplies every month". Deliberately generates a normal PurchaseRequest each
+ * time it runs (via procurement.service.ts, going through the company's real approval rules)
+ * rather than creating a PurchaseOrder directly - a recurring purchase is a convenience for
+ * *submitting* the same request repeatedly, never a way to skip approval.
+ */
+export interface RecurringPurchase {
+  id: UUID;
+  companyId: UUID;
+  name: string;
+  items: PurchaseTemplateItem[];
+  frequency: RecurringFrequency;
+  /** Only meaningful when frequency is CUSTOM. */
+  customIntervalDays?: number;
+  requesterUserId: UUID;
+  requesterName: string;
+  department?: string;
+  costCenterId?: UUID;
+  active: boolean;
+  nextRunAt: ISODateTime;
+  lastRunAt?: ISODateTime;
+  /** Every purchase request this schedule has produced, most recent first - lets the UI show
+   *  "last ran on..." and link straight to what it created instead of just a bare timestamp. */
+  createdPurchaseRequestIds: UUID[];
+  createdAt: ISODateTime;
+}

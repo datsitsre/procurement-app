@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { ClipboardCheck } from 'lucide-react';
+import { ClipboardCheck, Repeat } from 'lucide-react';
 import { useActiveCompany } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { procurementService } from '@/services/procurement.service';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
+import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { RoleLabels, type Role } from '@/config/rbac';
@@ -20,9 +21,17 @@ export default function PurchaseRequestsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-h1">Purchase requests</h1>
-        <p className="text-body text-text-secondary">Carts submitted for your company&rsquo;s approval.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-h1">Purchase requests</h1>
+          <p className="text-body text-text-secondary">Carts submitted for your company&rsquo;s approval.</p>
+        </div>
+        <Link href="/purchase-requests/recurring">
+          <Button variant="outline">
+            <Repeat className="h-4 w-4" aria-hidden="true" />
+            Recurring purchases
+          </Button>
+        </Link>
       </div>
 
       {requests === null ? (

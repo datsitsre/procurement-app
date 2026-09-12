@@ -1,5 +1,5 @@
 import { delay, fail, ok } from './base';
-import { demoProducts } from '@/lib/demo-data/catalog';
+import { catalogService } from './catalog.service';
 import { resolveTierPrice } from '@/types/catalog';
 import type { ServiceResult, UUID } from '@/types/common';
 import type { Cart, CartItem } from '@/types/cart';
@@ -47,8 +47,12 @@ class MockCartService implements CartService {
 
   async setQuantity(companyId: UUID, productId: UUID, quantity: number): Promise<ServiceResult<Cart>> {
     await delay(150);
-    const product = demoProducts.find((p) => p.id === productId);
-    if (!product) return fail('NOT_FOUND', 'That product could not be found.');
+    // Reads through catalog.service (not the raw seed array) so a supplier's price/stock edit
+    // is reflected the moment it's added to a cart - section 11.1's "never silently use old
+    // pricing" applies just as much to a fresh add as it does to a reorder.
+    const productResult = await catalogService.getProductById(productId);
+    if (!productResult.ok) return fail('NOT_FOUND', 'That product could not be found.');
+    const product = productResult.data;
 
     if (quantity > 0 && quantity < product.moq) {
       return fail('BELOW_MOQ', `${product.name} has a minimum order quantity of ${product.moq} units.`);

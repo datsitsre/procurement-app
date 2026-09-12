@@ -1,9 +1,10 @@
 import { assertPermission, delay, fail, ok, ownsRecord } from './base';
 import { allCompanies, allCompanyUsers, allUsers, writeCompanyProfileOverride } from './auth.service';
 import { demoDepartments, demoCostCenters, demoBranches } from '@/lib/demo-data/company-workspace';
+import { DefaultSpendingLimits } from '@/config/spending-limits';
 import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { Branch, Company, CompanyUser, CostCenter, Department, User } from '@/types/company';
-import { Permission, type Role } from '@/config/rbac';
+import { Permission, Role } from '@/config/rbac';
 
 export interface TeamMember {
   membership: CompanyUser;
@@ -18,6 +19,36 @@ const DEPARTMENT_STORE_KEY = 'procurement.departments.v1.list';
 const COST_CENTER_STORE_KEY = 'procurement.cost-centers.v1.list';
 const BRANCH_STORE_KEY = 'procurement.branches.v1.list';
 const REMOVED_KEY = 'procurement.company-workspace.v1.removed';
+const SPENDING_LIMIT_STORE_KEY = 'procurement.spending-limits.v1';
+
+/** Overrides keyed by `${companyId}:${role}` - a company's customized spending limit for one
+ *  role, falling back to DefaultSpendingLimits when no override exists (section 11.5). */
+function readSpendingLimitOverrides(): Record<string, number> {
+  if (typeof window === 'undefined') return {};
+  const raw = window.localStorage.getItem(SPENDING_LIMIT_STORE_KEY);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+function writeSpendingLimitOverride(companyId: UUID, role: Role, amount: number) {
+  if (typeof window === 'undefined') return;
+  const store = readSpendingLimitOverrides();
+  store[`${companyId}:${role}`] = amount;
+  window.localStorage.setItem(SPENDING_LIMIT_STORE_KEY, JSON.stringify(store));
+}
+
+/** The effective spending limit for one role at one company - a company's own override if it
+ *  has set one, otherwise the platform default, otherwise `undefined` (no limit). Exported so
+ *  procurement.service.ts can enforce it without importing this file's private storage. */
+export function spendingLimitFor(companyId: UUID, role: Role): number | undefined {
+  const overrides = readSpendingLimitOverrides();
+  const key = `${companyId}:${role}`;
+  return key in overrides ? overrides[key] : DefaultSpendingLimits[role];
+}
 
 function readList<T>(key: string): T[] {
   if (typeof window === 'undefined') return [];
@@ -112,6 +143,11 @@ export interface CompanyService {
   listBranches(companyId: UUID): Promise<ServiceResult<Branch[]>>;
   createBranch(input: NewBranchInput, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Branch>>;
   removeBranch(branchId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>>;
+
+  /** Every role's effective spending limit for this company (section 11.5) - a company's own
+   *  override where one has been set, the platform default otherwise, `undefined` for no limit. */
+  listSpendingLimits(companyId: UUID): Promise<ServiceResult<{ role: Role; amount: number | undefined }[]>>;
+  setSpendingLimit(companyId: UUID, role: Role, amount: number, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>>;
 }
 
 class MockCompanyService implements CompanyService {
@@ -249,6 +285,31 @@ class MockCompanyService implements CompanyService {
     if (branch.isHeadOffice) return fail('INVALID_STATE', 'The head office branch cannot be removed.');
 
     markRemoved(branchId);
+    return ok(undefined);
+  }
+
+  async listSpendingLimits(companyId: UUID): Promise<ServiceResult<{ role: Role; amount: number | undefined }[]>> {
+    await delay(200);
+    // Only buyer-side roles have a meaningful spending limit - a supplier or platform role
+    // never submits a purchase request in the first place.
+    const buyerRoles: Role[] = [Role.OWNER, Role.ADMIN, Role.PROCUREMENT_MANAGER, Role.BUYER, Role.FINANCE_MANAGER, Role.APPROVER, Role.EMPLOYEE];
+    return ok(buyerRoles.map((role) => ({ role, amount: spendingLimitFor(companyId, role) })));
+  }
+
+  async setSpendingLimit(
+    companyId: UUID,
+    role: Role,
+    amount: number,
+    callerRole: Role,
+    caller: TenantContext,
+  ): Promise<ServiceResult<void>> {
+    await delay(250);
+    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
+    if (permissionError) return fail(permissionError.code, permissionError.message);
+    if (!ownsRecord(caller, companyId)) return fail('NOT_FOUND', 'That company could not be found.');
+    if (amount < 0) return fail('INVALID_AMOUNT', 'Set a spending limit of zero or more.');
+
+    writeSpendingLimitOverride(companyId, role, amount);
     return ok(undefined);
   }
 }

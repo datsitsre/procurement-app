@@ -3,8 +3,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { cartService } from '@/services/cart.service';
+import { catalogService } from '@/services/catalog.service';
 import { useAuth } from './useAuth';
-import { demoProducts } from '@/lib/demo-data/catalog';
 import { resolveTierPrice } from '@/types/catalog';
 import type { Cart, CartItem } from '@/types/cart';
 import type { Product } from '@/types/catalog';
@@ -26,6 +26,10 @@ interface CartContextValue {
   setQuantity: (productId: string, quantity: number) => Promise<ServiceError | null>;
   removeItem: (productId: string) => Promise<void>;
   clear: () => Promise<void>;
+  /** Re-fetches the cart from storage - for callers that mutate it through
+   *  cartService/addLinesToCart directly (reordering, applying a template) rather than through
+   *  this context's own setQuantity, so this provider's state doesn't go stale underneath them. */
+  refresh: () => Promise<void>;
 }
 
 const CartContext = createContext<CartContextValue | null>(null);
@@ -79,11 +83,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
     if (result.ok) setLoaded({ companyId, cart: result.data });
   }, [companyId]);
 
+  const refresh = useCallback(async () => {
+    if (!companyId) return;
+    const result = await cartService.getCart(companyId);
+    if (result.ok) setLoaded({ companyId, cart: result.data });
+  }, [companyId]);
+
   const lines = useMemo<CartLine[]>(() => {
     if (!cart) return [];
     return cart.items
       .map((item) => {
-        const product = demoProducts.find((p) => p.id === item.productId);
+        // Reads through catalog.service (override-aware), not the raw seed array - a supplier's
+        // price/stock edit must show up in every existing cart, not just newly-added lines.
+        const product = catalogService.getProductByIdSync(item.productId);
         if (!product) return null;
         const { unitPrice, savingsPerUnit } = resolveTierPrice(product, item.quantity);
         return { item, product, lineTotal: unitPrice * item.quantity, savingsPerUnit };
@@ -95,8 +107,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const subtotal = lines.reduce((sum, l) => sum + l.lineTotal, 0);
 
   const value = useMemo<CartContextValue>(
-    () => ({ cart, loading, lines, itemCount, subtotal, setQuantity, removeItem, clear }),
-    [cart, loading, lines, itemCount, subtotal, setQuantity, removeItem, clear],
+    () => ({ cart, loading, lines, itemCount, subtotal, setQuantity, removeItem, clear, refresh }),
+    [cart, loading, lines, itemCount, subtotal, setQuantity, removeItem, clear, refresh],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

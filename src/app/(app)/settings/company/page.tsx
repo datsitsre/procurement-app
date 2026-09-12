@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { SkeletonText } from '@/components/ui/Skeleton';
-import { Permission, type Role } from '@/config/rbac';
+import { Permission, RoleLabels, type Role } from '@/config/rbac';
 import type { CompanyProfilePatch } from '@/services/company.service';
 import type { Branch, Company, CostCenter, Department } from '@/types/company';
 import type { TenantContext } from '@/types/common';
@@ -51,6 +51,7 @@ export default function CompanySettingsPage() {
       <BranchesSection companyId={company.id} callerRole={membership.role} tenant={tenant} addresses={company.addresses} />
       <DepartmentsSection companyId={company.id} callerRole={membership.role} tenant={tenant} />
       <CostCentersSection companyId={company.id} callerRole={membership.role} tenant={tenant} />
+      <SpendingLimitsSection companyId={company.id} callerRole={membership.role} tenant={tenant} />
     </div>
   );
 }
@@ -392,6 +393,69 @@ function CostCentersSection({ companyId, callerRole, tenant }: { companyId: stri
                 <Button variant="ghost" size="icon" onClick={() => remove(cc.id)} aria-label={`Remove ${cc.code}`}>
                   <Trash2 className="h-4 w-4 text-text-tertiary" aria-hidden="true" />
                 </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SpendingLimitsSection({ companyId, callerRole, tenant }: { companyId: string; callerRole: Role; tenant: TenantContext }) {
+  const { data: limits, reload } = useAsyncData<{ role: Role; amount: number | undefined }[]>(companyId, () =>
+    companyService.listSpendingLimits(companyId),
+  );
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [savingRole, setSavingRole] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(role: Role) {
+    const raw = drafts[role];
+    const amount = Number(raw);
+    if (raw === undefined || Number.isNaN(amount)) return;
+    setSavingRole(role);
+    setError(null);
+    const result = await companyService.setSpendingLimit(companyId, role, amount, callerRole, tenant);
+    setSavingRole(null);
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    reload();
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Spending limits</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="mb-4 text-caption">
+          The maximum a single purchase request may total, per role - not a replacement for approval policies, an
+          additional cap on how large one request from that role can be before someone with a higher limit needs to
+          submit it instead.
+        </p>
+        {error && <p className="mb-3 rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
+        {limits === null ? (
+          <SkeletonText lines={3} />
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {limits.map(({ role, amount }) => (
+              <li key={role} className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm">
+                <span className="font-medium">{RoleLabels[role]}</span>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    value={drafts[role] ?? (amount !== undefined ? String(amount) : '')}
+                    onChange={(e) => setDrafts({ ...drafts, [role]: e.target.value })}
+                    placeholder="No limit"
+                    className="w-32"
+                  />
+                  <Button size="sm" variant="outline" loading={savingRole === role} onClick={() => save(role)}>
+                    Save
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>

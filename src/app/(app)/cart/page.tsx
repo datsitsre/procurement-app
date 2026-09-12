@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Minus, Plus, ShoppingCart, Trash2 } from 'lucide-react';
 import { useCart, type CartLine } from '@/hooks/useCart';
-import { useAuth, useActiveCompany, useActiveMembership } from '@/hooks/useAuth';
+import { useAuth, useActiveCompany, useActiveMembership, useTenantContext } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { catalogService } from '@/services/catalog.service';
 import { procurementService } from '@/services/procurement.service';
 import { companyService } from '@/services/company.service';
+import { TemplatesPanel } from '@/features/procurement/TemplatesPanel';
 import type { CostCenter } from '@/types/company';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Button } from '@/components/ui/Button';
@@ -22,9 +23,10 @@ import type { PurchaseRequestItem } from '@/types/procurement';
 export default function CartPage() {
   const router = useRouter();
   const { session } = useAuth();
-  const { loading, lines, subtotal, setQuantity, removeItem, clear } = useCart();
+  const { loading, lines, subtotal, setQuantity, removeItem, clear, refresh } = useCart();
   const company = useActiveCompany();
   const membership = useActiveMembership();
+  const tenant = useTenantContext();
   const companyId = company?.id ?? null;
   const { data: costCenters } = useAsyncData<CostCenter[]>(companyId, () => companyService.listCostCenters(companyId!));
   const [message, setMessage] = useState<string | null>(null);
@@ -50,6 +52,11 @@ export default function CartPage() {
   const tax = calculateTax(subtotal);
   const deliveryFee = lines.length > 0 ? FLAT_DELIVERY_FEE : 0;
   const total = subtotal + tax + deliveryFee;
+
+  async function handleTemplateApplied(warnings: string[]) {
+    await refresh();
+    if (warnings.length > 0) setMessage(warnings.join(' '));
+  }
 
   async function handleChange(productId: string, next: number) {
     setMessage(null);
@@ -114,6 +121,11 @@ export default function CartPage() {
     return (
       <div className="flex flex-col gap-6">
         <h1 className="text-h1">Cart</h1>
+        {message && (
+          <div role="alert" className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
+            {message}
+          </div>
+        )}
         <EmptyState
           icon={ShoppingCart}
           title="Your cart is empty"
@@ -124,6 +136,15 @@ export default function CartPage() {
             </Link>
           }
         />
+        {company && session && membership && (
+          <TemplatesPanel
+            companyId={company.id}
+            userId={session.user.id}
+            callerRole={membership.role}
+            tenant={tenant}
+            onApplied={handleTemplateApplied}
+          />
+        )}
       </div>
     );
   }
@@ -200,6 +221,17 @@ export default function CartPage() {
               </ul>
             </div>
           ))}
+
+          {company && session && membership && (
+            <TemplatesPanel
+              companyId={company.id}
+              userId={session.user.id}
+              callerRole={membership.role}
+              tenant={tenant}
+              currentLines={lines}
+              onApplied={handleTemplateApplied}
+            />
+          )}
         </div>
 
         <aside className="h-fit rounded-lg border border-border bg-surface p-5">

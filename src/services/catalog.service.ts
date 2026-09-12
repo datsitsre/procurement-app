@@ -125,6 +125,11 @@ export interface CatalogService {
   listProducts(filters?: ProductFilters): Promise<ServiceResult<Product[]>>;
   getProductBySlug(slug: string): Promise<ServiceResult<Product>>;
   getProductById(id: UUID): Promise<ServiceResult<Product>>;
+  /** Synchronous counterpart to `getProductById` - the storage read behind it is already
+   *  synchronous (the async wrapper only simulates network latency), so a caller that needs a
+   *  product mid-render (useCart.tsx's line pricing) can read it directly instead of juggling
+   *  an effect just to reach the same override-aware data `getProductById` already returns. */
+  getProductByIdSync(id: UUID): Product | undefined;
   listSuppliers(): Promise<ServiceResult<SupplierProfile[]>>;
   /** Every supplier regardless of verification status - the admin verification queue (section
    *  46) reads this, not the buyer-facing `listSuppliers`. */
@@ -228,6 +233,10 @@ class MockCatalogService implements CatalogService {
     const product = allProducts().find((p) => p.id === id);
     if (!product) return fail('NOT_FOUND', 'That product could not be found.');
     return ok(product);
+  }
+
+  getProductByIdSync(id: UUID): Product | undefined {
+    return allProducts().find((p) => p.id === id);
   }
 
   async listSuppliers(): Promise<ServiceResult<SupplierProfile[]>> {
