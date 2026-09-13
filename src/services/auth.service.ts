@@ -1,8 +1,8 @@
-import { delay, fail, ok } from './base';
+import { fail, ok } from './base';
 import { demoCompanies, demoCompanyUsers, demoUsers } from '@/lib/demo-data/companies';
 import type { ServiceResult, UUID, CountryCode, CurrencyCode } from '@/types/common';
 import type { Company, CompanyUser, User } from '@/types/company';
-import { Role, workspaceForRole, type Workspace } from '@/config/rbac';
+import { workspaceForRole, type Workspace } from '@/config/rbac';
 
 export interface Session {
   user: User;
@@ -31,46 +31,19 @@ export interface AuthService {
   switchCompany(companyId: UUID): Promise<ServiceResult<Session>>;
 }
 
-const SESSION_STORAGE_KEY = 'procurement.session.v1';
-/** Companies/users/memberships created at runtime via registration - kept separate from the
- *  static demo seed data and merged with it on read, so a page reload doesn't lose a newly
- *  registered company (until a real backend replaces this persistence entirely). */
+/** Companies/users/memberships the real `/api/auth/*` backend (Phase 14) knows about but that
+ *  every *other* mock service in this app (company.service.ts, catalog.service.ts, ...) still
+ *  only ever reads from this localStorage-backed cache - those domains haven't been migrated to
+ *  the database yet (section 34's staged plan; auth is stage 2, catalog/orders/etc. come later).
+ *  `mirrorIntoRuntimeCache` below is the bridge: every successful auth call mirrors what the
+ *  server returned into this cache, so a brand-new registration's company/user/membership is
+ *  visible to the still-mock parts of the app exactly as if it had always been seed data. */
 const RUNTIME_DATA_STORAGE_KEY = 'procurement.runtime-data.v1';
-/** email -> password, for every account (seed and runtime-registered) - kept separate from
- *  the User record itself, the way a real backend would never return a password hash as part
- *  of a user object. Plaintext here only because this is a mock; a real AuthService would
- *  never store or compare passwords client-side at all. */
-const CREDENTIALS_STORAGE_KEY = 'procurement.credentials.v1';
-
-/** All seeded demo accounts (section 65) share this password. */
-const DEMO_PASSWORD = 'password123';
 
 interface RuntimeData {
   companies: Company[];
   users: User[];
   companyUsers: CompanyUser[];
-}
-
-function readCredentials(): Record<string, string> {
-  if (typeof window === 'undefined') return {};
-  const raw = window.localStorage.getItem(CREDENTIALS_STORAGE_KEY);
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as Record<string, string>;
-  } catch {
-    return {};
-  }
-}
-
-function writeCredential(email: string, password: string) {
-  if (typeof window === 'undefined') return;
-  const creds = readCredentials();
-  creds[email.toLowerCase()] = password;
-  window.localStorage.setItem(CREDENTIALS_STORAGE_KEY, JSON.stringify(creds));
-}
-
-function passwordFor(email: string): string {
-  return readCredentials()[email.toLowerCase()] ?? DEMO_PASSWORD;
 }
 
 function readRuntimeData(): RuntimeData {
@@ -87,6 +60,12 @@ function readRuntimeData(): RuntimeData {
 function writeRuntimeData(data: RuntimeData) {
   if (typeof window === 'undefined') return;
   window.localStorage.setItem(RUNTIME_DATA_STORAGE_KEY, JSON.stringify(data));
+}
+
+function upsertById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
+  const byId = new Map(existing.map((item) => [item.id, item]));
+  for (const item of incoming) byId.set(item.id, item);
+  return Array.from(byId.values());
 }
 
 const COMPANY_OVERRIDE_KEY = 'procurement.company-profile-overrides.v1';
@@ -115,157 +94,131 @@ export function writeCompanyProfileOverride(companyId: UUID, patch: Partial<Comp
   window.localStorage.setItem(COMPANY_OVERRIDE_KEY, JSON.stringify(store));
 }
 
-/** Merges the static demo seed data with anything created at runtime (e.g. via registration)
- *  and any profile edits made since. Exported so other mock services (company.service.ts,
- *  etc.) read the same merged view instead of only the static seed arrays - otherwise a newly
- *  registered company's own data (or an edited profile) would be invisible to every service
- *  except this one. */
+/** Merges the static demo seed data with anything the real auth backend has told us about
+ *  (registrations, and every login response's full company/user/membership list) and any
+ *  profile edits made since. Exported so other mock services (company.service.ts, etc.) read
+ *  the same merged view instead of only the static seed arrays. */
 export function allCompanies(): Company[] {
   const overrides = readCompanyOverrides();
   return [...demoCompanies, ...readRuntimeData().companies].map((c) => (overrides[c.id] ? { ...c, ...overrides[c.id] } : c));
 }
 
 export function allUsers(): User[] {
-  return [...demoUsers, ...readRuntimeData().users];
+  return upsertById(demoUsers, readRuntimeData().users);
 }
 
 export function allCompanyUsers(): CompanyUser[] {
-  return [...demoCompanyUsers, ...readRuntimeData().companyUsers];
+  return upsertById(demoCompanyUsers, readRuntimeData().companyUsers);
 }
 
-function findUserByEmail(email: string): User | undefined {
-  return allUsers().find((u) => u.email.toLowerCase() === email.trim().toLowerCase());
+/** The `/api/auth/*` responses' shape (see server/dto/session.ts#buildSessionPayload) - a
+ *  superset of `Session` that also carries the full Company record for every membership, so the
+ *  frontend's still-mock company/product/order pages can resolve a company by id without a
+ *  separate `/api/companies/:id` round trip existing yet. */
+interface ServerSessionPayload {
+  user: User;
+  memberships: CompanyUser[];
+  activeCompanyId: string | null;
+  companies: Company[];
 }
 
-function membershipsFor(userId: UUID): CompanyUser[] {
-  return allCompanyUsers().filter((cu) => cu.userId === userId && cu.status === 'ACTIVE');
+/** Mirrors a server session response into the local runtime cache (see RUNTIME_DATA_STORAGE_KEY's
+ *  comment) so `allCompanies`/`allUsers`/`allCompanyUsers` immediately see it, then returns the
+ *  plain `Session` shape every consumer of this service already expects. */
+const demoCompanyIds = new Set(demoCompanies.map((c) => c.id));
+const demoUserIds = new Set(demoUsers.map((u) => u.id));
+const demoMembershipIds = new Set(demoCompanyUsers.map((m) => m.id));
+
+function mirrorIntoRuntimeCache(payload: ServerSessionPayload): Session | null {
+  if (!payload.activeCompanyId) return null;
+
+  // Only mirror records the static demo seed doesn't already have (i.e. genuinely new ones from
+  // a real registration) - the seed arrays are richer for anything they already cover (full
+  // addresses, credit terms, ...) than the DB's Phase-14 auth-only slice currently returns, so a
+  // seeded account's data must keep coming from the seed, not a thinner duplicate that would
+  // also double-count it in every `allCompanies()`/`allCompanyUsers()` consumer.
+  const runtime = readRuntimeData();
+  writeRuntimeData({
+    companies: upsertById(runtime.companies, payload.companies.filter((c) => !demoCompanyIds.has(c.id))),
+    users: upsertById(runtime.users, demoUserIds.has(payload.user.id) ? [] : [payload.user]),
+    companyUsers: upsertById(runtime.companyUsers, payload.memberships.filter((m) => !demoMembershipIds.has(m.id))),
+  });
+
+  return { user: payload.user, memberships: payload.memberships, activeCompanyId: payload.activeCompanyId };
 }
 
-function readStoredSession(): Session | null {
-  if (typeof window === 'undefined') return null;
-  const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
-  if (!raw) return null;
+async function postJson<T>(path: string, body?: unknown): Promise<ServiceResult<T>> {
+  let response: Response;
   try {
-    return JSON.parse(raw) as Session;
+    response = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
   } catch {
-    return null;
+    return fail('NETWORK_ERROR', 'Could not reach the server. Check your connection and try again.');
   }
-}
 
-function writeStoredSession(session: Session | null) {
-  if (typeof window === 'undefined') return;
-  if (session) {
-    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
-  } else {
-    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    return fail(String(response.status), data?.error ?? 'Something went wrong.', data?.fieldErrors);
   }
-}
-
-function newId(prefix: string): UUID {
-  return `${prefix}-${(typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : Date.now()}`;
+  return ok(data as T);
 }
 
 /**
- * Mock implementation backed by localStorage + the in-memory demo dataset. Swap this file
- * for one that calls a real `/api/auth/*` backend later - the `AuthService` interface and
- * the `Session` shape are the contract every consumer (useAuth, layouts, guards) depends on,
- * not this class. Real IDs would be server-generated UUIDs rather than crypto.randomUUID().
+ * Calls the real `/api/auth/*` backend (Phase 14) - session state itself now lives entirely in
+ * a server-verified, httpOnly-cookie-backed session (see server/auth/session.ts), never in
+ * localStorage. The `AuthService` interface and `Session` shape are the contract every consumer
+ * (useAuth, layouts, guards) depends on; this class satisfying it unchanged is what let every
+ * page that calls `useAuth()` keep working without modification once auth moved server-side.
  */
-class MockAuthService implements AuthService {
+class ApiAuthService implements AuthService {
   async login(email: string, password: string): Promise<ServiceResult<Session>> {
-    await delay();
-    const user = findUserByEmail(email);
-    if (!user || password !== passwordFor(email)) {
-      return fail('INVALID_CREDENTIALS', 'That email or password is incorrect.');
-    }
-    const memberships = membershipsFor(user.id);
-    if (memberships.length === 0) {
-      return fail('NO_COMPANY', 'This account is not linked to any company yet.');
-    }
-    const session: Session = { user, memberships, activeCompanyId: memberships[0].companyId };
-    writeStoredSession(session);
+    const result = await postJson<ServerSessionPayload>('/api/auth/login', { email, password });
+    if (!result.ok) return result;
+    const session = mirrorIntoRuntimeCache(result.data);
+    if (!session) return fail('NO_COMPANY', 'This account is not linked to any company yet.');
     return ok(session);
   }
 
   async register(input: RegisterInput): Promise<ServiceResult<Session>> {
-    await delay(500);
-
-    if (findUserByEmail(input.email)) {
-      return fail('EMAIL_TAKEN', 'An account with that email already exists.', { email: 'Already registered' });
-    }
-    if (input.password.length < 8) {
-      return fail('WEAK_PASSWORD', 'Password must be at least 8 characters.', {
-        password: 'Must be at least 8 characters',
-      });
-    }
-
-    const runtime = readRuntimeData();
-
-    const company: Company = {
-      id: newId('company'),
-      name: input.companyName,
-      country: input.country,
-      currency: input.currency,
-      addresses: [],
-      creditTerms: 'PREPAID',
-      isBuyer: true,
-      isSupplier: false,
-      createdAt: new Date().toISOString(),
-    };
-    const user: User = {
-      id: newId('user'),
-      name: input.fullName,
-      email: input.email,
-      createdAt: new Date().toISOString(),
-    };
-    const membership: CompanyUser = {
-      id: newId('cu'),
-      companyId: company.id,
-      userId: user.id,
-      role: Role.OWNER,
-      status: 'ACTIVE',
-      joinedAt: new Date().toISOString(),
-    };
-
-    writeRuntimeData({
-      companies: [...runtime.companies, company],
-      users: [...runtime.users, user],
-      companyUsers: [...runtime.companyUsers, membership],
-    });
-    writeCredential(input.email, input.password);
-
-    const session: Session = { user, memberships: [membership], activeCompanyId: company.id };
-    writeStoredSession(session);
+    const result = await postJson<ServerSessionPayload>('/api/auth/register', input);
+    if (!result.ok) return result;
+    const session = mirrorIntoRuntimeCache(result.data);
+    if (!session) return fail('REGISTRATION_FAILED', 'Registration failed. Please try again.');
     return ok(session);
   }
 
   async logout(): Promise<void> {
-    await delay(150);
-    writeStoredSession(null);
+    await postJson('/api/auth/logout');
   }
 
   async getSession(): Promise<ServiceResult<Session>> {
-    await delay(150);
-    const session = readStoredSession();
+    let response: Response;
+    try {
+      response = await fetch('/api/auth/session', { credentials: 'same-origin' });
+    } catch {
+      return fail('NETWORK_ERROR', 'Could not reach the server.');
+    }
+    const data = await response.json().catch(() => null);
+    if (!data) return fail('NO_SESSION', 'Not signed in.');
+    const session = mirrorIntoRuntimeCache(data as ServerSessionPayload);
     if (!session) return fail('NO_SESSION', 'Not signed in.');
     return ok(session);
   }
 
   async switchCompany(companyId: string): Promise<ServiceResult<Session>> {
-    await delay(200);
-    const session = readStoredSession();
-    if (!session) return fail('NO_SESSION', 'Not signed in.');
-    const stillMember = session.memberships.some((m) => m.companyId === companyId);
-    if (!stillMember) {
-      return fail('FORBIDDEN', 'You are not a member of that company.');
-    }
-    const next: Session = { ...session, activeCompanyId: companyId };
-    writeStoredSession(next);
-    return ok(next);
+    const result = await postJson<ServerSessionPayload>('/api/auth/switch-company', { companyId });
+    if (!result.ok) return result;
+    const session = mirrorIntoRuntimeCache(result.data);
+    if (!session) return fail('FORBIDDEN', 'You are not a member of that company.');
+    return ok(session);
   }
 }
 
-export const authService: AuthService = new MockAuthService();
+export const authService: AuthService = new ApiAuthService();
 
 export function activeCompanyOf(session: Session): Company | undefined {
   return allCompanies().find((c) => c.id === session.activeCompanyId);
