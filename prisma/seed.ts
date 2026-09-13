@@ -475,8 +475,90 @@ async function main() {
     await db.inventoryRecord.createMany({ data: inventory.map((i) => ({ ...i, productId: p.id })) });
   }
 
+  // ---------------------------------------------------------------------------------------
+  // RFQs, quotes, negotiation (Phase 14, Stage 5). Ported from src/lib/demo-data/procurement.ts,
+  // same ids. supplierName/senderName aren't stored (derived via join from SupplierProfile/User
+  // at read time - see server/dto/procurement.ts) so this seed only sets the columns that
+  // actually exist on the real schema.
+  // ---------------------------------------------------------------------------------------
+
+  const rfqs = [
+    {
+      id: 'rfq-10082', reference: 'RFQ-10082', companyId: 'company-acme-gh', createdByUserId: 'user-john-doe',
+      items: [{ id: 'rfqi-1', productId: 'prod-cisco-switch', productName: 'Cisco Catalyst Switch', quantity: 50 }],
+      requiredDeliveryDate: '2026-09-20T00:00:00Z', deliveryLocation: 'Accra',
+      additionalRequirements: 'Please include rack-mount kit and a spare unit if available.',
+      suppliers: [
+        { supplierId: 'supplier-abc', status: 'QUOTED' as const },
+        { supplierId: 'supplier-wae', status: 'QUOTED' as const },
+        { supplierId: 'supplier-prime', status: 'INVITED' as const },
+      ],
+      status: 'NEGOTIATION' as const, createdAt: '2026-09-03T09:00:00Z',
+    },
+    {
+      id: 'rfq-10090', reference: 'RFQ-10090', companyId: 'company-acme-gh', createdByUserId: 'user-john-doe',
+      items: [{ id: 'rfqi-2', productId: 'prod-office-desk', productName: 'Office Desk', quantity: 30 }],
+      requiredDeliveryDate: '2026-09-25T00:00:00Z', deliveryLocation: 'Accra',
+      suppliers: [{ supplierId: 'supplier-prime', status: 'INVITED' as const }],
+      status: 'SENT' as const, createdAt: '2026-09-10T09:00:00Z',
+    },
+  ];
+
+  for (const r of rfqs) {
+    const { items, suppliers, createdAt, ...rest } = r;
+    await db.rFQ.upsert({ where: { id: r.id }, update: { ...rest }, create: { ...rest, createdAt: new Date(createdAt) } });
+    await db.rFQItem.deleteMany({ where: { rfqId: r.id } });
+    await db.rFQItem.createMany({ data: items.map((i) => ({ ...i, rfqId: r.id })) });
+    await db.rFQSupplier.deleteMany({ where: { rfqId: r.id } });
+    await db.rFQSupplier.createMany({ data: suppliers.map((s) => ({ ...s, rfqId: r.id })) });
+  }
+
+  const quotes = [
+    {
+      id: 'quote-abc-10082', rfqId: 'rfq-10082', supplierId: 'supplier-abc',
+      items: [{ id: 'qi-1', productId: 'prod-cisco-switch', quantity: 50, unitPrice: 7850 }],
+      totalPrice: 392500, deliveryDays: 2, warrantyMonths: 24,
+      notes: 'Includes rack-mount kit as requested. Spare unit available at an extra cost.',
+      submittedAt: '2026-09-04T11:00:00Z',
+    },
+    {
+      id: 'quote-wae-10082', rfqId: 'rfq-10082', supplierId: 'supplier-wae',
+      items: [{ id: 'qi-2', productId: 'prod-cisco-switch', quantity: 50, unitPrice: 7650 }],
+      totalPrice: 382500, deliveryDays: 4, warrantyMonths: 36,
+      notes: 'Best price available for this volume. Rack-mount kit included.',
+      submittedAt: '2026-09-05T09:30:00Z',
+    },
+  ];
+
+  for (const q of quotes) {
+    const { items, submittedAt, ...rest } = q;
+    await db.quote.upsert({ where: { id: q.id }, update: { ...rest }, create: { ...rest, submittedAt: new Date(submittedAt) } });
+    await db.quoteItem.deleteMany({ where: { quoteId: q.id } });
+    await db.quoteItem.createMany({ data: items.map((i) => ({ ...i, quoteId: q.id })) });
+  }
+
+  const negotiations = [
+    {
+      id: 'neg-1', rfqId: 'rfq-10082', quoteId: 'quote-wae-10082', senderRole: 'BUYER' as const,
+      senderUserId: 'user-john-doe',
+      message: 'We can commit to 100 units if you can bring the price down further.',
+      proposedQuantity: 100, sentAt: '2026-09-05T14:00:00Z',
+    },
+    {
+      id: 'neg-2', rfqId: 'rfq-10082', quoteId: 'quote-wae-10082', senderRole: 'SUPPLIER' as const,
+      message: 'We can offer ₵7,650 per unit for 100+ units, same delivery and warranty terms.',
+      proposedPrice: 7650, proposedQuantity: 100, sentAt: '2026-09-05T16:20:00Z',
+    },
+  ];
+
+  for (const n of negotiations) {
+    const { sentAt, ...rest } = n;
+    await db.negotiationMessage.upsert({ where: { id: n.id }, update: { ...rest }, create: { ...rest, sentAt: new Date(sentAt) } });
+  }
+
   console.log(`Seeded ${users.length} users, ${companies.length} companies, ${memberships.length} memberships.`);
   console.log(`Seeded ${supplierProfiles.length} suppliers, ${categories.length} categories, ${products.length} products.`);
+  console.log(`Seeded ${rfqs.length} RFQs, ${quotes.length} quotes, ${negotiations.length} negotiation messages.`);
   console.log(`Every seeded account's password is "${DEMO_PASSWORD}" - demo data only, never use in production.`);
 }
 

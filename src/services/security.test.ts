@@ -21,7 +21,6 @@ const PLATFORM_ADMIN = { isPlatformAdmin: true };
 
 // Real seed ids this suite probes against - see lib/demo-data/*.ts.
 const REAL_ORDER_ID = 'order-10082'; // company-acme-gh / supplier-abc
-const REAL_RFQ_ID = 'rfq-10082'; // company-acme-gh, supplier-abc + supplier-wae invited
 const REAL_PR_ID = 'pr-10082'; // company-acme-gh
 const REAL_PO_ID = 'po-2026-00182'; // company-acme-gh / supplier-abc
 const REAL_INVOICE_ID = 'invoice-10282'; // company-acme-gh / supplier-abc
@@ -97,27 +96,9 @@ describe('IDOR: order fulfillment mutations (a supplier fulfilling an order that
   });
 });
 
-describe('IDOR: RFQ detail (buyer from another company; an uninvited supplier)', () => {
-  it('refuses a different company reading this RFQ', async () => {
-    const result = await procurementService.getRfq(REAL_RFQ_ID, OTHER_COMPANY);
-    expect(result.ok).toBe(false);
-  });
-
-  it('refuses a supplier who was never invited to this RFQ', async () => {
-    const result = await procurementService.getRfq(REAL_RFQ_ID, OTHER_SUPPLIER);
-    expect(result.ok).toBe(false);
-  });
-
-  it('allows an invited supplier (supplier-abc was invited to rfq-10082)', async () => {
-    const result = await procurementService.getRfq(REAL_RFQ_ID, { supplierId: 'supplier-abc' });
-    expect(result.ok).toBe(true);
-  });
-
-  it('allows the owning buyer company', async () => {
-    const result = await procurementService.getRfq(REAL_RFQ_ID, { companyId: 'company-acme-gh' });
-    expect(result.ok).toBe(true);
-  });
-});
+// RFQ detail IDOR coverage moved to server/services/procurement.routes.test.ts (Phase 14, Stage
+// 5) - procurementService.getRfq is now a real `/api/rfqs/[rfqId]` fetch() with no live server
+// during `vitest run`, the same reason Stage 4 retired the equivalent product describe block.
 
 describe('Privilege escalation: purchase request approval across tenants', () => {
   it("refuses reading another company's purchase request", async () => {

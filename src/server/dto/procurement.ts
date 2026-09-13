@@ -1,0 +1,94 @@
+import 'server-only';
+import type { NegotiationMessage, Quote, QuoteItem, RFQ, RFQItem, RFQSupplier } from '@/types/procurement';
+import type {
+  NegotiationMessage as PrismaNegotiationMessage,
+  Quote as PrismaQuote,
+  QuoteItem as PrismaQuoteItem,
+  RFQ as PrismaRFQ,
+  RFQItem as PrismaRFQItem,
+  RFQSupplier as PrismaRFQSupplier,
+  SupplierProfile,
+  User,
+} from '@prisma/client';
+
+/** Maps Prisma's generated RFQ/Quote/Negotiation models to the exact frontend types
+ *  (src/types/procurement.ts). Neither RFQSupplier, Quote, nor NegotiationMessage store a
+ *  supplier/sender *name* column - the frontend type has one (for display without a second
+ *  lookup), so every mapper here takes the already-joined supplier/user record and derives it,
+ *  never a raw ORM entity crossing the API boundary (section 36). */
+
+export function toRfqItemDto(i: PrismaRFQItem): RFQItem {
+  return { id: i.id, productId: i.productId, productName: i.productName, quantity: i.quantity };
+}
+
+export function toRfqSupplierDto(s: PrismaRFQSupplier & { supplier: SupplierProfile }): RFQSupplier {
+  return { supplierId: s.supplierId, supplierName: s.supplier.name, status: s.status };
+}
+
+type RfqWithRelations = PrismaRFQ & {
+  items: PrismaRFQItem[];
+  suppliers: (PrismaRFQSupplier & { supplier: SupplierProfile })[];
+};
+
+export function toRfqDto(r: RfqWithRelations): RFQ {
+  return {
+    id: r.id,
+    reference: r.reference,
+    companyId: r.companyId,
+    createdByUserId: r.createdByUserId,
+    items: r.items.map(toRfqItemDto),
+    requiredDeliveryDate: r.requiredDeliveryDate.toISOString(),
+    deliveryLocation: r.deliveryLocation,
+    additionalRequirements: r.additionalRequirements ?? undefined,
+    attachmentIds: [],
+    suppliers: r.suppliers.map(toRfqSupplierDto),
+    status: r.status,
+    acceptedQuoteId: r.acceptedQuoteId ?? undefined,
+    createdAt: r.createdAt.toISOString(),
+    expiresAt: r.expiresAt?.toISOString(),
+  };
+}
+
+export function toQuoteItemDto(i: PrismaQuoteItem): QuoteItem {
+  return { id: i.id, productId: i.productId, quantity: i.quantity, unitPrice: Number(i.unitPrice) };
+}
+
+type QuoteWithRelations = PrismaQuote & { items: PrismaQuoteItem[]; supplier: SupplierProfile };
+
+export function toQuoteDto(q: QuoteWithRelations): Quote {
+  return {
+    id: q.id,
+    rfqId: q.rfqId,
+    supplierId: q.supplierId,
+    supplierName: q.supplier.name,
+    items: q.items.map(toQuoteItemDto),
+    totalPrice: Number(q.totalPrice),
+    deliveryDays: q.deliveryDays,
+    warrantyMonths: q.warrantyMonths,
+    notes: q.notes ?? undefined,
+    submittedAt: q.submittedAt.toISOString(),
+  };
+}
+
+type NegotiationWithRelations = PrismaNegotiationMessage & {
+  sender: User | null;
+  quote: PrismaQuote & { supplier: SupplierProfile };
+};
+
+export function toNegotiationMessageDto(m: NegotiationWithRelations): NegotiationMessage {
+  return {
+    id: m.id,
+    rfqId: m.rfqId,
+    quoteId: m.quoteId,
+    senderRole: m.senderRole,
+    // A BUYER message's sender is a real user; a SUPPLIER message may be the canned
+    // "acknowledgement" reply this build stands in with (see server/services/procurement.
+    // service.ts's sendNegotiationMessage) which has no real senderUserId - falls back to the
+    // supplier's own name, exactly like the mock this replaces.
+    senderName: m.sender?.name ?? m.quote.supplier.name,
+    message: m.message,
+    proposedPrice: m.proposedPrice ? Number(m.proposedPrice) : undefined,
+    proposedQuantity: m.proposedQuantity ?? undefined,
+    sentAt: m.sentAt.toISOString(),
+  };
+}

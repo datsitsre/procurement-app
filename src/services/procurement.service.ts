@@ -1,13 +1,6 @@
-import { assertPermission, delay, fail, ok, ownsRecord } from './base';
+import { apiRequest, assertPermission, delay, fail, ok, ownsRecord } from './base';
 import { FLAT_DELIVERY_FEE, calculateTax } from '@/utils/pricing';
-import {
-  demoApprovalRules,
-  demoNegotiationMessages,
-  demoPurchaseRequests,
-  demoQuotes,
-  demoRfqs,
-} from '@/lib/demo-data/procurement';
-import { demoSuppliers } from '@/lib/demo-data/catalog';
+import { demoApprovalRules, demoPurchaseRequests } from '@/lib/demo-data/procurement';
 import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type {
   ApprovalRule,
@@ -28,9 +21,6 @@ function newId(prefix: string): UUID {
 // ---------- runtime persistence (seed + localStorage overrides, same pattern as auth.service) ----------
 
 const PR_STORE_KEY = 'procurement.purchase-requests.v1';
-const RFQ_STORE_KEY = 'procurement.rfqs.v1';
-const QUOTE_STORE_KEY = 'procurement.quotes.v1';
-const NEGOTIATION_STORE_KEY = 'procurement.negotiations.v1';
 
 function readStore<T>(key: string): Record<UUID, T> {
   if (typeof window === 'undefined') return {};
@@ -73,21 +63,6 @@ function allPurchaseRequests(): PurchaseRequest[] {
   const seeded = demoPurchaseRequests.map((pr) => overrides[pr.id] ?? pr);
   const created = readList<PurchaseRequest>(PR_STORE_KEY).map((pr) => overrides[pr.id] ?? pr);
   return [...seeded, ...created];
-}
-
-function allRfqs(): RFQ[] {
-  const overrides = readStore<RFQ>(RFQ_STORE_KEY);
-  const seeded = demoRfqs.map((r) => overrides[r.id] ?? r);
-  const created = readList<RFQ>(RFQ_STORE_KEY).map((r) => overrides[r.id] ?? r);
-  return [...seeded, ...created];
-}
-
-function allQuotes(): Quote[] {
-  return [...demoQuotes, ...readList<Quote>(QUOTE_STORE_KEY)];
-}
-
-function allNegotiationMessages(): NegotiationMessage[] {
-  return [...demoNegotiationMessages, ...readList<NegotiationMessage>(NEGOTIATION_STORE_KEY)];
 }
 
 // ---------- approval rule resolution (section 23) ----------
@@ -242,119 +217,53 @@ export interface ProcurementService {
   removeApprovalRule(ruleId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>>;
 }
 
-class MockProcurementService implements ProcurementService {
+/**
+ * Calls the real `/api/rfqs/*` and `/api/suppliers/[supplierId]/{rfqs,quotes}` backend (Phase
+ * 14, Stage 5) for RFQs, quotes, and negotiation. `callerRole`/`caller` are still accepted on
+ * several methods (every existing page already passes them) but are never sent over the wire
+ * and never trusted for authorization - the API derives the caller's role and tenant from the
+ * session cookie itself (server/auth/require.ts, server/services/procurement.service.ts).
+ * Keeping these parameters means every consuming page needed zero changes. Purchase requests
+ * and approval rules stay on the mock below (see that block's own comment).
+ */
+class ApiProcurementService implements ProcurementService {
   // ---- RFQ ----
 
   async listRfqs(companyId: UUID): Promise<ServiceResult<RFQ[]>> {
-    await delay(250);
-    return ok(allRfqs().filter((r) => r.companyId === companyId).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)));
+    return apiRequest<RFQ[]>(`/api/rfqs?companyId=${companyId}`);
   }
 
   async listRfqsForSupplier(supplierId: UUID): Promise<ServiceResult<RFQ[]>> {
-    await delay(250);
-    return ok(
-      allRfqs()
-        .filter((r) => r.suppliers.some((s) => s.supplierId === supplierId))
-        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
-    );
+    return apiRequest<RFQ[]>(`/api/suppliers/${supplierId}/rfqs`);
   }
 
-  async getRfq(id: UUID, caller: TenantContext): Promise<ServiceResult<RFQ>> {
-    await delay(200);
-    const rfq = allRfqs().find((r) => r.id === id);
-    const invited = !!rfq && !!caller.supplierId && rfq.suppliers.some((s) => s.supplierId === caller.supplierId);
-    if (!rfq || !(ownsRecord(caller, rfq.companyId) || invited)) {
-      return fail('NOT_FOUND', 'That RFQ could not be found.');
-    }
-    return ok(rfq);
+  async getRfq(id: UUID): Promise<ServiceResult<RFQ>> {
+    return apiRequest<RFQ>(`/api/rfqs/${id}`);
   }
 
-  async createRfq(input: CreateRfqInput, callerRole: Role): Promise<ServiceResult<RFQ>> {
-    await delay(400);
-    const permissionError = assertPermission(callerRole, Permission.RFQ_CREATE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-    if (input.items.length === 0) return fail('EMPTY', 'Add at least one product to the RFQ.');
-    if (input.supplierIds.length === 0) return fail('NO_SUPPLIERS', 'Invite at least one supplier.');
-
-    const rfq: RFQ = {
-      id: newId('rfq'),
-      reference: `RFQ-${Math.floor(10000 + Math.random() * 89999)}`,
-      companyId: input.companyId,
-      createdByUserId: input.createdByUserId,
-      items: input.items,
-      requiredDeliveryDate: input.requiredDeliveryDate,
-      deliveryLocation: input.deliveryLocation,
-      additionalRequirements: input.additionalRequirements,
-      attachmentIds: [],
-      suppliers: input.supplierIds.map((supplierId) => ({
-        supplierId,
-        supplierName: demoSuppliers.find((s) => s.id === supplierId)?.name ?? 'Supplier',
-        status: 'INVITED' as const,
-      })),
-      status: 'SENT',
-      createdAt: new Date().toISOString(),
-    };
-    appendToList(RFQ_STORE_KEY, rfq);
-    return ok(rfq);
+  async createRfq(input: CreateRfqInput): Promise<ServiceResult<RFQ>> {
+    return apiRequest<RFQ>('/api/rfqs', { method: 'POST', body: JSON.stringify(input) });
   }
 
   // ---- Quotes ----
 
   async listQuotesForRfq(rfqId: UUID): Promise<ServiceResult<Quote[]>> {
-    await delay(250);
-    return ok(allQuotes().filter((q) => q.rfqId === rfqId));
+    return apiRequest<Quote[]>(`/api/rfqs/${rfqId}/quotes`);
   }
 
   async listQuotesForSupplier(supplierId: UUID): Promise<ServiceResult<Quote[]>> {
-    await delay(250);
-    return ok(allQuotes().filter((q) => q.supplierId === supplierId));
+    return apiRequest<Quote[]>(`/api/suppliers/${supplierId}/quotes`);
   }
 
-  async submitQuote(input: SubmitQuoteInput, callerRole: Role): Promise<ServiceResult<Quote>> {
-    await delay(400);
-    const permissionError = assertPermission(callerRole, Permission.RFQ_RESPOND);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-    if (input.items.length === 0) return fail('EMPTY', 'Quote at least one item.');
-
-    const rfq = allRfqs().find((r) => r.id === input.rfqId);
-    if (!rfq) return fail('NOT_FOUND', 'That RFQ could not be found.');
-    const invitation = rfq.suppliers.find((s) => s.supplierId === input.supplierId);
-    if (!invitation) return fail('NOT_INVITED', 'Your company was not invited to this RFQ.');
-    if (allQuotes().some((q) => q.rfqId === input.rfqId && q.supplierId === input.supplierId)) {
-      return fail('ALREADY_QUOTED', 'You have already submitted a quote for this RFQ.');
-    }
-
-    const totalPrice = input.items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
-    const quote: Quote = {
-      id: newId('quote'),
-      rfqId: input.rfqId,
-      supplierId: input.supplierId,
-      supplierName: invitation.supplierName,
-      items: input.items.map((i) => ({ id: newId('qi'), productId: i.productId, quantity: i.quantity, unitPrice: i.unitPrice })),
-      totalPrice,
-      deliveryDays: input.deliveryDays,
-      warrantyMonths: input.warrantyMonths,
-      notes: input.notes,
-      submittedAt: new Date().toISOString(),
-    };
-    appendToList(QUOTE_STORE_KEY, quote);
-
-    const updatedSuppliers = rfq.suppliers.map((s) => (s.supplierId === input.supplierId ? { ...s, status: 'QUOTED' as const } : s));
-    const status = rfq.status === 'SENT' || rfq.status === 'VIEWED' ? ('QUOTED' as const) : rfq.status;
-    writeStore(RFQ_STORE_KEY, rfq.id, { ...rfq, suppliers: updatedSuppliers, status });
-
-    return ok(quote);
+  async submitQuote(input: SubmitQuoteInput): Promise<ServiceResult<Quote>> {
+    const { rfqId, ...body } = input;
+    return apiRequest<Quote>(`/api/rfqs/${rfqId}/quotes`, { method: 'POST', body: JSON.stringify(body) });
   }
 
   // ---- Negotiation ----
 
   async listNegotiationMessages(rfqId: UUID, quoteId: UUID): Promise<ServiceResult<NegotiationMessage[]>> {
-    await delay(200);
-    return ok(
-      allNegotiationMessages()
-        .filter((m) => m.rfqId === rfqId && m.quoteId === quoteId)
-        .sort((a, b) => (a.sentAt < b.sentAt ? -1 : 1)),
-    );
+    return apiRequest<NegotiationMessage[]>(`/api/rfqs/${rfqId}/quotes/${quoteId}/negotiations`);
   }
 
   async sendNegotiationMessage(
@@ -365,69 +274,26 @@ class MockProcurementService implements ProcurementService {
     proposedPrice?: number,
     proposedQuantity?: number,
   ): Promise<ServiceResult<NegotiationMessage[]>> {
-    await delay(300);
-    const permissionError = assertPermission(callerRole, Permission.RFQ_CREATE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-    if (!message.trim()) return fail('EMPTY', 'Write a message before sending.');
-
-    const buyerMessage: NegotiationMessage = {
-      id: newId('neg'),
-      rfqId,
-      quoteId,
-      senderRole: 'BUYER',
-      senderName: 'You',
-      message,
-      proposedPrice,
-      proposedQuantity,
-      sentAt: new Date().toISOString(),
-    };
-    appendToList(NEGOTIATION_STORE_KEY, buyerMessage);
-
-    // Negotiation is one-directional in this build - the supplier side does not have a real
-    // reply UI of its own (the RFQ response flow added in Phase 5 covers quote submission, not
-    // back-and-forth negotiation). This canned acknowledgement stands in for a live counterpart
-    // so the thread stays usable to test end to end; it is never presented as a real person,
-    // and the sender name is the supplier's company name, matching how seeded history renders.
-    const quote = allQuotes().find((q) => q.id === quoteId);
-    const supplierReply: NegotiationMessage = {
-      id: newId('neg'),
-      rfqId,
-      quoteId,
-      senderRole: 'SUPPLIER',
-      senderName: quote?.supplierName ?? 'Supplier',
-      message: proposedPrice
-        ? `Thanks for the note - we'll review ${proposedPrice ? `₵${proposedPrice}` : 'your proposal'} and get back to you shortly.`
-        : "Thanks for the note - we'll review this and get back to you shortly.",
-      sentAt: new Date(Date.now() + 1000).toISOString(),
-    };
-    appendToList(NEGOTIATION_STORE_KEY, supplierReply);
-
-    return this.listNegotiationMessages(rfqId, quoteId);
+    return apiRequest<NegotiationMessage[]>(`/api/rfqs/${rfqId}/quotes/${quoteId}/negotiations`, {
+      method: 'POST',
+      body: JSON.stringify({ message, proposedPrice, proposedQuantity }),
+    });
   }
 
   async acceptQuote(
     rfqId: UUID,
     quoteId: UUID,
     authorizedByName: string,
-    callerRole: Role,
-    caller: TenantContext,
   ): Promise<ServiceResult<{ purchaseOrderId: UUID }>> {
-    await delay(400);
-    const permissionError = assertPermission(callerRole, Permission.PURCHASE_ORDER_CREATE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
+    const result = await apiRequest<{ rfq: RFQ; quote: Quote }>(`/api/rfqs/${rfqId}/quotes/${quoteId}/accept`, { method: 'POST' });
+    if (!result.ok) return result;
 
-    const rfq = allRfqs().find((r) => r.id === rfqId);
-    const quote = allQuotes().find((q) => q.id === quoteId);
-    // Without this, a buyer at any company could accept a quote - and commit another company
-    // to a real purchase order - on an RFQ that isn't theirs at all (section 9.2).
-    if (!rfq || !quote || !ownsRecord(caller, rfq.companyId)) return fail('NOT_FOUND', 'That RFQ or quote could not be found.');
-
-    writeStore(RFQ_STORE_KEY, rfq.id, { ...rfq, status: 'ACCEPTED' as const, acceptedQuoteId: quote.id });
-
-    // Building a PurchaseOrder from an accepted quote is purchase-order.service's job -
-    // imported lazily here to avoid a circular import between the two service modules.
+    // Building a PurchaseOrder from an accepted quote is still purchase-order.service's (mock)
+    // job - the server only updates the RFQ/Quote side (see its own acceptQuote comment).
+    // Imported lazily to avoid a circular import between the two service modules, the same
+    // pattern the old mock acceptQuote used.
     const { purchaseOrderService } = await import('./purchase-order.service');
-    const po = await purchaseOrderService.createFromQuote(rfq, quote, authorizedByName);
+    const po = await purchaseOrderService.createFromQuote(result.data.rfq, result.data.quote, authorizedByName);
     return ok({ purchaseOrderId: po.id });
   }
 
@@ -626,4 +492,4 @@ class MockProcurementService implements ProcurementService {
   }
 }
 
-export const procurementService: ProcurementService = new MockProcurementService();
+export const procurementService: ProcurementService = new ApiProcurementService();

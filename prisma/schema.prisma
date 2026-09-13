@@ -74,6 +74,7 @@ model User {
   createdPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestRequester")
   createdTemplates        PurchaseTemplate[]
   createdRecurring        RecurringPurchase[]
+  sentNegotiationMessages NegotiationMessage[]
 
   @@index([email])
 }
@@ -618,8 +619,9 @@ model NegotiationMessage {
   proposedQuantity Int?
   sentAt           DateTime              @default(now())
 
-  rfq   RFQ   @relation(fields: [rfqId], references: [id], onDelete: Cascade)
-  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  rfq    RFQ   @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  quote  Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  sender User? @relation(fields: [senderUserId], references: [id])
 
   @@index([rfqId, quoteId])
 }
