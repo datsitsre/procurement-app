@@ -139,34 +139,27 @@ model Company {
 
   parentGroup CompanyGroup? @relation(fields: [parentGroupId], references: [id])
 
-  addresses                Address[]
-  branches                 Branch[]
-  departments              Department[]
-  costCenters              CostCenter[]
-  memberships              CompanyMembership[]
-  budgets                  Budget[]
-  spendingLimits           SpendingLimit[]
-  approvalRules            ApprovalRule[]
-  supplierProfile          SupplierProfile?
-  products                 Product[]           @relation("SupplierProducts")
-  rfqs                     RFQ[]               @relation("BuyerRfqs")
-  rfqInvites               RFQSupplier[]       @relation("SupplierRfqInvites")
-  quotes                   Quote[]             @relation("SupplierQuotes")
-  purchaseRequests         PurchaseRequest[]   @relation("BuyerPurchaseRequests")
-  purchaseOrdersAsBuyer    PurchaseOrder[]     @relation("BuyerPurchaseOrders")
-  purchaseOrdersAsSupplier PurchaseOrder[]     @relation("SupplierPurchaseOrders")
-  purchaseTemplates        PurchaseTemplate[]
-  recurringPurchases       RecurringPurchase[]
-  carts                    Cart[]
-  ordersAsBuyer            Order[]             @relation("BuyerOrders")
-  ordersAsSupplier         Order[]             @relation("SupplierOrders")
-  invoicesAsBuyer          Invoice[]           @relation("BuyerInvoices")
-  invoicesAsSupplier       Invoice[]           @relation("SupplierInvoices")
-  payments                 Payment[]
-  disputesAsBuyer          Dispute[]           @relation("BuyerDisputes")
-  disputesAsSupplier       Dispute[]           @relation("SupplierDisputes")
-  auditEntries             AuditLog[]
-  apiKeys                  ApiKey[]
+  addresses             Address[]
+  branches              Branch[]
+  departments           Department[]
+  costCenters           CostCenter[]
+  memberships           CompanyMembership[]
+  budgets               Budget[]
+  spendingLimits        SpendingLimit[]
+  approvalRules         ApprovalRule[]
+  supplierProfile       SupplierProfile?
+  rfqs                  RFQ[]               @relation("BuyerRfqs")
+  purchaseRequests      PurchaseRequest[]   @relation("BuyerPurchaseRequests")
+  purchaseOrdersAsBuyer PurchaseOrder[]     @relation("BuyerPurchaseOrders")
+  purchaseTemplates     PurchaseTemplate[]
+  recurringPurchases    RecurringPurchase[]
+  carts                 Cart[]
+  ordersAsBuyer         Order[]             @relation("BuyerOrders")
+  invoicesAsBuyer       Invoice[]           @relation("BuyerInvoices")
+  payments              Payment[]
+  disputesAsBuyer       Dispute[]           @relation("BuyerDisputes")
+  auditEntries          AuditLog[]
+  apiKeys               ApiKey[]
 
   @@index([isSupplier])
   @@index([isBuyer])
@@ -347,7 +340,7 @@ model Product {
   createdAt        DateTime                @default(now())
   updatedAt        DateTime                @updatedAt
 
-  supplier             Company                @relation("SupplierProducts", fields: [supplierId], references: [id], onDelete: Cascade)
+  supplier             SupplierProfile        @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   category             Category               @relation(fields: [categoryId], references: [id])
   specifications       ProductSpecification[]
   priceTiers           PriceTier[]
@@ -434,6 +427,7 @@ enum SupplierVerificationStatus {
 model SupplierProfile {
   id                String                     @id @default(cuid())
   companyId         String                     @unique
+  name              String
   slug              String                     @unique
   logoUrl           String?
   categories        String[]
@@ -450,6 +444,13 @@ model SupplierProfile {
   company              Company                       @relation(fields: [companyId], references: [id], onDelete: Cascade)
   ratingsReceived      SupplierRating[]
   performanceSnapshots SupplierPerformanceSnapshot[]
+  products             Product[]
+  rfqInvites           RFQSupplier[]
+  quotes               Quote[]
+  purchaseOrders       PurchaseOrder[]
+  orders               Order[]
+  disputes             Dispute[]
+  invoices             Invoice[]
 
   @@index([verification])
 }
@@ -559,8 +560,8 @@ model RFQSupplier {
   supplierId String
   status     RfqSupplierStatus @default(INVITED)
 
-  rfq      RFQ     @relation(fields: [rfqId], references: [id], onDelete: Cascade)
-  supplier Company @relation("SupplierRfqInvites", fields: [supplierId], references: [id], onDelete: Cascade)
+  rfq      RFQ             @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  supplier SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
 
   @@unique([rfqId, supplierId])
   @@index([supplierId])
@@ -577,7 +578,7 @@ model Quote {
   submittedAt    DateTime @default(now())
 
   rfq           RFQ                  @relation(fields: [rfqId], references: [id], onDelete: Cascade)
-  supplier      Company              @relation("SupplierQuotes", fields: [supplierId], references: [id], onDelete: Cascade)
+  supplier      SupplierProfile      @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   items         QuoteItem[]
   negotiations  NegotiationMessage[]
   acceptedByRfq RFQ?                 @relation("AcceptedQuote")
@@ -728,7 +729,7 @@ model PurchaseOrder {
   createdAt         DateTime @default(now())
 
   company         Company             @relation("BuyerPurchaseOrders", fields: [companyId], references: [id], onDelete: Cascade)
-  supplier        Company             @relation("SupplierPurchaseOrders", fields: [supplierId], references: [id], onDelete: Cascade)
+  supplier        SupplierProfile     @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   purchaseRequest PurchaseRequest?    @relation(fields: [purchaseRequestId], references: [id])
   items           PurchaseOrderItem[]
   order           Order?              @relation(fields: [orderId], references: [id])
@@ -900,7 +901,7 @@ model Order {
   createdAt            DateTime      @default(now())
 
   company       Company              @relation("BuyerOrders", fields: [companyId], references: [id], onDelete: Cascade)
-  supplier      Company              @relation("SupplierOrders", fields: [supplierId], references: [id], onDelete: Cascade)
+  supplier      SupplierProfile      @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   purchaseOrder PurchaseOrder?
   items         OrderItem[]
   timeline      OrderTimelineEvent[]
@@ -1005,9 +1006,9 @@ model Dispute {
   createdAt      DateTime      @default(now())
   resolvedAt     DateTime?
 
-  order    Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  company  Company @relation("BuyerDisputes", fields: [companyId], references: [id], onDelete: Cascade)
-  supplier Company @relation("SupplierDisputes", fields: [supplierId], references: [id], onDelete: Cascade)
+  order    Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  company  Company         @relation("BuyerDisputes", fields: [companyId], references: [id], onDelete: Cascade)
+  supplier SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
 
   @@index([companyId])
   @@index([supplierId])
@@ -1042,9 +1043,9 @@ model Invoice {
   dueDate                DateTime
   issuedAt               DateTime      @default(now())
 
-  company     Company       @relation("BuyerInvoices", fields: [companyId], references: [id], onDelete: Cascade)
-  supplier    Company       @relation("SupplierInvoices", fields: [supplierId], references: [id], onDelete: Cascade)
-  order       Order?        @relation(fields: [orderId], references: [id])
+  company     Company         @relation("BuyerInvoices", fields: [companyId], references: [id], onDelete: Cascade)
+  supplier    SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  order       Order?          @relation(fields: [orderId], references: [id])
   items       InvoiceItem[]
   payments    Payment[]
   creditNotes CreditNote[]

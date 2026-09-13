@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { procurementService } from './procurement.service';
 import { templatesService } from './templates.service';
 import { budgetsService } from './budgets.service';
 import { recurringService } from './recurring.service';
+import { catalogService } from './catalog.service';
 import { spendingLimitFor, companyService } from './company.service';
 import { DefaultSpendingLimits } from '@/config/spending-limits';
 import { Role } from '@/config/rbac';
@@ -215,6 +216,36 @@ describe('Procurement budgets (section 11.3/11.4)', () => {
 
 describe('Recurring purchases (section 11.2 - must go through real approval, never bypass it)', () => {
   it('creates a schedule and, once due, submits a real purchase request through procurement.service (not a bypass)', async () => {
+    // catalog.service.ts's product lookups now call the real /api/products backend (Phase 14,
+    // Stage 4) - runDue's own re-pricing check is exercised live in the browser and by the
+    // server-side catalog tests; this test's own concern is recurring-purchase scheduling and
+    // its approval hand-off, so the product lookup itself is stubbed here rather than requiring
+    // a live server during a unit test run.
+    const getProductByIdSpy = vi.spyOn(catalogService, 'getProductById').mockResolvedValue({
+      ok: true,
+      data: {
+        id: 'prod-cisco-switch',
+        slug: 'cisco-catalyst-switch',
+        name: 'Cisco Catalyst Switch',
+        brand: 'Cisco',
+        sku: 'C9200L-24P',
+        supplierId: 'supplier-abc',
+        categoryId: 'cat-networking',
+        moderationStatus: 'PUBLISHED',
+        images: [],
+        description: '',
+        specifications: [],
+        currency: 'GHS',
+        basePrice: 8450,
+        priceTiers: [],
+        moq: 1,
+        inventory: [],
+        rating: 0,
+        reviewCount: 0,
+        createdAt: new Date().toISOString(),
+      },
+    });
+
     const created = await recurringService.createRecurringPurchase(
       {
         companyId: 'company-acme-gh',
@@ -255,6 +286,8 @@ describe('Recurring purchases (section 11.2 - must go through real approval, nev
       const schedule = schedules.data.find((s) => s.name === 'Weekly switches');
       expect(schedule?.createdPurchaseRequestIds.length).toBe(1);
     }
+
+    getProductByIdSpy.mockRestore();
   });
 
   it("refuses running due schedules for another company", async () => {

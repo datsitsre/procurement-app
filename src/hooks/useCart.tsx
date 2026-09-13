@@ -89,19 +89,42 @@ export function CartProvider({ children }: { children: ReactNode }) {
     if (result.ok) setLoaded({ companyId, cart: result.data });
   }, [companyId]);
 
+  // Products are fetched (Phase 14, Stage 4: catalog moved to a real API - there's no
+  // synchronous, override-aware accessor to read mid-render anymore) whenever the cart itself
+  // changes, so a supplier's price/stock edit still shows up in every existing line, not just
+  // newly-added ones - the same guarantee getProductByIdSync used to provide, now via a fetch
+  // instead of a synchronous local read.
+  const [productsById, setProductsById] = useState<Record<string, Product>>({});
+
+  useEffect(() => {
+    if (!cart || cart.items.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      cart.items.map((item) => catalogService.getProductById(item.productId).then((result) => (result.ok ? result.data : null))),
+    ).then((products) => {
+      if (cancelled) return;
+      setProductsById((prev) => {
+        const next = { ...prev };
+        for (const product of products) if (product) next[product.id] = product;
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cart]);
+
   const lines = useMemo<CartLine[]>(() => {
     if (!cart) return [];
     return cart.items
       .map((item) => {
-        // Reads through catalog.service (override-aware), not the raw seed array - a supplier's
-        // price/stock edit must show up in every existing cart, not just newly-added lines.
-        const product = catalogService.getProductByIdSync(item.productId);
+        const product = productsById[item.productId];
         if (!product) return null;
         const { unitPrice, savingsPerUnit } = resolveTierPrice(product, item.quantity);
         return { item, product, lineTotal: unitPrice * item.quantity, savingsPerUnit };
       })
       .filter((l): l is CartLine => l !== null);
-  }, [cart]);
+  }, [cart, productsById]);
 
   const itemCount = lines.reduce((sum, l) => sum + l.item.quantity, 0);
   const subtotal = lines.reduce((sum, l) => sum + l.lineTotal, 0);

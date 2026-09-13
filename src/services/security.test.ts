@@ -4,7 +4,6 @@ import { ordersService } from './orders.service';
 import { procurementService } from './procurement.service';
 import { purchaseOrderService } from './purchase-order.service';
 import { invoicesService } from './invoices.service';
-import { catalogService } from './catalog.service';
 import { disputesService } from './disputes.service';
 import { Role } from '@/config/rbac';
 
@@ -26,7 +25,6 @@ const REAL_RFQ_ID = 'rfq-10082'; // company-acme-gh, supplier-abc + supplier-wae
 const REAL_PR_ID = 'pr-10082'; // company-acme-gh
 const REAL_PO_ID = 'po-2026-00182'; // company-acme-gh / supplier-abc
 const REAL_INVOICE_ID = 'invoice-10282'; // company-acme-gh / supplier-abc
-const REAL_PRODUCT_ID = 'prod-cisco-switch'; // supplier-abc
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -164,45 +162,12 @@ describe('Financial integrity: unauthorized invoice access and payment', () => {
   });
 });
 
-describe("Supplier modifying another supplier's product", () => {
-  it('refuses updating a product owned by a different supplier', async () => {
-    const result = await catalogService.updateProduct(REAL_PRODUCT_ID, { basePrice: 1 }, Role.SUPPLIER_ADMIN, OTHER_SUPPLIER);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('NOT_FOUND');
-  });
-
-  it('refuses adjusting inventory for a product owned by a different supplier', async () => {
-    const result = await catalogService.updateInventory(REAL_PRODUCT_ID, 'wh-abc-accra', { stock: 0 }, Role.SUPPLIER_ADMIN, OTHER_SUPPLIER);
-    expect(result.ok).toBe(false);
-  });
-
-  it('refuses creating a product attributed to a different supplier id than the caller', async () => {
-    const result = await catalogService.createProduct(
-      {
-        name: 'Impersonated listing',
-        brand: 'x',
-        sku: 'x',
-        supplierId: 'supplier-abc',
-        categoryId: 'cat-networking',
-        description: 'x',
-        currency: 'GHS',
-        basePrice: 100,
-        moq: 1,
-        warehouseId: 'wh-abc-accra',
-        stock: 1,
-        lowStockThreshold: 1,
-      },
-      Role.SUPPLIER_ADMIN,
-      OTHER_SUPPLIER,
-    );
-    expect(result.ok).toBe(false);
-  });
-
-  it('allows the owning supplier to update their own product', async () => {
-    const result = await catalogService.updateProduct(REAL_PRODUCT_ID, { basePrice: 8500 }, Role.SUPPLIER_ADMIN, { supplierId: 'supplier-abc' });
-    expect(result.ok).toBe(true);
-  });
-});
+// "Supplier modifying another supplier's product" used to live here, testing catalogService's
+// mock createProduct/updateProduct/updateInventory. That domain is now server-side (Phase 14,
+// Stage 4) - the equivalent coverage (cross-supplier update/inventory/create all refused,
+// owning supplier's own update allowed) now lives in server/services/catalog.service.test.ts
+// and catalog.routes.test.ts, tested against the real database and the actual route handlers
+// instead of a client-side mock.
 
 describe('Employee attempting an approval action (role, not just tenant)', () => {
   it('an EMPLOYEE role lacks PURCHASE_REQUEST_APPROVE and is refused before any tenant check runs', async () => {

@@ -25,11 +25,7 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * non-GET method - centralized here so every company route gets it automatically instead of
  * each route file needing to remember to call it.
  */
-export async function requireCompanyAccess(
-  request: NextRequest,
-  companyId: string,
-  permission?: Permission,
-): Promise<RequireResult> {
+async function requireAuthAndPermission(request: NextRequest, permission?: Permission): Promise<RequireResult> {
   if (!SAFE_METHODS.has(request.method) && !isSameOrigin(request)) {
     return { ok: false, response: NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 }) };
   }
@@ -41,11 +37,47 @@ export async function requireCompanyAccess(
     return { ok: false, response: forbidden() };
   }
 
+  return { ok: true, auth };
+}
+
+export async function requireCompanyAccess(
+  request: NextRequest,
+  companyId: string,
+  permission?: Permission,
+): Promise<RequireResult> {
+  const result = await requireAuthAndPermission(request, permission);
+  if (!result.ok) return result;
+
   // Deliberately the same generic 404 an IDOR probe would get for a nonexistent id - never a
   // distinct "forbidden" that would confirm the company exists but isn't theirs.
-  if (!ownsRecord(auth.tenant, companyId)) {
+  if (!ownsRecord(result.auth.tenant, companyId)) {
     return { ok: false, response: NextResponse.json({ error: 'That company could not be found.' }, { status: 404 }) };
   }
 
-  return { ok: true, auth };
+  return result;
+}
+
+/** The supplier-side counterpart to requireCompanyAccess - `supplierId` is a SupplierProfile.id
+ *  (not a Company.id), matching every product/RFQ/order/invoice's own `supplierId` field
+ *  throughout this app. */
+export async function requireSupplierAccess(
+  request: NextRequest,
+  supplierId: string,
+  permission?: Permission,
+): Promise<RequireResult> {
+  const result = await requireAuthAndPermission(request, permission);
+  if (!result.ok) return result;
+
+  if (!ownsRecord(result.auth.tenant, undefined, supplierId)) {
+    return { ok: false, response: NextResponse.json({ error: 'That product could not be found.' }, { status: 404 }) };
+  }
+
+  return result;
+}
+
+/** For routes that need authentication + a permission but no per-record tenant scoping - the
+ *  platform-admin product moderation queue, for example, where PLATFORM_MANAGE itself is the
+ *  whole authorization story (see assertPermission's mock equivalent for the same routes). */
+export async function requireAuthenticated(request: NextRequest, permission?: Permission): Promise<RequireResult> {
+  return requireAuthAndPermission(request, permission);
 }
