@@ -48,3 +48,29 @@ export function assertPermission(role: Role, permission: Permission): ServiceErr
     message: `Your role does not have the "${permission}" permission.`,
   };
 }
+
+/**
+ * Shared client-side fetch wrapper for services that have been migrated to a real `/api/*`
+ * backend (Phase 14) - same-origin cookies (the httpOnly session), JSON in/out, and a uniform
+ * `ServiceResult` mapping so a migrated service's methods keep returning exactly what its
+ * mock predecessor did. Auth failures/validation errors/business-rule rejections all arrive as
+ * `{ error, fieldErrors? }` from the API and get normalized here into `fail(...)`.
+ */
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<ServiceResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      credentials: 'same-origin',
+      ...init,
+      headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    });
+  } catch {
+    return fail('NETWORK_ERROR', 'Could not reach the server. Check your connection and try again.');
+  }
+
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    return fail(String(response.status), data?.error ?? 'Something went wrong.', data?.fieldErrors);
+  }
+  return ok(data as T);
+}

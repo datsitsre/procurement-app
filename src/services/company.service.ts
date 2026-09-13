@@ -1,99 +1,13 @@
-import { assertPermission, delay, fail, ok, ownsRecord } from './base';
-import { allCompanies, allCompanyUsers, allUsers, writeCompanyProfileOverride } from './auth.service';
-import { demoDepartments, demoCostCenters, demoBranches } from '@/lib/demo-data/company-workspace';
+import { apiRequest, assertPermission, delay, fail, ok, ownsRecord } from './base';
+import { writeCompanyProfileOverride } from './auth.service';
 import { DefaultSpendingLimits } from '@/config/spending-limits';
 import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { Branch, Company, CompanyUser, CostCenter, Department, User } from '@/types/company';
-import { Permission, Role } from '@/config/rbac';
+import { Permission, type Role } from '@/config/rbac';
 
 export interface TeamMember {
   membership: CompanyUser;
   user: User;
-}
-
-function newId(prefix: string): UUID {
-  return `${prefix}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
-}
-
-const DEPARTMENT_STORE_KEY = 'procurement.departments.v1.list';
-const COST_CENTER_STORE_KEY = 'procurement.cost-centers.v1.list';
-const BRANCH_STORE_KEY = 'procurement.branches.v1.list';
-const REMOVED_KEY = 'procurement.company-workspace.v1.removed';
-const SPENDING_LIMIT_STORE_KEY = 'procurement.spending-limits.v1';
-
-/** Overrides keyed by `${companyId}:${role}` - a company's customized spending limit for one
- *  role, falling back to DefaultSpendingLimits when no override exists (section 11.5). */
-function readSpendingLimitOverrides(): Record<string, number> {
-  if (typeof window === 'undefined') return {};
-  const raw = window.localStorage.getItem(SPENDING_LIMIT_STORE_KEY);
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as Record<string, number>;
-  } catch {
-    return {};
-  }
-}
-
-function writeSpendingLimitOverride(companyId: UUID, role: Role, amount: number) {
-  if (typeof window === 'undefined') return;
-  const store = readSpendingLimitOverrides();
-  store[`${companyId}:${role}`] = amount;
-  window.localStorage.setItem(SPENDING_LIMIT_STORE_KEY, JSON.stringify(store));
-}
-
-/** The effective spending limit for one role at one company - a company's own override if it
- *  has set one, otherwise the platform default, otherwise `undefined` (no limit). Exported so
- *  procurement.service.ts can enforce it without importing this file's private storage. */
-export function spendingLimitFor(companyId: UUID, role: Role): number | undefined {
-  const overrides = readSpendingLimitOverrides();
-  const key = `${companyId}:${role}`;
-  return key in overrides ? overrides[key] : DefaultSpendingLimits[role];
-}
-
-function readList<T>(key: string): T[] {
-  if (typeof window === 'undefined') return [];
-  const raw = window.localStorage.getItem(key);
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw) as T[];
-  } catch {
-    return [];
-  }
-}
-
-function appendToList<T>(key: string, value: T) {
-  if (typeof window === 'undefined') return;
-  const list = readList<T>(key);
-  list.push(value);
-  window.localStorage.setItem(key, JSON.stringify(list));
-}
-
-/** A single "removed ids" set shared across departments/cost centers/branches - simpler than a
- *  separate removed-list per entity type, and every id in this app is already globally unique. */
-function readRemoved(): Set<UUID> {
-  return new Set(readList<UUID>(REMOVED_KEY));
-}
-
-function markRemoved(id: UUID) {
-  if (typeof window === 'undefined') return;
-  const removed = readRemoved();
-  removed.add(id);
-  window.localStorage.setItem(REMOVED_KEY, JSON.stringify(Array.from(removed)));
-}
-
-function allDepartments(): Department[] {
-  const removed = readRemoved();
-  return [...demoDepartments, ...readList<Department>(DEPARTMENT_STORE_KEY)].filter((d) => !removed.has(d.id));
-}
-
-function allCostCenters(): CostCenter[] {
-  const removed = readRemoved();
-  return [...demoCostCenters, ...readList<CostCenter>(COST_CENTER_STORE_KEY)].filter((c) => !removed.has(c.id));
-}
-
-function allBranches(): Branch[] {
-  const removed = readRemoved();
-  return [...demoBranches, ...readList<Branch>(BRANCH_STORE_KEY)].filter((b) => !removed.has(b.id));
 }
 
 export interface NewBranchInput {
@@ -150,159 +64,123 @@ export interface CompanyService {
   setSpendingLimit(companyId: UUID, role: Role, amount: number, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>>;
 }
 
-class MockCompanyService implements CompanyService {
-  async listTeamMembers(companyId: UUID, callerRole: Role): Promise<ServiceResult<TeamMember[]>> {
-    await delay(250);
-    const permissionError = assertPermission(callerRole, Permission.USERS_MANAGE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
+// ---------------------------------------------------------------------------------------------
+// Spending limits (section 11.5) - still localStorage-backed, deliberately NOT migrated in this
+// stage. procurement.service.ts's createPurchaseRequest (the thing that actually *enforces*
+// this business rule) is still a client-side mock and reads spendingLimitFor() below directly;
+// moving only this file's read/write to the real API without also moving enforcement would
+// desync the two - Settings would appear to save a new limit that nothing then checks. Both
+// move together in Stage 6, when procurement.service.ts itself migrates. See
+// server/services/company.service.ts's matching comment.
+// ---------------------------------------------------------------------------------------------
 
-    const members = allCompanyUsers()
-      .filter((cu) => cu.companyId === companyId)
-      .map((membership) => {
-        const user = allUsers().find((u) => u.id === membership.userId);
-        return user ? { membership, user } : null;
-      })
-      .filter((m): m is TeamMember => m !== null);
-    return ok(members);
+const SPENDING_LIMIT_STORE_KEY = 'procurement.spending-limits.v1';
+
+function readSpendingLimitOverrides(): Record<string, number> {
+  if (typeof window === 'undefined') return {};
+  const raw = window.localStorage.getItem(SPENDING_LIMIT_STORE_KEY);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+function writeSpendingLimitOverride(companyId: UUID, role: Role, amount: number) {
+  if (typeof window === 'undefined') return;
+  const store = readSpendingLimitOverrides();
+  store[`${companyId}:${role}`] = amount;
+  window.localStorage.setItem(SPENDING_LIMIT_STORE_KEY, JSON.stringify(store));
+}
+
+/** The effective spending limit for one role at one company - a company's own override if it
+ *  has set one, otherwise the platform default, otherwise `undefined` (no limit). Exported so
+ *  procurement.service.ts can enforce it without importing this file's private storage. */
+export function spendingLimitFor(companyId: UUID, role: Role): number | undefined {
+  const overrides = readSpendingLimitOverrides();
+  const key = `${companyId}:${role}`;
+  return key in overrides ? overrides[key] : DefaultSpendingLimits[role];
+}
+
+const BUYER_ROLES_FOR_LIMITS: Role[] = ['OWNER', 'ADMIN', 'PROCUREMENT_MANAGER', 'BUYER', 'FINANCE_MANAGER', 'APPROVER', 'EMPLOYEE'];
+
+/**
+ * Calls the real `/api/companies/[companyId]/*` backend (Phase 14, Stage 3) for company
+ * identity/workspace data - profile, departments, cost centers, branches, team. Spending limits
+ * stay on localStorage for now (see the block comment above). `callerRole`/`caller` are still
+ * accepted (every existing page already passes them) but are never sent over the wire and never
+ * trusted for authorization - the API derives the caller's role and tenant from the session
+ * cookie itself (server/auth/require.ts). Keeping these parameters means every consuming page
+ * needed zero changes.
+ */
+class ApiCompanyService implements CompanyService {
+  async listTeamMembers(companyId: UUID): Promise<ServiceResult<TeamMember[]>> {
+    return apiRequest<TeamMember[]>(`/api/companies/${companyId}/team`);
   }
 
-  async updateCompanyProfile(
-    companyId: UUID,
-    patch: CompanyProfilePatch,
-    callerRole: Role,
-    caller: TenantContext,
-  ): Promise<ServiceResult<Company>> {
-    await delay(300);
-    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-    if (!ownsRecord(caller, companyId)) return fail('NOT_FOUND', 'That company could not be found.');
-
-    writeCompanyProfileOverride(companyId, patch);
-    const company = allCompanies().find((c) => c.id === companyId);
-    if (!company) return fail('NOT_FOUND', 'That company could not be found.');
-    return ok(company);
+  async updateCompanyProfile(companyId: UUID, patch: CompanyProfilePatch): Promise<ServiceResult<Company>> {
+    const result = await apiRequest<Company>(`/api/companies/${companyId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    // Mirror the update into the local cache other still-mock services read (allCompanies() in
+    // auth.service.ts) - the real profile now lives in Postgres, but nothing outside this one
+    // request re-fetches it, so without this the company switcher/dashboard/etc. would keep
+    // showing the pre-edit name until the next login.
+    if (result.ok) writeCompanyProfileOverride(companyId, result.data);
+    return result;
   }
 
   async listDepartments(companyId: UUID): Promise<ServiceResult<Department[]>> {
-    await delay(200);
-    return ok(allDepartments().filter((d) => d.companyId === companyId));
+    return apiRequest<Department[]>(`/api/companies/${companyId}/departments`);
   }
 
-  async createDepartment(companyId: UUID, name: string, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Department>> {
-    await delay(250);
-    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-    if (!ownsRecord(caller, companyId)) return fail('NOT_FOUND', 'That company could not be found.');
-    if (!name.trim()) return fail('EMPTY', 'Give the department a name.');
-
-    const department: Department = { id: newId('dept'), companyId, name: name.trim() };
-    appendToList(DEPARTMENT_STORE_KEY, department);
-    return ok(department);
+  async createDepartment(companyId: UUID, name: string): Promise<ServiceResult<Department>> {
+    return apiRequest<Department>(`/api/companies/${companyId}/departments`, { method: 'POST', body: JSON.stringify({ name }) });
   }
 
   async removeDepartment(departmentId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>> {
-    await delay(250);
-    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-
-    const department = allDepartments().find((d) => d.id === departmentId);
-    if (!department || !ownsRecord(caller, department.companyId)) return fail('NOT_FOUND', 'That department could not be found.');
-
-    markRemoved(departmentId);
-    return ok(undefined);
+    const companyId = caller.companyId;
+    if (!companyId) return { ok: false, error: { code: 'NOT_FOUND', message: 'That department could not be found.' } };
+    return apiRequest<void>(`/api/companies/${companyId}/departments/${departmentId}`, { method: 'DELETE' });
   }
 
   async listCostCenters(companyId: UUID): Promise<ServiceResult<CostCenter[]>> {
-    await delay(200);
-    return ok(allCostCenters().filter((c) => c.companyId === companyId));
+    return apiRequest<CostCenter[]>(`/api/companies/${companyId}/cost-centers`);
   }
 
-  async createCostCenter(
-    companyId: UUID,
-    code: string,
-    name: string,
-    departmentId: UUID | undefined,
-    callerRole: Role,
-    caller: TenantContext,
-  ): Promise<ServiceResult<CostCenter>> {
-    await delay(250);
-    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-    if (!ownsRecord(caller, companyId)) return fail('NOT_FOUND', 'That company could not be found.');
-    if (!code.trim() || !name.trim()) return fail('EMPTY', 'Give the cost center a code and a name.');
-
-    const costCenter: CostCenter = { id: newId('cc'), companyId, code: code.trim(), name: name.trim(), departmentId };
-    appendToList(COST_CENTER_STORE_KEY, costCenter);
-    return ok(costCenter);
+  async createCostCenter(companyId: UUID, code: string, name: string, departmentId: UUID | undefined): Promise<ServiceResult<CostCenter>> {
+    return apiRequest<CostCenter>(`/api/companies/${companyId}/cost-centers`, {
+      method: 'POST',
+      body: JSON.stringify({ code, name, departmentId }),
+    });
   }
 
   async removeCostCenter(costCenterId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>> {
-    await delay(250);
-    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-
-    const costCenter = allCostCenters().find((c) => c.id === costCenterId);
-    if (!costCenter || !ownsRecord(caller, costCenter.companyId)) return fail('NOT_FOUND', 'That cost center could not be found.');
-
-    markRemoved(costCenterId);
-    return ok(undefined);
+    const companyId = caller.companyId;
+    if (!companyId) return { ok: false, error: { code: 'NOT_FOUND', message: 'That cost center could not be found.' } };
+    return apiRequest<void>(`/api/companies/${companyId}/cost-centers/${costCenterId}`, { method: 'DELETE' });
   }
 
   async listBranches(companyId: UUID): Promise<ServiceResult<Branch[]>> {
-    await delay(200);
-    return ok(allBranches().filter((b) => b.companyId === companyId));
+    return apiRequest<Branch[]>(`/api/companies/${companyId}/branches`);
   }
 
-  async createBranch(input: NewBranchInput, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Branch>> {
-    await delay(300);
-    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-    if (!ownsRecord(caller, input.companyId)) return fail('NOT_FOUND', 'That company could not be found.');
-    if (!input.name.trim()) return fail('EMPTY', 'Give the branch a name.');
-
-    const branch: Branch = {
-      id: newId('branch'),
-      companyId: input.companyId,
-      name: input.name.trim(),
-      addressId: input.addressId,
-      contactName: input.contactName,
-      contactPhone: input.contactPhone,
-      costCenterId: input.costCenterId,
-      isWarehouse: input.isWarehouse,
-      createdAt: new Date().toISOString(),
-    };
-    appendToList(BRANCH_STORE_KEY, branch);
-    return ok(branch);
+  async createBranch(input: NewBranchInput): Promise<ServiceResult<Branch>> {
+    const { companyId, ...body } = input;
+    return apiRequest<Branch>(`/api/companies/${companyId}/branches`, { method: 'POST', body: JSON.stringify(body) });
   }
 
   async removeBranch(branchId: UUID, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>> {
-    await delay(250);
-    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-
-    const branch = allBranches().find((b) => b.id === branchId);
-    if (!branch || !ownsRecord(caller, branch.companyId)) return fail('NOT_FOUND', 'That branch could not be found.');
-    if (branch.isHeadOffice) return fail('INVALID_STATE', 'The head office branch cannot be removed.');
-
-    markRemoved(branchId);
-    return ok(undefined);
+    const companyId = caller.companyId;
+    if (!companyId) return { ok: false, error: { code: 'NOT_FOUND', message: 'That branch could not be found.' } };
+    return apiRequest<void>(`/api/companies/${companyId}/branches/${branchId}`, { method: 'DELETE' });
   }
 
   async listSpendingLimits(companyId: UUID): Promise<ServiceResult<{ role: Role; amount: number | undefined }[]>> {
     await delay(200);
-    // Only buyer-side roles have a meaningful spending limit - a supplier or platform role
-    // never submits a purchase request in the first place.
-    const buyerRoles: Role[] = [Role.OWNER, Role.ADMIN, Role.PROCUREMENT_MANAGER, Role.BUYER, Role.FINANCE_MANAGER, Role.APPROVER, Role.EMPLOYEE];
-    return ok(buyerRoles.map((role) => ({ role, amount: spendingLimitFor(companyId, role) })));
+    return ok(BUYER_ROLES_FOR_LIMITS.map((role) => ({ role, amount: spendingLimitFor(companyId, role) })));
   }
 
-  async setSpendingLimit(
-    companyId: UUID,
-    role: Role,
-    amount: number,
-    callerRole: Role,
-    caller: TenantContext,
-  ): Promise<ServiceResult<void>> {
+  async setSpendingLimit(companyId: UUID, role: Role, amount: number, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>> {
     await delay(250);
     const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
     if (permissionError) return fail(permissionError.code, permissionError.message);
@@ -314,4 +192,4 @@ class MockCompanyService implements CompanyService {
   }
 }
 
-export const companyService: CompanyService = new MockCompanyService();
+export const companyService: CompanyService = new ApiCompanyService();
