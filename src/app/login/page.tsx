@@ -10,7 +10,10 @@ import { Input } from '@/components/ui/Input';
 export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
-  const [email, setEmail] = useState('john.doe@acmetech.example');
+  // Deliberately empty, not pre-filled with a real demo account (see the "Demo account" hint
+  // below the form instead) - a pre-filled value here meant switching accounts silently logged
+  // you back in as whoever was pre-filled unless you noticed and cleared it first.
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -55,6 +58,7 @@ export default function LoginPage() {
               label="Work email"
               type="email"
               autoComplete="email"
+              placeholder="you@company.example"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
