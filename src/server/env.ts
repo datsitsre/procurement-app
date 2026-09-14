@@ -35,6 +35,10 @@ export const env = {
   // every request) whenever this is empty, rather than the whole app refusing to start over an
   // integration nothing is using yet.
   PAYMENT_WEBHOOK_SIGNING_SECRET: optional('PAYMENT_WEBHOOK_SIGNING_SECRET', ''),
+  // Shared secret the scheduler (Vercel Cron, a GitHub Actions cron job, system crontab + curl,
+  // ...) sends back on every /api/cron/* request. Optional for the same reason as the webhook
+  // secret above - the cron routes themselves fail closed while this is empty.
+  CRON_SECRET: optional('CRON_SECRET', ''),
 };
 
 export const isProduction = env.NODE_ENV === 'production';
