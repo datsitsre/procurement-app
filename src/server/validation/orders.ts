@@ -4,6 +4,8 @@ const PAYMENT_METHODS = ['CARD', 'BANK_TRANSFER', 'MTN_MOMO', 'TELECEL_CASH', 'A
 
 export const CheckoutSchema = z.object({
   method: z.enum(PAYMENT_METHODS),
+  details: z.record(z.string(), z.string()).default({}),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
 export const DispatchOrderSchema = z.object({
@@ -19,4 +21,10 @@ export const NewDisputeSchema = z.object({
 export const ResolveDisputeSchema = z.object({
   decision: z.enum(['RESOLVED_REFUND', 'RESOLVED_REJECTED']),
   note: z.string().trim().min(1, 'Add a resolution note').max(2000),
+});
+
+export const PayInvoiceSchema = z.object({
+  method: z.enum(PAYMENT_METHODS),
+  details: z.record(z.string(), z.string()).default({}),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });

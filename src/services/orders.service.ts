@@ -16,10 +16,11 @@ export interface OrdersService {
   listTimeline(orderId: UUID): Promise<ServiceResult<OrderTimelineEvent[]>>;
   listShipments(orderId: UUID): Promise<ServiceResult<Shipment[]>>;
   listDeliveries(orderId: UUID): Promise<ServiceResult<Delivery[]>>;
-  /** Turns a paid-for purchase order into a real order (section 25's checkout confirmation
-   *  step) - called by the checkout flow once payment succeeds. Unlike the mock this replaces,
-   *  this can fail (e.g. the PO was already converted), so it returns a ServiceResult. */
-  createFromPurchaseOrder(po: PurchaseOrder, method: PaymentMethod): Promise<ServiceResult<Order>>;
+  /** Checks out a purchase order (section 25) - charges payment and raises the invoice
+   *  server-side, in the same request, then confirms the resulting order. `details` carries
+   *  whatever the chosen method needs (a card number, a mobile money phone number, ...); can
+   *  genuinely fail now (an invalid card, insufficient credit, the PO already converted, ...). */
+  createFromPurchaseOrder(po: PurchaseOrder, method: PaymentMethod, details: Record<string, string>): Promise<ServiceResult<Order>>;
 
   /** Orders a supplier needs to fulfill (section 44) - the supplier-workspace counterpart to
    *  `listOrders`, which is keyed by the *buyer's* company id instead. */
@@ -77,8 +78,8 @@ class ApiOrdersService implements OrdersService {
     return apiRequest<Delivery[]>(`/api/orders/${orderId}/deliveries`);
   }
 
-  async createFromPurchaseOrder(po: PurchaseOrder, method: PaymentMethod): Promise<ServiceResult<Order>> {
-    return apiRequest<Order>(`/api/purchase-orders/${po.id}/checkout`, { method: 'POST', body: JSON.stringify({ method }) });
+  async createFromPurchaseOrder(po: PurchaseOrder, method: PaymentMethod, details: Record<string, string>): Promise<ServiceResult<Order>> {
+    return apiRequest<Order>(`/api/purchase-orders/${po.id}/checkout`, { method: 'POST', body: JSON.stringify({ method, details }) });
   }
 
   async listOrdersForSupplier(supplierId: UUID): Promise<ServiceResult<Order[]>> {

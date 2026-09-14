@@ -46,8 +46,12 @@ async function createScratchPurchaseOrder() {
   return toPurchaseOrderDto(po);
 }
 
+const VALID_CARD = { cardNumber: '4111111111111111', cvv: '123' };
+
 beforeAll(async () => {
-  await db.company.create({ data: { id: TEST_COMPANY_ID, name: 'Orders Test Buyer Co', country: 'GH', currency: 'GHS' } });
+  await db.company.create({
+    data: { id: TEST_COMPANY_ID, name: 'Orders Test Buyer Co', country: 'GH', currency: 'GHS', creditAvailable: 100000 },
+  });
   await db.company.create({
     data: { id: `${TEST_SUPPLIER_ID}-company`, name: 'Orders Test Supplier Co', country: 'GH', currency: 'GHS', isSupplier: true },
   });
@@ -82,6 +86,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await db.paymentTransaction.deleteMany({ where: { payment: { companyId: TEST_COMPANY_ID } } });
+  await db.payment.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
+  await db.invoiceItem.deleteMany({ where: { invoice: { companyId: TEST_COMPANY_ID } } });
+  await db.invoice.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
   await db.delivery.deleteMany({ where: { orderId: { in: await db.order.findMany({ where: { companyId: TEST_COMPANY_ID }, select: { id: true } }).then((rows) => rows.map((r) => r.id)) } } });
   await db.shipment.deleteMany({ where: { order: { companyId: TEST_COMPANY_ID } } });
   await db.orderTimelineEvent.deleteMany({ where: { order: { companyId: TEST_COMPANY_ID } } });
@@ -97,9 +105,19 @@ afterAll(async () => {
 });
 
 describe('createFromPurchaseOrder', () => {
-  it('derives paymentStatus from method - PAID for everything except CREDIT_TERMS', async () => {
+  it('rejects an invalid card and creates no order at all', async () => {
     const po = await createScratchPurchaseOrder();
-    const result = await createFromPurchaseOrder(po, 'CARD');
+    const result = await createFromPurchaseOrder(po, 'CARD', { cardNumber: '1234', cvv: '12' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('PAYMENT_FAILED');
+
+    const refetched = await db.purchaseOrder.findUnique({ where: { id: po.id } });
+    expect(refetched?.orderId).toBeNull();
+  });
+
+  it('charges a real payment, derives paymentStatus from method - PAID for everything except CREDIT_TERMS', async () => {
+    const po = await createScratchPurchaseOrder();
+    const result = await createFromPurchaseOrder(po, 'CARD', VALID_CARD);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data.status).toBe('CONFIRMED');
@@ -117,20 +135,34 @@ describe('createFromPurchaseOrder', () => {
       expect(shipments.data).toHaveLength(1);
       expect(shipments.data[0].status).toBe('PREPARING');
     }
+
+    // A real Payment row (linked to the invoice it produced) and a real Invoice row now exist -
+    // not just an Order, closing the boundary the mock left as two separate client-side calls.
+    const payment = await db.payment.findFirst({ where: { orderId: result.ok ? result.data.id : undefined } });
+    expect(payment?.status).toBe('PAID');
+    expect(payment?.invoiceId).toBeDefined();
+
+    const invoice = await db.invoice.findUnique({ where: { id: payment!.invoiceId! } });
+    expect(invoice?.status).toBe('PAID');
+    expect(Number(invoice?.total)).toBe(po.total);
   });
 
-  it('leaves paymentStatus PENDING for CREDIT_TERMS, and never converts the same PO twice', async () => {
+  it('leaves paymentStatus PENDING for CREDIT_TERMS (invoice stays due), and never converts the same PO twice', async () => {
     const po = await createScratchPurchaseOrder();
-    const first = await createFromPurchaseOrder(po, 'CREDIT_TERMS');
+    const first = await createFromPurchaseOrder(po, 'CREDIT_TERMS', {});
     expect(first.ok).toBe(true);
     if (first.ok) expect(first.data.paymentStatus).toBe('PENDING');
+
+    const invoice = await db.invoice.findFirst({ where: { orderId: first.ok ? first.data.id : undefined } });
+    expect(invoice?.status).toBe('PENDING');
+    expect(Number(invoice?.amountPaid)).toBe(0);
 
     // po.orderId is still the pre-conversion snapshot (undefined) - the real guard is checked
     // against the just-updated database row, not this stale DTO.
     const refetched = await db.purchaseOrder.findUnique({ where: { id: po.id }, include: { items: true, supplier: true } });
     expect(refetched?.orderId).toBeDefined();
     const alreadyConvertedPo = toPurchaseOrderDto(refetched!);
-    const second = await createFromPurchaseOrder(alreadyConvertedPo, 'CARD');
+    const second = await createFromPurchaseOrder(alreadyConvertedPo, 'CARD', VALID_CARD);
     expect(second.ok).toBe(false);
     if (!second.ok) expect(second.error.code).toBe('ALREADY_CONVERTED');
   });
@@ -139,7 +171,7 @@ describe('createFromPurchaseOrder', () => {
 describe('fulfillment state machine', () => {
   it('walks CONFIRMED -> PROCESSING -> SHIPPED -> DELIVERED, refusing out-of-order transitions', async () => {
     const po = await createScratchPurchaseOrder();
-    const created = await createFromPurchaseOrder(po, 'CARD');
+    const created = await createFromPurchaseOrder(po, 'CARD', VALID_CARD);
     expect(created.ok).toBe(true);
     if (!created.ok) return;
     const orderId = created.data.id;
@@ -181,7 +213,7 @@ describe('fulfillment state machine', () => {
 describe('markRefunded', () => {
   it("sets paymentStatus to REFUNDED without touching the order's fulfillment status", async () => {
     const po = await createScratchPurchaseOrder();
-    const created = await createFromPurchaseOrder(po, 'CARD');
+    const created = await createFromPurchaseOrder(po, 'CARD', VALID_CARD);
     expect(created.ok).toBe(true);
     if (!created.ok) return;
 

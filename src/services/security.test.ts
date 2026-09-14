@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ownsRecord } from './base';
-import { invoicesService } from './invoices.service';
-import { Role } from '@/config/rbac';
 
 /**
  * Phase 9 security regression suite (section 9.3's test matrix). Every case here corresponds to
@@ -11,11 +9,7 @@ import { Role } from '@/config/rbac';
  * would confirm the record exists) as the app grows.
  */
 
-const OTHER_COMPANY = { companyId: 'company-not-mine' };
 const PLATFORM_ADMIN = { isPlatformAdmin: true };
-
-// Real seed ids this suite probes against - see lib/demo-data/*.ts.
-const REAL_INVOICE_ID = 'invoice-10282'; // company-acme-gh / supplier-abc
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -62,18 +56,10 @@ describe('ownsRecord (the shared tenant-ownership check)', () => {
 // "IDOR: purchase order detail" moved alongside the order blocks above, for the same reason -
 // see server/services/orders.routes.test.ts.
 
-describe('Financial integrity: unauthorized invoice access and payment', () => {
-  it("refuses reading another company's invoice", async () => {
-    const result = await invoicesService.getInvoice(REAL_INVOICE_ID, OTHER_COMPANY);
-    expect(result.ok).toBe(false);
-  });
-
-  it("refuses paying another company's invoice even with a valid PAYMENTS_CREATE role", async () => {
-    const result = await invoicesService.payInvoice(REAL_INVOICE_ID, 'WALLET', {}, Role.OWNER, OTHER_COMPANY);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('NOT_FOUND');
-  });
-});
+// "Financial integrity: unauthorized invoice access and payment" used to live here, testing
+// invoicesService's mock getInvoice/payInvoice. That domain is now server-side (Phase 14, Stage
+// 8) - equivalent coverage now lives in server/services/invoices.routes.test.ts, tested against
+// the real database and actual route handlers instead of a client-side mock.
 
 // "Supplier modifying another supplier's product" used to live here, testing catalogService's
 // mock createProduct/updateProduct/updateInventory. That domain is now server-side (Phase 14,

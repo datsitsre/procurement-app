@@ -43,7 +43,7 @@ function requestFor(url: string, token: string, init?: { method?: string; body?:
 }
 
 beforeAll(async () => {
-  await db.company.create({ data: { id: BUYER_COMPANY_ID, name: 'Orders Routes Buyer Co', country: 'GH', currency: 'GHS' } });
+  await db.company.create({ data: { id: BUYER_COMPANY_ID, name: 'Orders Routes Buyer Co', country: 'GH', currency: 'GHS', creditAvailable: 100000 } });
   await db.company.create({
     data: { id: SUPPLIER_COMPANY_ID, name: 'Orders Routes Supplier Co', country: 'GH', currency: 'GHS', isSupplier: true },
   });
@@ -211,7 +211,12 @@ describe('GET /api/purchase-orders/[id] and POST .../checkout', () => {
     expect(order.paymentStatus).toBe('PENDING');
     expect(order.purchaseOrderId).toBe(PURCHASE_ORDER_ID);
 
-    // Cleanup for this scratch order (separate from ORDER_ID, created by checkout itself).
+    // Cleanup for this scratch order (separate from ORDER_ID, created by checkout itself) and
+    // the real Payment/Invoice it produced (Phase 14, Stage 8).
+    await db.paymentTransaction.deleteMany({ where: { payment: { orderId: order.id } } });
+    await db.payment.deleteMany({ where: { orderId: order.id } });
+    await db.invoiceItem.deleteMany({ where: { invoice: { orderId: order.id } } });
+    await db.invoice.deleteMany({ where: { orderId: order.id } });
     await db.orderItem.deleteMany({ where: { orderId: order.id } });
     await db.orderTimelineEvent.deleteMany({ where: { orderId: order.id } });
     await db.shipment.deleteMany({ where: { orderId: order.id } });

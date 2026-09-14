@@ -770,11 +770,53 @@ async function main() {
     });
   }
 
+  // ---------------------------------------------------------------------------------------
+  // Finance (Phase 14, Stage 8) - invoices. Ported from src/lib/demo-data/invoices.ts, same
+  // ids. No demo Payment rows - the mock never seeded any either (a Payment only ever existed
+  // once a real charge ran), so the payments list starts genuinely empty, same as before.
+  // ---------------------------------------------------------------------------------------
+
+  const invoices = [
+    {
+      id: 'invoice-10282', reference: 'INV-10282', companyId: 'company-acme-gh', supplierId: 'supplier-abc',
+      orderId: 'order-10082', purchaseOrderReference: 'PO-2026-00182',
+      items: [{ description: 'Cisco Catalyst Switch x5', quantity: 5, unitPrice: 8100 }],
+      subtotal: 40500, tax: 5063, total: 45563, amountPaid: 0,
+      status: 'PENDING' as const, dueDate: '2026-09-20T00:00:00Z', issuedAt: '2026-09-08T10:35:00Z',
+    },
+    {
+      id: 'invoice-10281', reference: 'INV-10281', companyId: 'company-acme-gh', supplierId: 'supplier-prime',
+      orderId: 'order-10081',
+      items: [{ description: 'Office Chair x10', quantity: 10, unitPrice: 910 }],
+      subtotal: 9100, tax: 1138, total: 10238, amountPaid: 10238,
+      status: 'PAID' as const, dueDate: '2026-09-12T00:00:00Z', issuedAt: '2026-09-05T14:05:00Z',
+    },
+    {
+      id: 'invoice-10260', reference: 'INV-10260', companyId: 'company-acme-gh', supplierId: 'supplier-wae',
+      orderId: 'order-10072',
+      items: [{ description: 'APC UPS x6', quantity: 6, unitPrice: 3050 }],
+      subtotal: 18300, tax: 2288, total: 20588, amountPaid: 0,
+      status: 'OVERDUE' as const, dueDate: '2026-09-01T00:00:00Z', issuedAt: '2026-08-22T09:20:00Z',
+    },
+  ];
+
+  for (const inv of invoices) {
+    const { items, dueDate, issuedAt, ...rest } = inv;
+    await db.invoice.upsert({
+      where: { id: inv.id },
+      update: { ...rest, dueDate: new Date(dueDate) },
+      create: { ...rest, dueDate: new Date(dueDate), issuedAt: new Date(issuedAt) },
+    });
+    await db.invoiceItem.deleteMany({ where: { invoiceId: inv.id } });
+    await db.invoiceItem.createMany({ data: items.map((i) => ({ ...i, invoiceId: inv.id })) });
+  }
+
   console.log(`Seeded ${users.length} users, ${companies.length} companies, ${memberships.length} memberships.`);
   console.log(`Seeded ${supplierProfiles.length} suppliers, ${categories.length} categories, ${products.length} products.`);
   console.log(`Seeded ${rfqs.length} RFQs, ${quotes.length} quotes, ${negotiations.length} negotiation messages.`);
   console.log(`Seeded ${approvalRules.length} approval rules, ${purchaseRequests.length} purchase requests.`);
   console.log(`Seeded ${purchaseOrders.length} purchase orders, ${orders.length} orders, ${disputes.length} disputes.`);
+  console.log(`Seeded ${invoices.length} invoices.`);
   console.log(`Every seeded account's password is "${DEMO_PASSWORD}" - demo data only, never use in production.`);
 }
 

@@ -9,11 +9,15 @@ import type { Prisma } from '@prisma/client';
 
 /**
  * The real, database-backed counterpart to src/services/orders.service.ts's mock (Phase 14,
- * Stage 7) - orders, their status timeline, shipments, and deliveries. `createFromPurchaseOrder`
- * is called by the checkout route right after payment succeeds (still a client-side mock call
- * into payment.service.ts, Stage 8's job) - it and `markConverted` (purchase-order.service.ts)
- * run in one transaction here so a PO is never left "paid for" without a real Order, or vice
- * versa.
+ * Stage 7 - orders, their status timeline, shipments, and deliveries; Stage 8 - checkout now
+ * actually charges payment and raises the invoice itself, server-side, in the same flow, closing
+ * the last two client-side hand-off boundaries Stage 7 left open). `createFromPurchaseOrder`
+ * charges payment first (payment.service.ts's real provider abstraction) - a checkout can now
+ * genuinely fail (an invalid card, insufficient credit, ...), unlike Stage 7's version, which
+ * assumed every non-credit-terms method always succeeded because there was no real charge yet.
+ * On success it creates the Order, its initial timeline, a PREPARING shipment, the Invoice, and
+ * marks the originating PurchaseOrder converted - all in one transaction, so nothing is ever
+ * left half-done (a PO "paid for" with no Order, an Order with no Invoice, ...).
  */
 
 const ORDER_INCLUDE = { items: true, supplier: true } satisfies Prisma.OrderInclude;
@@ -55,15 +59,29 @@ export async function listDeliveries(orderId: UUID): Promise<ServiceResult<Deliv
   return ok(deliveries.map(toDeliveryDto));
 }
 
-/** Turns a paid-for purchase order into a real order (section 25's checkout confirmation step),
- *  marks the originating PurchaseOrder converted, and seeds its initial timeline + a PREPARING
- *  shipment - all in one transaction, called by the checkout route once payment has already
- *  succeeded (still payment.service.ts's mock job, Stage 8). `paymentStatus` is derived here from
- *  `method`, never trusted from the client - a credit-terms checkout stays PENDING (the invoice
- *  stays due rather than being paid up front); every other method is PAID. */
-export async function createFromPurchaseOrder(po: PurchaseOrder, method: PaymentMethod): Promise<ServiceResult<Order>> {
+export async function createFromPurchaseOrder(
+  po: PurchaseOrder,
+  method: PaymentMethod,
+  details: Record<string, string>,
+  idempotencyKey?: string,
+): Promise<ServiceResult<Order>> {
   if (po.orderId) return fail('ALREADY_CONVERTED', 'This purchase order has already been converted into an order.');
 
+  const { charge } = await import('./payment.service');
+  const chargeResult = await charge({
+    companyId: po.companyId,
+    supplierId: po.supplierId,
+    amount: po.total,
+    currency: 'GHS',
+    method,
+    details,
+    idempotencyKey,
+  });
+  if (!chargeResult.ok) return fail(chargeResult.error.code, chargeResult.error.message);
+
+  // A successful charge is either a real payment (CARD/momo/bank/wallet) or a credit-terms
+  // reservation - only the latter leaves the invoice still due, exactly like Stage 7's version
+  // derived it, just now gated behind an actual charge attempt instead of assumed.
   const paymentStatus: Order['paymentStatus'] = method === 'CREDIT_TERMS' ? 'PENDING' : 'PAID';
   const now = new Date();
   const expectedDeliveryDate = new Date(now.getTime() + 6 * 24 * 60 * 60 * 1000);
@@ -106,6 +124,10 @@ export async function createFromPurchaseOrder(po: PurchaseOrder, method: Payment
     });
 
     await tx.purchaseOrder.update({ where: { id: po.id }, data: { orderId: created.id } });
+
+    const { createForOrder } = await import('./invoices.service');
+    const invoice = await createForOrder(toOrderDto(created), tx);
+    await tx.payment.update({ where: { id: chargeResult.data.id }, data: { invoiceId: invoice.id, orderId: created.id } });
 
     return created;
   });

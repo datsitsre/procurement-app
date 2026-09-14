@@ -8,7 +8,6 @@ import { useActiveCompany, useActiveMembership, useTenantContext } from '@/hooks
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { purchaseOrderService } from '@/services/purchase-order.service';
 import { ordersService } from '@/services/orders.service';
-import { invoicesService } from '@/services/invoices.service';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
@@ -92,33 +91,15 @@ export default function CheckoutPage() {
     setSubmitting(true);
     setSubmitError(null);
 
-    const chargeDetails = method === 'CREDIT_TERMS' ? { creditAvailable: String(company.creditAvailable ?? 0) } : details;
-    const { paymentService } = await import('@/services/payment.service');
-    const result = await paymentService.charge(
-      {
-        companyId: company.id,
-        supplierId: po.supplierId,
-        amount: po.total,
-        currency: company.currency,
-        method,
-        details: chargeDetails,
-      },
-      membership.role,
-    );
-
-    if (!result.ok) {
-      setSubmitError(result.error.message);
-      setSubmitting(false);
-      return;
-    }
-
-    const orderResult = await ordersService.createFromPurchaseOrder(po, method);
+    // Payment is charged and the invoice is raised server-side, in the same request, atomically
+    // with the order itself (Phase 14, Stage 8) - credit terms no longer needs the client to
+    // read the company's own available credit, since the server checks its real record.
+    const orderResult = await ordersService.createFromPurchaseOrder(po, method, details);
     if (!orderResult.ok) {
       setSubmitError(orderResult.error.message);
       setSubmitting(false);
       return;
     }
-    await invoicesService.createForOrder(orderResult.data);
 
     setConfirmedOrder(orderResult.data);
     setSubmitting(false);
