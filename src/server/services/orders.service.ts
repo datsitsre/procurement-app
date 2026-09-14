@@ -132,7 +132,22 @@ export async function createFromPurchaseOrder(
     return created;
   });
 
-  return ok(toOrderDto(order));
+  const orderDto = toOrderDto(order);
+  if (paymentStatus === 'PAID') {
+    const supplier = await db.supplierProfile.findUnique({ where: { id: po.supplierId } });
+    if (supplier) {
+      const { notifyCompanyRoles } = await import('./notification.service');
+      await notifyCompanyRoles(supplier.companyId, ['SUPPLIER_ADMIN'], {
+        type: 'PAYMENT_RECEIVED',
+        title: `Payment received for ${orderDto.reference}`,
+        body: `GH₵${orderDto.total.toLocaleString()} paid in full.`,
+        entityId: orderDto.id,
+        entityHref: `/orders/${orderDto.id}`,
+      });
+    }
+  }
+
+  return ok(orderDto);
 }
 
 export async function listOrdersForSupplier(supplierId: UUID): Promise<ServiceResult<Order[]>> {
@@ -172,7 +187,18 @@ export async function dispatchOrder(orderId: UUID, driverName: string): Promise<
     return tx.order.update({ where: { id: orderId }, data: { status: 'SHIPPED' }, include: ORDER_INCLUDE });
   });
   await addTimelineEvent(orderId, 'SHIPPED', 'Shipped, on the way');
-  return ok(toOrderDto(updated));
+
+  const orderDto = toOrderDto(updated);
+  const { notifyCompanyRoles } = await import('./notification.service');
+  await notifyCompanyRoles(orderDto.companyId, ['OWNER', 'ADMIN', 'PROCUREMENT_MANAGER', 'BUYER'], {
+    type: 'ORDER_SHIPPED',
+    title: `Order ${orderDto.reference} shipped`,
+    body: 'Expected delivery in 2-3 business days.',
+    entityId: orderDto.id,
+    entityHref: `/orders/${orderDto.id}`,
+  });
+
+  return ok(orderDto);
 }
 
 /** SHIPPED -> DELIVERED: records a full delivery for every line and closes out the shipment.

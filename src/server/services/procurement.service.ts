@@ -139,7 +139,17 @@ export async function submitQuote(input: SubmitQuoteInput): Promise<ServiceResul
     return created;
   });
 
-  return ok(toQuoteDto(quote));
+  const quoteDto = toQuoteDto(quote);
+  const { notifyUser } = await import('./notification.service');
+  await notifyUser(rfq.createdByUserId, {
+    type: 'QUOTE_RECEIVED',
+    title: `Supplier responded to ${rfq.reference}`,
+    body: `${quoteDto.supplierName} submitted a quote.`,
+    entityId: rfq.id,
+    entityHref: `/rfqs/${rfq.id}`,
+  });
+
+  return ok(quoteDto);
 }
 
 export async function listNegotiationMessages(rfqId: UUID, quoteId: UUID): Promise<ServiceResult<NegotiationMessage[]>> {
@@ -299,7 +309,21 @@ export async function createPurchaseRequest(input: CreatePurchaseRequestInput): 
     },
     include: PURCHASE_REQUEST_INCLUDE,
   });
-  return ok(toPurchaseRequestDto(pr));
+
+  const prDto = toPurchaseRequestDto(pr);
+  const firstStep = prDto.approvalSteps[0];
+  if (firstStep) {
+    const { notifyCompanyRoles } = await import('./notification.service');
+    await notifyCompanyRoles(input.companyId, [firstStep.approverRole as Role], {
+      type: 'APPROVAL_REQUESTED',
+      title: 'Purchase request requires approval',
+      body: `${prDto.reference} (₵${totalAmount.toLocaleString()}) is waiting on ${RoleLabels[firstStep.approverRole as Role] ?? firstStep.approverRole}.`,
+      entityId: pr.id,
+      entityHref: '/approvals',
+    });
+  }
+
+  return ok(prDto);
 }
 
 /** Only the *next* pending step (steps are sequential) matters - a later step waiting on this
@@ -360,12 +384,39 @@ export async function decideStep(
     return tx.purchaseRequest.update({ where: { id: purchaseRequestId }, data: { status }, include: PURCHASE_REQUEST_INCLUDE });
   });
 
+  const updatedDto = toPurchaseRequestDto(updated);
+
   if (updated.status === 'CONVERTED_TO_PO') {
     const { createFromPurchaseRequest } = await import('./purchase-order.service');
-    await createFromPurchaseRequest(toPurchaseRequestDto(updated), authorizedByName);
+    await createFromPurchaseRequest(updatedDto, authorizedByName);
   }
 
-  return ok(toPurchaseRequestDto(updated));
+  const { notifyUser, notifyCompanyRoles } = await import('./notification.service');
+  if (updated.status === 'REJECTED' || updated.status === 'CONVERTED_TO_PO') {
+    // The request reached a final decision - the person who asked for it should hear the
+    // outcome, whichever way it went.
+    await notifyUser(updated.requesterUserId, {
+      type: 'APPROVAL_DECIDED',
+      title: `${updatedDto.reference} was ${updated.status === 'REJECTED' ? 'rejected' : 'approved'}`,
+      body: updated.status === 'REJECTED' ? (comment ?? 'No reason given.') : 'Every approval step has signed off.',
+      entityId: updated.id,
+      entityHref: `/purchase-requests/${updated.id}`,
+    });
+  } else {
+    // Still IN_APPROVAL - the next band in the sequence is now waiting on them.
+    const nextStep = updatedDto.approvalSteps.find((s) => s.status === 'PENDING');
+    if (nextStep) {
+      await notifyCompanyRoles(updated.companyId, [nextStep.approverRole as Role], {
+        type: 'APPROVAL_REQUESTED',
+        title: 'Purchase request requires approval',
+        body: `${updatedDto.reference} (₵${updatedDto.totalAmount.toLocaleString()}) is waiting on ${RoleLabels[nextStep.approverRole as Role] ?? nextStep.approverRole}.`,
+        entityId: updated.id,
+        entityHref: '/approvals',
+      });
+    }
+  }
+
+  return ok(updatedDto);
 }
 
 // ---- Approval rules (section 12 - admin-configurable spend bands) ----

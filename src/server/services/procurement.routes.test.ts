@@ -129,6 +129,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // submitQuote/decideStep (Phase 14, Stage 9) notify the RFQ creator/PR requester for real now
+  // - both land on BUYER_USER_ID, referencing these two ids.
+  await db.notification.deleteMany({ where: { entityId: { in: [RFQ_ID, PURCHASE_REQUEST_ID] } } });
   // acceptQuote/decideStep (Stage 7) build real PurchaseOrders inline - clean those up first.
   await db.purchaseOrderItem.deleteMany({ where: { purchaseOrder: { companyId: BUYER_COMPANY_ID } } });
   await db.purchaseOrder.deleteMany({ where: { companyId: BUYER_COMPANY_ID } });

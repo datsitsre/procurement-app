@@ -1,5 +1,4 @@
-import { delay, ok } from './base';
-import { demoNotifications } from '@/lib/demo-data/notifications';
+import { apiRequest } from './base';
 import type { Notification } from '@/types/notification';
 import type { ServiceResult } from '@/types/common';
 
@@ -9,35 +8,23 @@ export interface NotificationService {
   markAllRead(userId: string): Promise<ServiceResult<void>>;
 }
 
-/** In-memory mock store - a real implementation replaces this with API calls (and likely a
- *  WebSocket/polling subscription for live delivery), keeping the same interface. */
-class MockNotificationService implements NotificationService {
-  private notifications = [...demoNotifications];
-
-  async list(userId: string): Promise<ServiceResult<Notification[]>> {
-    await delay(200);
-    return ok(
-      this.notifications
-        .filter((n) => n.userId === userId)
-        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
-    );
+/**
+ * Calls the real `/api/notifications*` backend (Phase 14, Stage 9). `userId` is still accepted
+ * on `list`/`markAllRead` (every existing page already passes it) but is never sent over the
+ * wire or trusted - the API always scopes to the caller's own session id.
+ */
+class ApiNotificationService implements NotificationService {
+  async list(): Promise<ServiceResult<Notification[]>> {
+    return apiRequest<Notification[]>('/api/notifications');
   }
 
   async markRead(notificationId: string): Promise<ServiceResult<void>> {
-    await delay(100);
-    this.notifications = this.notifications.map((n) =>
-      n.id === notificationId ? { ...n, read: true } : n,
-    );
-    return ok(undefined);
+    return apiRequest<void>(`/api/notifications/${notificationId}/read`, { method: 'POST' });
   }
 
-  async markAllRead(userId: string): Promise<ServiceResult<void>> {
-    await delay(150);
-    this.notifications = this.notifications.map((n) =>
-      n.userId === userId ? { ...n, read: true } : n,
-    );
-    return ok(undefined);
+  async markAllRead(): Promise<ServiceResult<void>> {
+    return apiRequest<void>('/api/notifications/read-all', { method: 'POST' });
   }
 }
 
-export const notificationService: NotificationService = new MockNotificationService();
+export const notificationService: NotificationService = new ApiNotificationService();

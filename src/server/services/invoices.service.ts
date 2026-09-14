@@ -113,5 +113,19 @@ export async function payInvoice(invoiceId: UUID, method: PaymentMethod, details
     data: { amountPaid: invoice.total, status: 'PAID' },
     include: INVOICE_INCLUDE,
   });
-  return ok(toInvoiceDto(updated));
+
+  const updatedDto = toInvoiceDto(updated);
+  const supplier = await db.supplierProfile.findUnique({ where: { id: invoice.supplierId } });
+  if (supplier) {
+    const { notifyCompanyRoles } = await import('./notification.service');
+    await notifyCompanyRoles(supplier.companyId, ['SUPPLIER_ADMIN'], {
+      type: 'PAYMENT_RECEIVED',
+      title: `Payment received for ${updatedDto.reference}`,
+      body: `GH₵${updatedDto.total.toLocaleString()} paid in full.`,
+      entityId: updated.id,
+      entityHref: `/invoices/${updated.id}`,
+    });
+  }
+
+  return ok(updatedDto);
 }

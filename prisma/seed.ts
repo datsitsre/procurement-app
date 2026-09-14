@@ -811,12 +811,42 @@ async function main() {
     await db.invoiceItem.createMany({ data: items.map((i) => ({ ...i, invoiceId: inv.id })) });
   }
 
+  // ---------------------------------------------------------------------------------------
+  // Notifications (Phase 14, Stage 9) - ported from src/lib/demo-data/notifications.ts, same
+  // ids. Timestamps are computed relative to seed time, same as the mock's own "always recent"
+  // design, so the demo always shows a believably fresh unread notification.
+  // ---------------------------------------------------------------------------------------
+
+  const notifications = [
+    {
+      id: 'notif-1', userId: 'user-john-doe', type: 'QUOTE_RECEIVED',
+      title: 'Supplier responded to RFQ-10082', body: 'ABC Technology Solutions submitted a quote.',
+      entityHref: '/rfqs/rfq-10082', read: false, createdAt: new Date(Date.now() - 5 * 60_000),
+    },
+    {
+      id: 'notif-2', userId: 'user-john-doe', type: 'APPROVAL_REQUESTED',
+      title: 'Purchase request requires approval', body: 'PR-10082 (₵46,063) is waiting on Finance manager.',
+      entityHref: '/approvals', read: false, createdAt: new Date(Date.now() - 20 * 60_000),
+    },
+    {
+      id: 'notif-3', userId: 'user-john-doe', type: 'ORDER_SHIPPED',
+      title: 'Order #10072 shipped', body: 'Expected delivery in 2-3 business days.',
+      entityHref: '/orders/order-10072', read: true, createdAt: new Date(Date.now() - 2 * 60 * 60_000),
+    },
+  ];
+
+  for (const n of notifications) {
+    const { createdAt, ...rest } = n;
+    await db.notification.upsert({ where: { id: n.id }, update: { ...rest, createdAt }, create: { ...rest, createdAt } });
+  }
+
   console.log(`Seeded ${users.length} users, ${companies.length} companies, ${memberships.length} memberships.`);
   console.log(`Seeded ${supplierProfiles.length} suppliers, ${categories.length} categories, ${products.length} products.`);
   console.log(`Seeded ${rfqs.length} RFQs, ${quotes.length} quotes, ${negotiations.length} negotiation messages.`);
   console.log(`Seeded ${approvalRules.length} approval rules, ${purchaseRequests.length} purchase requests.`);
   console.log(`Seeded ${purchaseOrders.length} purchase orders, ${orders.length} orders, ${disputes.length} disputes.`);
   console.log(`Seeded ${invoices.length} invoices.`);
+  console.log(`Seeded ${notifications.length} notifications.`);
   console.log(`Every seeded account's password is "${DEMO_PASSWORD}" - demo data only, never use in production.`);
 }
 

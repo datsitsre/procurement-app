@@ -34,6 +34,11 @@ const TEST_CATEGORY_ID = `test-category-procurement-${Date.now()}`;
 const TEST_PRODUCT_ID = `test-product-procurement-${Date.now()}`;
 const TEST_USER_ID = 'user-john-doe'; // seeded buyer at company-acme-gh, reused here as the RFQ creator
 
+// Notifications (Phase 14, Stage 9) land on this real seeded user's row, shared across several
+// test files - track exactly which entity ids this file's own notifications reference so
+// cleanup never risks deleting a concurrently-running file's notification for the same user.
+const notifiedEntityIds: string[] = [];
+
 beforeAll(async () => {
   await db.company.create({
     data: { id: TEST_COMPANY_ID, name: 'Procurement Test Buyer Co', country: 'GH', currency: 'GHS' },
@@ -79,6 +84,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Notifications created against this file's own RFQ/PR ids (Phase 14, Stage 9) - these land
+  // on the real seeded TEST_USER_ID, so cleanup is scoped by the exact entity ids this file
+  // itself produced, never a blanket delete for that user.
+  if (notifiedEntityIds.length > 0) {
+    await db.notification.deleteMany({ where: { entityId: { in: notifiedEntityIds } } });
+  }
   // acceptQuote/decideStep (Stage 7) now build a real PurchaseOrder inline - clean those up
   // before anything they reference (Product/SupplierProfile).
   await db.purchaseOrderItem.deleteMany({ where: { purchaseOrder: { companyId: TEST_COMPANY_ID } } });
@@ -198,6 +209,11 @@ describe('submitQuote', () => {
     });
     expect(quote.ok).toBe(true);
     if (quote.ok) expect(quote.data.totalPrice).toBe(450);
+
+    // Phase 14, Stage 9 - a real QUOTE_RECEIVED notification, not just a status change.
+    notifiedEntityIds.push(rfq.data.id);
+    const notified = await db.notification.findFirst({ where: { userId: TEST_USER_ID, type: 'QUOTE_RECEIVED', entityId: rfq.data.id } });
+    expect(notified).not.toBeNull();
 
     const updatedRfq = await getRfq(rfq.data.id);
     expect(updatedRfq.ok).toBe(true);
@@ -376,6 +392,11 @@ describe('purchase requests + spending limits + approvals (Phase 14, Stage 6)', 
       expect(decided.data.approvalSteps[0].status).toBe('APPROVED');
       expect(decided.data.approvalSteps[0].approverName).toBe('John Doe');
     }
+
+    // Phase 14, Stage 9 - the requester hears about the final decision.
+    notifiedEntityIds.push(pr.data.id);
+    const decidedNotification = await db.notification.findFirst({ where: { userId: TEST_USER_ID, type: 'APPROVAL_DECIDED', entityId: pr.data.id } });
+    expect(decidedNotification).not.toBeNull();
 
     const fetched = await getPurchaseRequest(pr.data.id);
     expect(fetched.ok).toBe(true);

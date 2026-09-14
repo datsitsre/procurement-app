@@ -48,6 +48,11 @@ async function createScratchPurchaseOrder() {
 
 const VALID_CARD = { cardNumber: '4111111111111111', cvv: '123' };
 
+// Notifications (Phase 14, Stage 9) land on real seeded users shared across test files - track
+// exactly which order ids this file's own notifications reference so cleanup never risks
+// deleting a concurrently-running file's notification for the same user.
+const notifiedEntityIds: string[] = [];
+
 beforeAll(async () => {
   await db.company.create({
     data: { id: TEST_COMPANY_ID, name: 'Orders Test Buyer Co', country: 'GH', currency: 'GHS', creditAvailable: 100000 },
@@ -66,6 +71,14 @@ beforeAll(async () => {
       description: '',
       verification: 'VERIFIED',
     },
+  });
+  // Phase 14, Stage 9 - a real member of each company so notifyCompanyRoles has someone to
+  // actually notify (ORDER_SHIPPED for the buyer, PAYMENT_RECEIVED for the supplier).
+  await db.companyMembership.createMany({
+    data: [
+      { companyId: TEST_COMPANY_ID, userId: 'user-john-doe', role: 'BUYER', status: 'ACTIVE', joinedAt: new Date() },
+      { companyId: `${TEST_SUPPLIER_ID}-company`, userId: 'user-adwoa-mensah', role: 'SUPPLIER_ADMIN', status: 'ACTIVE', joinedAt: new Date() },
+    ],
   });
   await db.category.create({ data: { id: TEST_CATEGORY_ID, name: 'Orders Test Category', slug: `orders-test-category-${Date.now()}` } });
   await db.product.create({
@@ -86,6 +99,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (notifiedEntityIds.length > 0) {
+    await db.notification.deleteMany({ where: { entityId: { in: notifiedEntityIds } } });
+  }
+  await db.companyMembership.deleteMany({ where: { companyId: { in: [TEST_COMPANY_ID, `${TEST_SUPPLIER_ID}-company`] } } });
   await db.paymentTransaction.deleteMany({ where: { payment: { companyId: TEST_COMPANY_ID } } });
   await db.payment.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
   await db.invoiceItem.deleteMany({ where: { invoice: { companyId: TEST_COMPANY_ID } } });
@@ -145,6 +162,13 @@ describe('createFromPurchaseOrder', () => {
     const invoice = await db.invoice.findUnique({ where: { id: payment!.invoiceId! } });
     expect(invoice?.status).toBe('PAID');
     expect(Number(invoice?.total)).toBe(po.total);
+
+    // Phase 14, Stage 9 - the supplier's admins hear that a real payment came in.
+    if (result.ok) notifiedEntityIds.push(result.data.id);
+    const paymentNotification = await db.notification.findFirst({
+      where: { userId: 'user-adwoa-mensah', type: 'PAYMENT_RECEIVED', entityId: result.ok ? result.data.id : undefined },
+    });
+    expect(paymentNotification).not.toBeNull();
   });
 
   it('leaves paymentStatus PENDING for CREDIT_TERMS (invoice stays due), and never converts the same PO twice', async () => {
@@ -193,6 +217,11 @@ describe('fulfillment state machine', () => {
       expect(shipmentsAfterDispatch.data[0].driverName).toBe('Test Driver');
     }
 
+    // Phase 14, Stage 9 - the buyer's team hears the order shipped.
+    notifiedEntityIds.push(orderId);
+    const shippedNotification = await db.notification.findFirst({ where: { userId: 'user-john-doe', type: 'ORDER_SHIPPED', entityId: orderId } });
+    expect(shippedNotification).not.toBeNull();
+
     const delivered = await markDelivered(orderId);
     expect(delivered.ok).toBe(true);
     if (delivered.ok) expect(delivered.data.status).toBe('DELIVERED');
@@ -216,6 +245,7 @@ describe('markRefunded', () => {
     const created = await createFromPurchaseOrder(po, 'CARD', VALID_CARD);
     expect(created.ok).toBe(true);
     if (!created.ok) return;
+    notifiedEntityIds.push(created.data.id); // PAYMENT_RECEIVED fires for a PAID CARD checkout
 
     const refunded = await markRefunded(created.data.id);
     expect(refunded.ok).toBe(true);
