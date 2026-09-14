@@ -1,0 +1,73 @@
+import 'server-only';
+import crypto from 'node:crypto';
+import { db } from '@/server/db';
+import { env } from '@/server/env';
+import { fail, ok } from '@/services/base';
+import type { ServiceResult } from '@/types/common';
+
+/**
+ * Inbound webhook handling for the payment-provider abstraction (Phase 14, Stage 11 - external
+ * integrations). None of the mock providers in server/services/payment/providers.ts ever call
+ * this today - they all resolve synchronously, so nothing in this app's own flow sends a
+ * webhook. This exists so a real gateway (Paystack, Flutterwave, a direct MoMo API integration,
+ * ...) can be wired in later by pointing its webhook config at this route and setting
+ * PAYMENT_WEBHOOK_SIGNING_SECRET, without touching payment.service.ts's charge() or the
+ * checkout/invoice flows that depend on it.
+ */
+
+/** Constant-time HMAC-SHA256 signature check over the raw request body - never parse the body
+ *  as JSON before verifying, or a byte-for-byte signature mismatch (whitespace, key order) could
+ *  slip through. Fails closed (false) if no signing secret is configured at all, so an
+ *  unconfigured deployment rejects every webhook rather than silently accepting unsigned ones. */
+export function verifyWebhookSignature(rawBody: string, signatureHeader: string | null): boolean {
+  if (!env.PAYMENT_WEBHOOK_SIGNING_SECRET || !signatureHeader) return false;
+
+  const expected = crypto.createHmac('sha256', env.PAYMENT_WEBHOOK_SIGNING_SECRET).update(rawBody).digest('hex');
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  const receivedBuffer = Buffer.from(signatureHeader, 'hex');
+  if (expectedBuffer.length !== receivedBuffer.length) return false;
+  return crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+export interface PaymentWebhookPayload {
+  /** Matches Payment.reference - the id this app's own charge() call originally minted, or the
+   *  provider's own reference if the provider assigns one instead (see each PaymentProvider's
+   *  own `charge()` for which). */
+  providerReference: string;
+  event: 'payment.captured' | 'payment.failed';
+}
+
+/** Idempotent - a replayed webhook for a payment already in the target status is a no-op
+ *  (returns ok with `changed: false`), never a duplicate side effect. Real gateways retry
+ *  webhook delivery until they get a 2xx, so this has to be safe to call more than once for the
+ *  same event. */
+export async function processPaymentWebhook(payload: PaymentWebhookPayload): Promise<ServiceResult<{ changed: boolean }>> {
+  const payment = await db.payment.findUnique({ where: { reference: payload.providerReference } });
+  if (!payment) return fail('NOT_FOUND', 'No payment matches this reference.');
+
+  const newStatus = payload.event === 'payment.captured' ? 'PAID' : 'FAILED';
+  if (payment.status === newStatus) return ok({ changed: false });
+
+  await db.$transaction(async (tx) => {
+    await tx.payment.update({ where: { id: payment.id }, data: { status: newStatus } });
+    await tx.paymentTransaction.create({
+      data: {
+        paymentId: payment.id,
+        provider: payment.method,
+        providerReference: payload.providerReference,
+        event: 'WEBHOOK_RECEIVED',
+        amount: payment.amount,
+        rawPayload: payload as never,
+      },
+    });
+
+    if (newStatus === 'PAID' && payment.invoiceId) {
+      const invoice = await tx.invoice.findUnique({ where: { id: payment.invoiceId } });
+      if (invoice && invoice.status !== 'PAID') {
+        await tx.invoice.update({ where: { id: payment.invoiceId }, data: { amountPaid: invoice.total, status: 'PAID' } });
+      }
+    }
+  });
+
+  return ok({ changed: true });
+}

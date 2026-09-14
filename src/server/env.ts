@@ -30,6 +30,11 @@ export const env = {
   DATABASE_URL: required('DATABASE_URL'),
   AUTH_SECRET: required('AUTH_SECRET'),
   SESSION_TTL_SECONDS: Number(optional('SESSION_TTL_SECONDS', '604800')),
+  // Optional, not required(): unset simply means no payment provider has been wired to send
+  // real webhooks yet (Phase 14, Stage 11) - the webhook route itself fails closed (rejects
+  // every request) whenever this is empty, rather than the whole app refusing to start over an
+  // integration nothing is using yet.
+  PAYMENT_WEBHOOK_SIGNING_SECRET: optional('PAYMENT_WEBHOOK_SIGNING_SECRET', ''),
 };
 
 export const isProduction = env.NODE_ENV === 'production';
