@@ -6,10 +6,13 @@ import {
   createCostCenter,
   createDepartment,
   getCompanyProfile,
+  getEffectiveSpendingLimit,
   listBranches,
+  listSpendingLimits,
   removeBranch,
   removeCostCenter,
   removeDepartment,
+  setSpendingLimit,
   updateCompanyProfile,
 } from './company.service';
 
@@ -120,5 +123,33 @@ describe('Branches', () => {
     const result = await listBranches(TEST_COMPANY_ID);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.every((b) => b.companyId === TEST_COMPANY_ID)).toBe(true);
+  });
+});
+
+describe('Spending limits (Phase 14, Stage 6)', () => {
+  it('falls back to the platform default when no company override exists', async () => {
+    const { DefaultSpendingLimits } = await import('@/config/spending-limits');
+    const limit = await getEffectiveSpendingLimit(TEST_COMPANY_ID, 'EMPLOYEE');
+    expect(limit).toBe(DefaultSpendingLimits.EMPLOYEE);
+  });
+
+  it("rejects setting a negative limit, then a company override takes effect and shows up in the list", async () => {
+    const negative = await setSpendingLimit(TEST_COMPANY_ID, 'EMPLOYEE', -1);
+    expect(negative.ok).toBe(false);
+    if (!negative.ok) expect(negative.error.code).toBe('INVALID_AMOUNT');
+
+    const set = await setSpendingLimit(TEST_COMPANY_ID, 'EMPLOYEE', 12345);
+    expect(set.ok).toBe(true);
+    expect(await getEffectiveSpendingLimit(TEST_COMPANY_ID, 'EMPLOYEE')).toBe(12345);
+
+    const list = await listSpendingLimits(TEST_COMPANY_ID);
+    expect(list.ok).toBe(true);
+    if (list.ok) expect(list.data.find((l) => l.role === 'EMPLOYEE')?.amount).toBe(12345);
+
+    // Setting it again for the same role updates in place rather than creating a duplicate row.
+    await setSpendingLimit(TEST_COMPANY_ID, 'EMPLOYEE', 5);
+    expect(await getEffectiveSpendingLimit(TEST_COMPANY_ID, 'EMPLOYEE')).toBe(5);
+    const rows = await db.spendingLimit.findMany({ where: { companyId: TEST_COMPANY_ID, role: 'EMPLOYEE' } });
+    expect(rows).toHaveLength(1);
   });
 });

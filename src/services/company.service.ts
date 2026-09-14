@@ -1,9 +1,8 @@
-import { apiRequest, assertPermission, delay, fail, ok, ownsRecord } from './base';
+import { apiRequest } from './base';
 import { writeCompanyProfileOverride } from './auth.service';
-import { DefaultSpendingLimits } from '@/config/spending-limits';
 import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { Branch, Company, CompanyUser, CostCenter, Department, User } from '@/types/company';
-import { Permission, type Role } from '@/config/rbac';
+import type { Role } from '@/config/rbac';
 
 export interface TeamMember {
   membership: CompanyUser;
@@ -64,55 +63,15 @@ export interface CompanyService {
   setSpendingLimit(companyId: UUID, role: Role, amount: number, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>>;
 }
 
-// ---------------------------------------------------------------------------------------------
-// Spending limits (section 11.5) - still localStorage-backed, deliberately NOT migrated in this
-// stage. procurement.service.ts's createPurchaseRequest (the thing that actually *enforces*
-// this business rule) is still a client-side mock and reads spendingLimitFor() below directly;
-// moving only this file's read/write to the real API without also moving enforcement would
-// desync the two - Settings would appear to save a new limit that nothing then checks. Both
-// move together in Stage 6, when procurement.service.ts itself migrates. See
-// server/services/company.service.ts's matching comment.
-// ---------------------------------------------------------------------------------------------
-
-const SPENDING_LIMIT_STORE_KEY = 'procurement.spending-limits.v1';
-
-function readSpendingLimitOverrides(): Record<string, number> {
-  if (typeof window === 'undefined') return {};
-  const raw = window.localStorage.getItem(SPENDING_LIMIT_STORE_KEY);
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as Record<string, number>;
-  } catch {
-    return {};
-  }
-}
-
-function writeSpendingLimitOverride(companyId: UUID, role: Role, amount: number) {
-  if (typeof window === 'undefined') return;
-  const store = readSpendingLimitOverrides();
-  store[`${companyId}:${role}`] = amount;
-  window.localStorage.setItem(SPENDING_LIMIT_STORE_KEY, JSON.stringify(store));
-}
-
-/** The effective spending limit for one role at one company - a company's own override if it
- *  has set one, otherwise the platform default, otherwise `undefined` (no limit). Exported so
- *  procurement.service.ts can enforce it without importing this file's private storage. */
-export function spendingLimitFor(companyId: UUID, role: Role): number | undefined {
-  const overrides = readSpendingLimitOverrides();
-  const key = `${companyId}:${role}`;
-  return key in overrides ? overrides[key] : DefaultSpendingLimits[role];
-}
-
-const BUYER_ROLES_FOR_LIMITS: Role[] = ['OWNER', 'ADMIN', 'PROCUREMENT_MANAGER', 'BUYER', 'FINANCE_MANAGER', 'APPROVER', 'EMPLOYEE'];
-
 /**
- * Calls the real `/api/companies/[companyId]/*` backend (Phase 14, Stage 3) for company
- * identity/workspace data - profile, departments, cost centers, branches, team. Spending limits
- * stay on localStorage for now (see the block comment above). `callerRole`/`caller` are still
- * accepted (every existing page already passes them) but are never sent over the wire and never
- * trusted for authorization - the API derives the caller's role and tenant from the session
- * cookie itself (server/auth/require.ts). Keeping these parameters means every consuming page
- * needed zero changes.
+ * Calls the real `/api/companies/[companyId]/*` backend (Phase 14, Stage 3; spending limits
+ * joined in Stage 6, alongside procurement.service.ts's createPurchaseRequest which enforces
+ * them) for company identity/workspace data - profile, departments, cost centers, branches,
+ * team, spending limits. `callerRole`/`caller` are still accepted on several methods (every
+ * existing page already passes them) but are never sent over the wire and never trusted for
+ * authorization - the API derives the caller's role and tenant from the session cookie itself
+ * (server/auth/require.ts). Keeping these parameters means every consuming page needed zero
+ * changes.
  */
 class ApiCompanyService implements CompanyService {
   async listTeamMembers(companyId: UUID): Promise<ServiceResult<TeamMember[]>> {
@@ -176,19 +135,11 @@ class ApiCompanyService implements CompanyService {
   }
 
   async listSpendingLimits(companyId: UUID): Promise<ServiceResult<{ role: Role; amount: number | undefined }[]>> {
-    await delay(200);
-    return ok(BUYER_ROLES_FOR_LIMITS.map((role) => ({ role, amount: spendingLimitFor(companyId, role) })));
+    return apiRequest<{ role: Role; amount: number | undefined }[]>(`/api/companies/${companyId}/spending-limits`);
   }
 
-  async setSpendingLimit(companyId: UUID, role: Role, amount: number, callerRole: Role, caller: TenantContext): Promise<ServiceResult<void>> {
-    await delay(250);
-    const permissionError = assertPermission(callerRole, Permission.SETTINGS_MANAGE);
-    if (permissionError) return fail(permissionError.code, permissionError.message);
-    if (!ownsRecord(caller, companyId)) return fail('NOT_FOUND', 'That company could not be found.');
-    if (amount < 0) return fail('INVALID_AMOUNT', 'Set a spending limit of zero or more.');
-
-    writeSpendingLimitOverride(companyId, role, amount);
-    return ok(undefined);
+  async setSpendingLimit(companyId: UUID, role: Role, amount: number): Promise<ServiceResult<void>> {
+    return apiRequest<void>(`/api/companies/${companyId}/spending-limits/${role}`, { method: 'PATCH', body: JSON.stringify({ amount }) });
   }
 }
 

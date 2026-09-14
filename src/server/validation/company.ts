@@ -41,5 +41,6 @@ export const NewBranchSchema = z.object({
   isWarehouse: z.boolean(),
 });
 
-// Spending-limit validation deliberately doesn't live here yet - see the comment in
-// server/services/company.service.ts on why that domain isn't migrated in this stage.
+export const SetSpendingLimitSchema = z.object({
+  amount: z.number().min(0, 'Set a spending limit of zero or more'),
+});

@@ -1,38 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { procurementService } from './procurement.service';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { templatesService } from './templates.service';
 import { budgetsService } from './budgets.service';
 import { recurringService } from './recurring.service';
-import { catalogService } from './catalog.service';
-import { spendingLimitFor, companyService } from './company.service';
-import { DefaultSpendingLimits } from '@/config/spending-limits';
 import { Role } from '@/config/rbac';
-import type { PurchaseRequestItem } from '@/types/procurement';
 
 /**
  * Phase 11 (Advanced Procurement) regression suite - one of Rule 10's "every new mutation needs
- * authorization tests" for each Phase 11 mutation: purchase templates, spending limits, budgets,
- * and recurring purchases. Cross-tenant cases must fail closed with NOT_FOUND (never leak that
- * the record exists), and the spending-limit cases must confirm the rule layers strictly on top
- * of - never in place of - the existing RBAC permission check (section 11.5).
+ * authorization tests" for each Phase 11 mutation: purchase templates, budgets, and recurring
+ * purchases (spending limits moved to the server-side suite - see the comment below). Cross-
+ * tenant cases must fail closed with NOT_FOUND (never leak that the record exists).
  */
 
 const MY_COMPANY = { companyId: 'company-acme-gh' };
 const OTHER_COMPANY = { companyId: 'company-not-mine' };
 const PLATFORM_ADMIN = { isPlatformAdmin: true };
-
-function requestItem(overrides: Partial<PurchaseRequestItem> = {}): PurchaseRequestItem {
-  return {
-    id: 'pri-test-1',
-    productId: 'prod-cisco-switch',
-    productName: 'Cisco switch',
-    supplierId: 'supplier-abc',
-    supplierName: 'ABC Supplies',
-    quantity: 1,
-    unitPrice: 100,
-    ...overrides,
-  };
-}
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -77,81 +58,11 @@ describe('Purchase templates (section 11.0)', () => {
   });
 });
 
-describe('Spending limits (section 11.5 - a business rule additive to, never a replacement for, RBAC)', () => {
-  it('rejects a purchase request over the caller role default limit even though the role has permission to create requests', async () => {
-    const limit = DefaultSpendingLimits[Role.EMPLOYEE]!;
-    const result = await procurementService.createPurchaseRequest(
-      {
-        companyId: 'company-acme-gh',
-        requesterUserId: 'user-1',
-        requesterName: 'Test Employee',
-        items: [requestItem({ quantity: 1000, unitPrice: limit })], // total far exceeds the limit
-        reason: 'Over-limit test',
-      },
-      Role.EMPLOYEE,
-    );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('SPENDING_LIMIT_EXCEEDED');
-  });
-
-  it('allows a purchase request at or under the role limit', async () => {
-    const result = await procurementService.createPurchaseRequest(
-      {
-        companyId: 'company-acme-gh',
-        requesterUserId: 'user-1',
-        requesterName: 'Test Employee',
-        items: [requestItem({ quantity: 1, unitPrice: 100 })], // subtotal + tax + delivery stays comfortably under the limit
-        reason: 'Under-limit test',
-      },
-      Role.EMPLOYEE,
-    );
-    expect(result.ok).toBe(true);
-  });
-
-  it('still refuses a role lacking purchase_request.create regardless of amount (permission check runs first)', async () => {
-    const result = await procurementService.createPurchaseRequest(
-      {
-        companyId: 'company-acme-gh',
-        requesterUserId: 'user-1',
-        requesterName: 'Nobody',
-        items: [requestItem({ quantity: 1, unitPrice: 1 })],
-        reason: 'Should never pass the permission gate',
-      },
-      Role.PLATFORM_ADMIN,
-    );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).not.toBe('SPENDING_LIMIT_EXCEEDED');
-  });
-
-  it('a company-configured override changes the effective limit', async () => {
-    const before = spendingLimitFor('company-acme-gh', Role.EMPLOYEE);
-    expect(before).toBe(DefaultSpendingLimits[Role.EMPLOYEE]);
-
-    const setResult = await companyService.setSpendingLimit('company-acme-gh', Role.EMPLOYEE, 5, Role.OWNER, MY_COMPANY);
-    expect(setResult.ok).toBe(true);
-
-    expect(spendingLimitFor('company-acme-gh', Role.EMPLOYEE)).toBe(5);
-
-    const result = await procurementService.createPurchaseRequest(
-      {
-        companyId: 'company-acme-gh',
-        requesterUserId: 'user-1',
-        requesterName: 'Test Employee',
-        items: [requestItem({ quantity: 1, unitPrice: 50 })], // was fine before the override, now over the new limit of 5
-        reason: 'Now over the lowered limit',
-      },
-      Role.EMPLOYEE,
-    );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('SPENDING_LIMIT_EXCEEDED');
-  });
-
-  it("refuses setting another company's spending limit", async () => {
-    const result = await companyService.setSpendingLimit('company-acme-gh', Role.EMPLOYEE, 1, Role.OWNER, OTHER_COMPANY);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('NOT_FOUND');
-  });
-});
+// Spending-limit enforcement + override coverage moved to server/services/procurement.service.
+// test.ts and server/services/company.service.test.ts (Phase 14, Stage 6) -
+// procurementService.createPurchaseRequest and companyService.setSpendingLimit/
+// listSpendingLimits are now real fetch() calls with no live server during `vitest run`, the
+// same reason Stage 4/5 retired their equivalent client-mock describe blocks.
 
 describe('Procurement budgets (section 11.3/11.4)', () => {
   it('creates a budget and computes utilization live from paid orders (never a stored total)', async () => {
@@ -215,80 +126,10 @@ describe('Procurement budgets (section 11.3/11.4)', () => {
 });
 
 describe('Recurring purchases (section 11.2 - must go through real approval, never bypass it)', () => {
-  it('creates a schedule and, once due, submits a real purchase request through procurement.service (not a bypass)', async () => {
-    // catalog.service.ts's product lookups now call the real /api/products backend (Phase 14,
-    // Stage 4) - runDue's own re-pricing check is exercised live in the browser and by the
-    // server-side catalog tests; this test's own concern is recurring-purchase scheduling and
-    // its approval hand-off, so the product lookup itself is stubbed here rather than requiring
-    // a live server during a unit test run.
-    const getProductByIdSpy = vi.spyOn(catalogService, 'getProductById').mockResolvedValue({
-      ok: true,
-      data: {
-        id: 'prod-cisco-switch',
-        slug: 'cisco-catalyst-switch',
-        name: 'Cisco Catalyst Switch',
-        brand: 'Cisco',
-        sku: 'C9200L-24P',
-        supplierId: 'supplier-abc',
-        categoryId: 'cat-networking',
-        moderationStatus: 'PUBLISHED',
-        images: [],
-        description: '',
-        specifications: [],
-        currency: 'GHS',
-        basePrice: 8450,
-        priceTiers: [],
-        moq: 1,
-        inventory: [],
-        rating: 0,
-        reviewCount: 0,
-        createdAt: new Date().toISOString(),
-      },
-    });
-
-    const created = await recurringService.createRecurringPurchase(
-      {
-        companyId: 'company-acme-gh',
-        name: 'Weekly switches',
-        items: [{ productId: 'prod-cisco-switch', productName: 'Cisco switch', quantity: 1 }],
-        frequency: 'WEEKLY',
-        requesterUserId: 'user-1',
-        requesterName: 'Test Buyer',
-      },
-      Role.BUYER,
-    );
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-
-    // Force it due immediately by rewriting its nextRunAt into the past.
-    const list = JSON.parse(window.localStorage.getItem('procurement.recurring-purchases.v1.list')!);
-    list[0].nextRunAt = new Date(0).toISOString();
-    window.localStorage.setItem('procurement.recurring-purchases.v1.list', JSON.stringify(list));
-
-    const before = await procurementService.listPurchaseRequests('company-acme-gh');
-    const beforeCount = before.ok ? before.data.length : 0;
-
-    const run = await recurringService.runDue('company-acme-gh', Role.BUYER, MY_COMPANY);
-    expect(run.ok).toBe(true);
-    if (run.ok) {
-      expect(run.data.ranCount).toBe(1);
-      expect(run.data.createdPurchaseRequestIds.length).toBe(1);
-    }
-
-    const after = await procurementService.listPurchaseRequests('company-acme-gh');
-    expect(after.ok).toBe(true);
-    if (after.ok) expect(after.data.length).toBe(beforeCount + 1);
-
-    // Each run only appends its own schedule's newly-created id, never the whole batch's ids.
-    const schedules = await recurringService.listRecurringPurchases('company-acme-gh');
-    expect(schedules.ok).toBe(true);
-    if (schedules.ok) {
-      const schedule = schedules.data.find((s) => s.name === 'Weekly switches');
-      expect(schedule?.createdPurchaseRequestIds.length).toBe(1);
-    }
-
-    getProductByIdSpy.mockRestore();
-  });
+  // "creates a schedule and, once due, submits a real purchase request..." moved to
+  // server/services/procurement.service.test.ts's own recurring-purchase coverage (Phase 14,
+  // Stage 6) - runDue calls procurementService.createPurchaseRequest, now a real fetch() with no
+  // live server during `vitest run`, the same reason the spending-limit tests above moved.
 
   it("refuses running due schedules for another company", async () => {
     const result = await recurringService.runDue('company-acme-gh', Role.BUYER, OTHER_COMPANY);

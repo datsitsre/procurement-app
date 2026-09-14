@@ -6,6 +6,8 @@ import { createSession } from '@/server/auth/session';
 import { GET as getRfqRoute } from '@/app/api/rfqs/[rfqId]/route';
 import { GET as listQuotesRoute, POST as submitQuoteRoute } from '@/app/api/rfqs/[rfqId]/quotes/route';
 import { POST as acceptQuoteRoute } from '@/app/api/rfqs/[rfqId]/quotes/[quoteId]/accept/route';
+import { GET as getPurchaseRequestRoute } from '@/app/api/purchase-requests/[id]/route';
+import { POST as decideStepRoute } from '@/app/api/purchase-requests/[id]/decide/route';
 
 /**
  * Phase 14, Stage 5 - regression suite at the real API boundary for RFQ/quote tenant isolation:
@@ -23,15 +25,19 @@ const RFQ_ID = `test-rfq-routes-${Date.now()}`;
 const BUYER_USER_ID = 'user-john-doe'; // seeded OWNER at company-acme-gh
 const OWNER_SUPPLIER_USER_ID = 'user-adwoa-mensah'; // seeded SUPPLIER_ADMIN, reattached below
 const UNINVITED_SUPPLIER_USER_ID = 'user-kofi-boateng'; // seeded SUPPLIER_ADMIN at supplier-prime
+const EMPLOYEE_USER_ID = 'user-michael-doe'; // reattached below with EMPLOYEE role at the scratch buyer company
 // Same physical user as BUYER_USER_ID, but signed in with a different seeded company active
 // (John Doe is also OWNER at company-acme-ng) - a genuinely different tenant for isolation
 // purposes, without needing a fabricated user id.
 const OTHER_BUYER_ACTIVE_COMPANY_ID = 'company-acme-ng';
 
+const PURCHASE_REQUEST_ID = `test-pr-routes-${Date.now()}`;
+
 let buyerSessionToken: string;
 let ownerSupplierSessionToken: string;
 let uninvitedSupplierSessionToken: string;
 let otherBuyerSessionToken: string;
+let employeeSessionToken: string;
 
 function requestFor(url: string, token: string, init?: { method?: string; body?: string }) {
   return new NextRequest(`http://localhost${url}`, {
@@ -92,12 +98,31 @@ beforeAll(async () => {
   await db.companyMembership.createMany({
     data: [
       { companyId: BUYER_COMPANY_ID, userId: BUYER_USER_ID, role: 'OWNER', status: 'ACTIVE', joinedAt: new Date() },
+      { companyId: BUYER_COMPANY_ID, userId: EMPLOYEE_USER_ID, role: 'EMPLOYEE', status: 'ACTIVE', joinedAt: new Date() },
       { companyId: OWNER_SUPPLIER_COMPANY_ID, userId: OWNER_SUPPLIER_USER_ID, role: 'SUPPLIER_ADMIN', status: 'ACTIVE', joinedAt: new Date() },
     ],
   });
 
+  // No ApprovalRule rows exist for this scratch company, so the request falls back to a single
+  // OWNER approval step - matching what createPurchaseRequest itself would resolve.
+  await db.purchaseRequest.create({
+    data: {
+      id: PURCHASE_REQUEST_ID,
+      reference: `PR-ROUTES-${Date.now()}`,
+      companyId: BUYER_COMPANY_ID,
+      requesterUserId: BUYER_USER_ID,
+      totalAmount: 2112,
+      reason: 'Routes test purchase request',
+      items: {
+        create: [{ productId: PRODUCT_ID, productName: 'Routes Test Widget', supplierId: OWNER_SUPPLIER_ID, supplierName: 'Routes Test Supplier', quantity: 1, unitPrice: 100 }],
+      },
+      approvalSteps: { create: [{ stepOrder: 1, approverRole: 'OWNER' }] },
+    },
+  });
+
   buyerSessionToken = (await createSession({ userId: BUYER_USER_ID, activeCompanyId: BUYER_COMPANY_ID })).token;
   ownerSupplierSessionToken = (await createSession({ userId: OWNER_SUPPLIER_USER_ID, activeCompanyId: OWNER_SUPPLIER_COMPANY_ID })).token;
+  employeeSessionToken = (await createSession({ userId: EMPLOYEE_USER_ID, activeCompanyId: BUYER_COMPANY_ID })).token;
   // Genuinely different, pre-existing seeded tenants - no scratch data needed for these two.
   uninvitedSupplierSessionToken = (await createSession({ userId: UNINVITED_SUPPLIER_USER_ID, activeCompanyId: 'supplier-company-prime' })).token;
   otherBuyerSessionToken = (await createSession({ userId: BUYER_USER_ID, activeCompanyId: OTHER_BUYER_ACTIVE_COMPANY_ID })).token;
@@ -109,6 +134,9 @@ afterAll(async () => {
   await db.rFQSupplier.deleteMany({ where: { rfqId: RFQ_ID } });
   await db.rFQItem.deleteMany({ where: { rfqId: RFQ_ID } });
   await db.rFQ.delete({ where: { id: RFQ_ID } }).catch(() => undefined);
+  await db.approvalStep.deleteMany({ where: { requestId: PURCHASE_REQUEST_ID } });
+  await db.purchaseRequestItem.deleteMany({ where: { requestId: PURCHASE_REQUEST_ID } });
+  await db.purchaseRequest.delete({ where: { id: PURCHASE_REQUEST_ID } }).catch(() => undefined);
   await db.product.delete({ where: { id: PRODUCT_ID } }).catch(() => undefined);
   await db.category.delete({ where: { id: CATEGORY_ID } }).catch(() => undefined);
   await db.companyMembership.deleteMany({ where: { companyId: { in: [BUYER_COMPANY_ID, OWNER_SUPPLIER_COMPANY_ID] } } });
@@ -204,5 +232,53 @@ describe('POST /api/rfqs/[rfqId]/quotes (submit + accept)', () => {
     const accepted = await accept.json();
     expect(accepted.rfq.status).toBe('ACCEPTED');
     expect(accepted.rfq.acceptedQuoteId).toBe(quote.id);
+  });
+});
+
+describe('GET /api/purchase-requests/[id] and POST .../decide (tenant + role isolation)', () => {
+  it("refuses an unrelated company reading this purchase request", async () => {
+    const response = await getPurchaseRequestRoute(requestFor(`/api/purchase-requests/${PURCHASE_REQUEST_ID}`, otherBuyerSessionToken), {
+      params: Promise.resolve({ id: PURCHASE_REQUEST_ID }),
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it('allows the owning company to read it', async () => {
+    const response = await getPurchaseRequestRoute(requestFor(`/api/purchase-requests/${PURCHASE_REQUEST_ID}`, buyerSessionToken), {
+      params: Promise.resolve({ id: PURCHASE_REQUEST_ID }),
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it('refuses an EMPLOYEE role (lacks PURCHASE_REQUEST_APPROVE) before any tenant check runs', async () => {
+    const response = await decideStepRoute(
+      requestFor(`/api/purchase-requests/${PURCHASE_REQUEST_ID}/decide`, employeeSessionToken, { method: 'POST', body: JSON.stringify({ decision: 'APPROVED' }) }),
+      { params: Promise.resolve({ id: PURCHASE_REQUEST_ID }) },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it("refuses an owner at a different company approving/rejecting this request, even with the matching approver role", async () => {
+    const response = await decideStepRoute(
+      requestFor(`/api/purchase-requests/${PURCHASE_REQUEST_ID}/decide`, otherBuyerSessionToken, {
+        method: 'POST',
+        body: JSON.stringify({ decision: 'APPROVED' }),
+      }),
+      { params: Promise.resolve({ id: PURCHASE_REQUEST_ID }) },
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it('lets the owning company decide it', async () => {
+    const response = await decideStepRoute(
+      requestFor(`/api/purchase-requests/${PURCHASE_REQUEST_ID}/decide`, buyerSessionToken, {
+        method: 'POST',
+        body: JSON.stringify({ decision: 'APPROVED' }),
+      }),
+      { params: Promise.resolve({ id: PURCHASE_REQUEST_ID }) },
+    );
+    expect(response.status).toBe(200);
+    const decided = await response.json();
+    expect(decided.status).toBe('CONVERTED_TO_PO');
   });
 });

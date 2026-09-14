@@ -3,6 +3,7 @@ import { db } from '@/server/db';
 import { fail, ok } from '@/services/base';
 import type { ServiceResult, UUID } from '@/types/common';
 import type { Branch, Company, CompanyUser, CostCenter, Department, User } from '@/types/company';
+import type { Role } from '@/config/rbac';
 import { toBranchDto, toCompanyDto, toCostCenterDto, toDepartmentDto, toMembershipDto, toUserDto } from '@/server/dto/company';
 
 /**
@@ -126,11 +127,34 @@ export async function removeBranch(companyId: UUID, branchId: UUID): Promise<Ser
   return ok(undefined);
 }
 
-// Spending limits (section 11.5) are deliberately NOT migrated yet, even though the
-// SpendingLimit table already exists in the schema: procurement.service.ts's
-// createPurchaseRequest - which enforces this business rule - is still a client-side mock
-// reading its own localStorage-backed spendingLimitFor() (services/company.service.ts). Moving
-// only the settings-page read/write here without also moving enforcement would desync the two
-// - the UI would appear to save a new limit that nothing actually checks. This model stays
-// unused until Stage 6 migrates the whole procurement domain (and this file's enforcement) at
-// once, per section 34's "don't attempt a giant frontend -> backend rewrite" staging.
+// Spending limits (section 11.5, Phase 14 Stage 6) - a company's own override where one has been
+// set (SpendingLimit table), the platform default (config/spending-limits.ts) otherwise. Moved
+// together with procurement.service.ts's createPurchaseRequest, the thing that actually enforces
+// this business rule, so the two can never desync the way they would have if only one had moved.
+
+const BUYER_ROLES_FOR_LIMITS: Role[] = ['OWNER', 'ADMIN', 'PROCUREMENT_MANAGER', 'BUYER', 'FINANCE_MANAGER', 'APPROVER', 'EMPLOYEE'];
+
+/** The effective spending limit for one role at one company - a company's own override if it has
+ *  set one, otherwise the platform default, otherwise `undefined` (no limit). Exported so
+ *  procurement.service.ts's createPurchaseRequest can enforce it. */
+export async function getEffectiveSpendingLimit(companyId: UUID, role: Role): Promise<number | undefined> {
+  const override = await db.spendingLimit.findUnique({ where: { companyId_role: { companyId, role } } });
+  if (override) return Number(override.amount);
+  const { DefaultSpendingLimits } = await import('@/config/spending-limits');
+  return DefaultSpendingLimits[role];
+}
+
+export async function listSpendingLimits(companyId: UUID): Promise<ServiceResult<{ role: Role; amount: number | undefined }[]>> {
+  const amounts = await Promise.all(BUYER_ROLES_FOR_LIMITS.map((role) => getEffectiveSpendingLimit(companyId, role)));
+  return ok(BUYER_ROLES_FOR_LIMITS.map((role, i) => ({ role, amount: amounts[i] })));
+}
+
+export async function setSpendingLimit(companyId: UUID, role: Role, amount: number): Promise<ServiceResult<void>> {
+  if (amount < 0) return fail('INVALID_AMOUNT', 'Set a spending limit of zero or more.');
+  await db.spendingLimit.upsert({
+    where: { companyId_role: { companyId, role } },
+    update: { amount },
+    create: { companyId, role, amount },
+  });
+  return ok(undefined);
+}

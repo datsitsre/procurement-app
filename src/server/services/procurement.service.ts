@@ -1,18 +1,25 @@
 import 'server-only';
 import { db } from '@/server/db';
 import { fail, ok } from '@/services/base';
-import { toNegotiationMessageDto, toQuoteDto, toRfqDto } from '@/server/dto/procurement';
+import {
+  toApprovalRuleDto,
+  toNegotiationMessageDto,
+  toPurchaseRequestDto,
+  toQuoteDto,
+  toRfqDto,
+} from '@/server/dto/procurement';
+import { hasPermission, Permission, RoleLabels, type Role } from '@/config/rbac';
 import type { ServiceResult, UUID } from '@/types/common';
-import type { NegotiationMessage, Quote, RFQ, RFQItem } from '@/types/procurement';
+import type { ApprovalRule, NegotiationMessage, PurchaseRequest, PurchaseRequestItem, Quote, RFQ, RFQItem } from '@/types/procurement';
 import type { Prisma } from '@prisma/client';
 
 /**
  * The real, database-backed counterpart to src/services/procurement.service.ts's mock - RFQs,
- * quotes, and negotiation only (Phase 14, Stage 5). Purchase requests and approval rules stay
- * on the existing mock for now (they depend on spending-limit enforcement that hasn't migrated
- * yet - see company.service.ts's matching comment); accepting a quote here only updates the RFQ
- * side - building the resulting PurchaseOrder is still the client-side mock's job (see the
- * client procurement.service.ts's acceptQuote for why that boundary is safe to leave as-is).
+ * quotes, and negotiation (Phase 14, Stage 5), plus purchase requests, approval steps, and
+ * approval rules (Stage 6). Accepting a quote / a purchase request's final approval both stop at
+ * updating this domain's own records - building the resulting PurchaseOrder is still the
+ * client-side mock's job (see the client procurement.service.ts's acceptQuote/decideStep for why
+ * that boundary is safe to leave as-is until Stage 7 migrates PurchaseOrder itself).
  */
 
 const RFQ_INCLUDE = {
@@ -195,4 +202,208 @@ export async function acceptQuote(rfqId: UUID, quoteId: UUID): Promise<ServiceRe
   });
 
   return ok({ rfq: toRfqDto(updated), quote: toQuoteDto(quote) });
+}
+
+// ---- Purchase requests (Stage 6) ----
+
+const PURCHASE_REQUEST_INCLUDE = {
+  items: true,
+  approvalSteps: { include: { approver: true } },
+  requester: true,
+} satisfies Prisma.PurchaseRequestInclude;
+
+/** Resolves which roles must approve a purchase request of a given amount, per the company's
+ *  configured spend bands (ApprovalRule), and turns that into an ordered list of pending
+ *  approval steps. A company with no matching band (or no rules at all) falls back to a single
+ *  OWNER approval step, so a request is never silently left with nothing to gate it - ported
+ *  unchanged from the client mock's resolveApprovalSteps. */
+async function resolveApprovalSteps(companyId: UUID, amount: number): Promise<{ stepOrder: number; approverRole: Role }[]> {
+  const rules = await db.approvalRule.findMany({ where: { companyId } });
+  const rule = rules.find((r) => amount >= Number(r.minAmount) && (r.maxAmount === null || amount <= Number(r.maxAmount)));
+  const roles = (rule?.requiredApproverRoles ?? ['OWNER']) as Role[];
+  return roles.map((approverRole, index) => ({ stepOrder: index + 1, approverRole }));
+}
+
+export async function listPurchaseRequests(companyId: UUID): Promise<ServiceResult<PurchaseRequest[]>> {
+  const requests = await db.purchaseRequest.findMany({
+    where: { companyId },
+    orderBy: { createdAt: 'desc' },
+    include: PURCHASE_REQUEST_INCLUDE,
+  });
+  return ok(requests.map(toPurchaseRequestDto));
+}
+
+export async function getPurchaseRequest(id: UUID): Promise<ServiceResult<PurchaseRequest>> {
+  const pr = await db.purchaseRequest.findUnique({ where: { id }, include: PURCHASE_REQUEST_INCLUDE });
+  if (!pr) return fail('NOT_FOUND', 'That purchase request could not be found.');
+  return ok(toPurchaseRequestDto(pr));
+}
+
+export interface CreatePurchaseRequestInput {
+  companyId: UUID;
+  requesterUserId: UUID;
+  department?: string;
+  costCenterId?: UUID;
+  items: Omit<PurchaseRequestItem, 'id'>[];
+  reason: string;
+}
+
+export async function createPurchaseRequest(input: CreatePurchaseRequestInput): Promise<ServiceResult<PurchaseRequest>> {
+  if (input.items.length === 0) return fail('EMPTY', 'Your cart is empty.');
+
+  // Matches the cart page's own total exactly (subtotal + tax + delivery), computed here from
+  // the items themselves - never trusting a client-supplied total - so the approval rule bands
+  // below gate on what the company will actually pay.
+  const { FLAT_DELIVERY_FEE, calculateTax } = await import('@/utils/pricing');
+  const subtotal = input.items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
+  const totalAmount = subtotal + calculateTax(subtotal) + FLAT_DELIVERY_FEE;
+
+  // Spending limit (section 11.5) - a business rule layered on top of the permission check the
+  // route already ran, never a replacement for it.
+  const { getEffectiveSpendingLimit } = await import('./company.service');
+  const membership = await db.companyMembership.findUnique({
+    where: { companyId_userId: { companyId: input.companyId, userId: input.requesterUserId } },
+  });
+  const limit = membership ? await getEffectiveSpendingLimit(input.companyId, membership.role as Role) : undefined;
+  if (limit !== undefined && totalAmount > limit) {
+    return fail(
+      'SPENDING_LIMIT_EXCEEDED',
+      `This request totals ${totalAmount.toLocaleString()}, above your role's ${limit.toLocaleString()} limit per request. Ask someone with a higher limit to submit it, or split it into smaller requests.`,
+    );
+  }
+
+  const reference = `PR-${Math.floor(10000 + Math.random() * 89999)}`;
+  const steps = await resolveApprovalSteps(input.companyId, totalAmount);
+
+  const pr = await db.purchaseRequest.create({
+    data: {
+      reference,
+      companyId: input.companyId,
+      requesterUserId: input.requesterUserId,
+      department: input.department,
+      costCenterId: input.costCenterId,
+      totalAmount,
+      reason: input.reason,
+      status: 'IN_APPROVAL',
+      items: { create: input.items },
+      approvalSteps: { create: steps },
+    },
+    include: PURCHASE_REQUEST_INCLUDE,
+  });
+  return ok(toPurchaseRequestDto(pr));
+}
+
+/** Only the *next* pending step (steps are sequential) matters - a later step waiting on this
+ *  role shouldn't surface before earlier steps are decided. */
+export async function listPendingApprovals(companyId: UUID, role: Role): Promise<ServiceResult<PurchaseRequest[]>> {
+  const candidates = await db.purchaseRequest.findMany({
+    where: { companyId, status: 'IN_APPROVAL' },
+    include: PURCHASE_REQUEST_INCLUDE,
+  });
+  const pending = candidates.filter((pr) => {
+    const next = pr.approvalSteps.filter((s) => s.status === 'PENDING').sort((a, b) => a.stepOrder - b.stepOrder)[0];
+    return next?.approverRole === role;
+  });
+  return ok(pending.map(toPurchaseRequestDto));
+}
+
+/** Rejecting a step requires `comment` (enforced here, not just in the UI) so the requester
+ *  always knows what to fix. Does NOT create a PurchaseOrder when every step is approved - that
+ *  stays the client-side mock's job, triggered by the caller when it sees CONVERTED_TO_PO. */
+export async function decideStep(
+  purchaseRequestId: UUID,
+  callerRole: Role,
+  decision: 'APPROVED' | 'REJECTED',
+  approverUserId: UUID,
+  comment?: string,
+): Promise<ServiceResult<PurchaseRequest>> {
+  const pr = await db.purchaseRequest.findUnique({ where: { id: purchaseRequestId }, include: { approvalSteps: true } });
+  if (!pr) return fail('NOT_FOUND', 'That purchase request could not be found.');
+
+  const step = pr.approvalSteps.filter((s) => s.status === 'PENDING').sort((a, b) => a.stepOrder - b.stepOrder)[0];
+  if (!step || step.approverRole !== callerRole) {
+    return fail(
+      'WRONG_APPROVER',
+      `This request is waiting on ${step ? RoleLabels[step.approverRole as Role] ?? step.approverRole : 'no one'}, not your role.`,
+    );
+  }
+  if (decision === 'REJECTED' && !comment?.trim()) {
+    return fail('REASON_REQUIRED', 'Add a reason for rejecting this request so the requester knows what to fix.');
+  }
+
+  const updated = await db.$transaction(async (tx) => {
+    await tx.approvalStep.update({
+      where: { id: step.id },
+      data: { status: decision, decidedAt: new Date(), comment, approverUserId },
+    });
+
+    const remaining = await tx.approvalStep.findMany({ where: { requestId: purchaseRequestId } });
+    let status: 'IN_APPROVAL' | 'REJECTED' | 'CONVERTED_TO_PO' = pr.status as 'IN_APPROVAL';
+    if (decision === 'REJECTED') {
+      status = 'REJECTED';
+    } else if (remaining.every((s) => (s.id === step.id ? true : s.status === 'APPROVED'))) {
+      status = 'CONVERTED_TO_PO';
+    }
+
+    return tx.purchaseRequest.update({ where: { id: purchaseRequestId }, data: { status }, include: PURCHASE_REQUEST_INCLUDE });
+  });
+
+  return ok(toPurchaseRequestDto(updated));
+}
+
+// ---- Approval rules (section 12 - admin-configurable spend bands) ----
+
+export async function listApprovalRules(companyId: UUID): Promise<ServiceResult<ApprovalRule[]>> {
+  const rules = await db.approvalRule.findMany({ where: { companyId }, orderBy: { minAmount: 'asc' } });
+  return ok(rules.map(toApprovalRuleDto));
+}
+
+export interface NewApprovalRuleInput {
+  companyId: UUID;
+  minAmount: number;
+  maxAmount?: number;
+  requiredApproverRoles: string[];
+}
+
+export async function createApprovalRule(input: NewApprovalRuleInput): Promise<ServiceResult<ApprovalRule>> {
+  if (input.minAmount < 0) return fail('INVALID_RANGE', 'The minimum amount cannot be negative.');
+  if (input.maxAmount !== undefined && input.maxAmount <= input.minAmount) {
+    return fail('INVALID_RANGE', 'The maximum amount must be greater than the minimum.');
+  }
+  if (input.requiredApproverRoles.length === 0) return fail('EMPTY', 'Pick at least one approver role.');
+  // A role that can never act on PURCHASE_REQUEST_APPROVE would permanently strand any request
+  // that lands in this band - nobody could ever approve or reject it.
+  const incapableRole = input.requiredApproverRoles.find((role) => !hasPermission(role as Role, Permission.PURCHASE_REQUEST_APPROVE));
+  if (incapableRole) {
+    return fail(
+      'ROLE_CANNOT_APPROVE',
+      `${RoleLabels[incapableRole as Role] ?? incapableRole} can't approve purchase requests, so a request routed to this role could never move forward.`,
+    );
+  }
+
+  // Two bands covering the same amount would make resolution ambiguous - only the first match
+  // would ever apply, silently ignoring the second rule the admin just configured.
+  const existing = await db.approvalRule.findMany({ where: { companyId: input.companyId } });
+  const overlaps = existing.some((r) => {
+    const existingMax = r.maxAmount ? Number(r.maxAmount) : Infinity;
+    const newMax = input.maxAmount ?? Infinity;
+    return input.minAmount <= existingMax && Number(r.minAmount) <= newMax;
+  });
+  if (overlaps) return fail('OVERLAPPING_RANGE', 'This range overlaps an existing approval rule for this company.');
+
+  const rule = await db.approvalRule.create({
+    data: {
+      companyId: input.companyId,
+      minAmount: input.minAmount,
+      maxAmount: input.maxAmount,
+      requiredApproverRoles: input.requiredApproverRoles as Role[],
+    },
+  });
+  return ok(toApprovalRuleDto(rule));
+}
+
+export async function removeApprovalRule(companyId: UUID, ruleId: UUID): Promise<ServiceResult<void>> {
+  const { count } = await db.approvalRule.deleteMany({ where: { id: ruleId, companyId } });
+  if (count === 0) return fail('NOT_FOUND', 'That approval rule could not be found.');
+  return ok(undefined);
 }

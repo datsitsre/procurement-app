@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ownsRecord } from './base';
 import { ordersService } from './orders.service';
-import { procurementService } from './procurement.service';
 import { purchaseOrderService } from './purchase-order.service';
 import { invoicesService } from './invoices.service';
 import { disputesService } from './disputes.service';
@@ -21,7 +20,6 @@ const PLATFORM_ADMIN = { isPlatformAdmin: true };
 
 // Real seed ids this suite probes against - see lib/demo-data/*.ts.
 const REAL_ORDER_ID = 'order-10082'; // company-acme-gh / supplier-abc
-const REAL_PR_ID = 'pr-10082'; // company-acme-gh
 const REAL_PO_ID = 'po-2026-00182'; // company-acme-gh / supplier-abc
 const REAL_INVOICE_ID = 'invoice-10282'; // company-acme-gh / supplier-abc
 
@@ -100,18 +98,12 @@ describe('IDOR: order fulfillment mutations (a supplier fulfilling an order that
 // 5) - procurementService.getRfq is now a real `/api/rfqs/[rfqId]` fetch() with no live server
 // during `vitest run`, the same reason Stage 4 retired the equivalent product describe block.
 
-describe('Privilege escalation: purchase request approval across tenants', () => {
-  it("refuses reading another company's purchase request", async () => {
-    const result = await procurementService.getPurchaseRequest(REAL_PR_ID, OTHER_COMPANY);
-    expect(result.ok).toBe(false);
-  });
-
-  it("a Finance Manager at a different company cannot approve/reject someone else's purchase request, even with the matching approver role", async () => {
-    const result = await procurementService.decideStep(REAL_PR_ID, Role.FINANCE_MANAGER, 'APPROVED', OTHER_COMPANY, 'looks fine to me');
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('NOT_FOUND');
-  });
-});
+// "Privilege escalation: purchase request approval across tenants" used to live here, testing
+// procurementService's mock getPurchaseRequest/decideStep. That domain is now server-side (Phase
+// 14, Stage 6) - the equivalent coverage (cross-tenant read refused, a Finance Manager at a
+// different company refused despite the matching approver role) now lives in
+// server/services/procurement.routes.test.ts, tested against the real database and actual route
+// handlers instead of a client-side mock.
 
 describe('IDOR: purchase order detail (buyer vs. supplier vs. an unrelated tenant)', () => {
   it('refuses an unrelated company', async () => {
@@ -150,13 +142,8 @@ describe('Financial integrity: unauthorized invoice access and payment', () => {
 // and catalog.routes.test.ts, tested against the real database and the actual route handlers
 // instead of a client-side mock.
 
-describe('Employee attempting an approval action (role, not just tenant)', () => {
-  it('an EMPLOYEE role lacks PURCHASE_REQUEST_APPROVE and is refused before any tenant check runs', async () => {
-    const result = await procurementService.decideStep(REAL_PR_ID, Role.EMPLOYEE, 'APPROVED', { companyId: 'company-acme-gh' });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.code).toBe('FORBIDDEN');
-  });
-});
+// "Employee attempting an approval action (role, not just tenant)" moved alongside the block
+// above, for the same reason - see server/services/procurement.routes.test.ts.
 
 describe('Fabricated dispute: filing a dispute against an order that is not the caller\'s', () => {
   it('refuses creating a dispute for an order belonging to another company', async () => {

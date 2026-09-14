@@ -1,7 +1,22 @@
 import 'server-only';
-import type { NegotiationMessage, Quote, QuoteItem, RFQ, RFQItem, RFQSupplier } from '@/types/procurement';
 import type {
+  ApprovalRule,
+  ApprovalStep,
+  NegotiationMessage,
+  PurchaseRequest,
+  PurchaseRequestItem,
+  Quote,
+  QuoteItem,
+  RFQ,
+  RFQItem,
+  RFQSupplier,
+} from '@/types/procurement';
+import type {
+  ApprovalRule as PrismaApprovalRule,
+  ApprovalStep as PrismaApprovalStep,
   NegotiationMessage as PrismaNegotiationMessage,
+  PurchaseRequest as PrismaPurchaseRequest,
+  PurchaseRequestItem as PrismaPurchaseRequestItem,
   Quote as PrismaQuote,
   QuoteItem as PrismaQuoteItem,
   RFQ as PrismaRFQ,
@@ -90,5 +105,64 @@ export function toNegotiationMessageDto(m: NegotiationWithRelations): Negotiatio
     proposedPrice: m.proposedPrice ? Number(m.proposedPrice) : undefined,
     proposedQuantity: m.proposedQuantity ?? undefined,
     sentAt: m.sentAt.toISOString(),
+  };
+}
+
+export function toApprovalStepDto(s: PrismaApprovalStep & { approver?: User | null }): ApprovalStep {
+  return {
+    id: s.id,
+    stepOrder: s.stepOrder,
+    approverRole: s.approverRole,
+    approverName: s.approver?.name ?? undefined,
+    status: s.status,
+    decidedAt: s.decidedAt?.toISOString(),
+    comment: s.comment ?? undefined,
+  };
+}
+
+export function toPurchaseRequestItemDto(i: PrismaPurchaseRequestItem): PurchaseRequestItem {
+  return {
+    id: i.id,
+    productId: i.productId,
+    productName: i.productName,
+    supplierId: i.supplierId,
+    supplierName: i.supplierName,
+    quantity: i.quantity,
+    unitPrice: Number(i.unitPrice),
+  };
+}
+
+type PurchaseRequestWithRelations = PrismaPurchaseRequest & {
+  items: PrismaPurchaseRequestItem[];
+  approvalSteps: (PrismaApprovalStep & { approver?: User | null })[];
+  requester: User;
+};
+
+export function toPurchaseRequestDto(pr: PurchaseRequestWithRelations): PurchaseRequest {
+  return {
+    id: pr.id,
+    reference: pr.reference,
+    companyId: pr.companyId,
+    requesterUserId: pr.requesterUserId,
+    requesterName: pr.requester.name,
+    department: pr.department ?? undefined,
+    costCenterId: pr.costCenterId ?? undefined,
+    items: pr.items.map(toPurchaseRequestItemDto),
+    totalAmount: Number(pr.totalAmount),
+    reason: pr.reason,
+    attachmentIds: [],
+    approvalSteps: pr.approvalSteps.sort((a, b) => a.stepOrder - b.stepOrder).map(toApprovalStepDto),
+    status: pr.status,
+    createdAt: pr.createdAt.toISOString(),
+  };
+}
+
+export function toApprovalRuleDto(r: PrismaApprovalRule): ApprovalRule {
+  return {
+    id: r.id,
+    companyId: r.companyId,
+    minAmount: Number(r.minAmount),
+    maxAmount: r.maxAmount ? Number(r.maxAmount) : undefined,
+    requiredApproverRoles: r.requiredApproverRoles,
   };
 }

@@ -1,14 +1,23 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '@/server/db';
+import { getEffectiveSpendingLimit, setSpendingLimit } from './company.service';
 import {
   acceptQuote,
+  createApprovalRule,
+  createPurchaseRequest,
   createRfq,
+  decideStep,
+  getPurchaseRequest,
   getRfq,
+  listApprovalRules,
   listNegotiationMessages,
+  listPendingApprovals,
+  listPurchaseRequests,
   listQuotesForRfq,
   listRfqs,
   listRfqsForSupplier,
+  removeApprovalRule,
   sendNegotiationMessage,
   submitQuote,
 } from './procurement.service';
@@ -61,6 +70,12 @@ beforeAll(async () => {
       moderationStatus: 'PUBLISHED',
     },
   });
+  // Purchase-request/approval-rule tests (Stage 6) need this user to actually be a member of the
+  // scratch company - createPurchaseRequest looks up the membership to resolve the requester's
+  // role for spending-limit enforcement.
+  await db.companyMembership.create({
+    data: { companyId: TEST_COMPANY_ID, userId: TEST_USER_ID, role: 'EMPLOYEE', status: 'ACTIVE', joinedAt: new Date() },
+  });
 });
 
 afterAll(async () => {
@@ -70,6 +85,12 @@ afterAll(async () => {
   await db.rFQSupplier.deleteMany({ where: { rfq: { companyId: TEST_COMPANY_ID } } });
   await db.rFQItem.deleteMany({ where: { rfq: { companyId: TEST_COMPANY_ID } } });
   await db.rFQ.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
+  await db.approvalStep.deleteMany({ where: { request: { companyId: TEST_COMPANY_ID } } });
+  await db.purchaseRequestItem.deleteMany({ where: { request: { companyId: TEST_COMPANY_ID } } });
+  await db.purchaseRequest.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
+  await db.approvalRule.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
+  await db.spendingLimit.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
+  await db.companyMembership.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
   await db.product.delete({ where: { id: TEST_PRODUCT_ID } }).catch(() => undefined);
   await db.category.delete({ where: { id: TEST_CATEGORY_ID } }).catch(() => undefined);
   await db.supplierProfile.delete({ where: { id: TEST_SUPPLIER_ID } }).catch(() => undefined);
@@ -238,5 +259,125 @@ describe('negotiation and acceptance', () => {
       expect(accepted.data.rfq.status).toBe('ACCEPTED');
       expect(accepted.data.rfq.acceptedQuoteId).toBe(quote.data.id);
     }
+  });
+});
+
+describe('approval rules (Phase 14, Stage 6)', () => {
+  it('rejects a rule whose max is not greater than its min', async () => {
+    const result = await createApprovalRule({ companyId: TEST_COMPANY_ID, minAmount: 10000, maxAmount: 5000, requiredApproverRoles: ['OWNER'] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('INVALID_RANGE');
+  });
+
+  it('rejects a rule with no approver roles', async () => {
+    const result = await createApprovalRule({ companyId: TEST_COMPANY_ID, minAmount: 200000, requiredApproverRoles: [] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('EMPTY');
+  });
+
+  it('rejects naming a role that cannot approve purchase requests (would strand the request)', async () => {
+    const result = await createApprovalRule({ companyId: TEST_COMPANY_ID, minAmount: 200000, requiredApproverRoles: ['EMPLOYEE'] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('ROLE_CANNOT_APPROVE');
+  });
+
+  it('creates a rule, lists it, then rejects an overlapping range, then removes it', async () => {
+    const created = await createApprovalRule({ companyId: TEST_COMPANY_ID, minAmount: 200000, requiredApproverRoles: ['OWNER'] });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+
+    const list = await listApprovalRules(TEST_COMPANY_ID);
+    expect(list.ok).toBe(true);
+    if (list.ok) expect(list.data.some((r) => r.id === created.data.id)).toBe(true);
+
+    const overlap = await createApprovalRule({ companyId: TEST_COMPANY_ID, minAmount: 150000, maxAmount: 250000, requiredApproverRoles: ['OWNER'] });
+    expect(overlap.ok).toBe(false);
+    if (!overlap.ok) expect(overlap.error.code).toBe('OVERLAPPING_RANGE');
+
+    // Removing scoped to a different company (the real ownership check the route also performs
+    // via requireCompanyAccess) finds nothing - only the rule's own company can remove it.
+    const wrongCompany = await removeApprovalRule('company-not-mine', created.data.id);
+    expect(wrongCompany.ok).toBe(false);
+    if (!wrongCompany.ok) expect(wrongCompany.error.code).toBe('NOT_FOUND');
+
+    const removed = await removeApprovalRule(TEST_COMPANY_ID, created.data.id);
+    expect(removed.ok).toBe(true);
+  });
+});
+
+describe('purchase requests + spending limits + approvals (Phase 14, Stage 6)', () => {
+  it('rejects a purchase request with no items', async () => {
+    const result = await createPurchaseRequest({
+      companyId: TEST_COMPANY_ID,
+      requesterUserId: TEST_USER_ID,
+      items: [],
+      reason: 'Empty test',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('EMPTY');
+  });
+
+  it("rejects a purchase request over the requester's role spending limit, honors a company override, and lets a fresh purchase request through once the override is raised", async () => {
+    const item = { productId: TEST_PRODUCT_ID, productName: 'Procurement Test Widget', supplierId: TEST_SUPPLIER_ID, supplierName: 'Procurement Test Supplier', quantity: 1, unitPrice: 100 };
+
+    // The seeded default EMPLOYEE limit (config/spending-limits.ts) comfortably covers this.
+    const underLimit = await createPurchaseRequest({ companyId: TEST_COMPANY_ID, requesterUserId: TEST_USER_ID, items: [item], reason: 'Under the default limit' });
+    expect(underLimit.ok).toBe(true);
+
+    // Lower the company's own override well below this request's total.
+    const setResult = await setSpendingLimit(TEST_COMPANY_ID, 'EMPLOYEE', 5);
+    expect(setResult.ok).toBe(true);
+    expect(await getEffectiveSpendingLimit(TEST_COMPANY_ID, 'EMPLOYEE')).toBe(5);
+
+    const overLimit = await createPurchaseRequest({ companyId: TEST_COMPANY_ID, requesterUserId: TEST_USER_ID, items: [item], reason: 'Now over the lowered limit' });
+    expect(overLimit.ok).toBe(false);
+    if (!overLimit.ok) expect(overLimit.error.code).toBe('SPENDING_LIMIT_EXCEEDED');
+
+    // Raise the override back up and confirm the same request now goes through.
+    await setSpendingLimit(TEST_COMPANY_ID, 'EMPLOYEE', 100000);
+    const nowUnderLimit = await createPurchaseRequest({ companyId: TEST_COMPANY_ID, requesterUserId: TEST_USER_ID, items: [item], reason: 'Under the raised override' });
+    expect(nowUnderLimit.ok).toBe(true);
+  });
+
+  it('resolves approval steps from the fallback OWNER band when the company has no approval rules, decides it, and rejects a comment-less rejection', async () => {
+    const pr = await createPurchaseRequest({
+      companyId: TEST_COMPANY_ID,
+      requesterUserId: TEST_USER_ID,
+      items: [{ productId: TEST_PRODUCT_ID, productName: 'Procurement Test Widget', supplierId: TEST_SUPPLIER_ID, supplierName: 'Procurement Test Supplier', quantity: 1, unitPrice: 100 }],
+      reason: 'Approval flow test',
+    });
+    expect(pr.ok).toBe(true);
+    if (!pr.ok) return;
+    expect(pr.data.approvalSteps).toHaveLength(1);
+    expect(pr.data.approvalSteps[0].approverRole).toBe('OWNER');
+    expect(pr.data.status).toBe('IN_APPROVAL');
+
+    const wrongApprover = await decideStep(pr.data.id, 'FINANCE_MANAGER', 'APPROVED', TEST_USER_ID);
+    expect(wrongApprover.ok).toBe(false);
+    if (!wrongApprover.ok) expect(wrongApprover.error.code).toBe('WRONG_APPROVER');
+
+    const noReason = await decideStep(pr.data.id, 'OWNER', 'REJECTED', TEST_USER_ID);
+    expect(noReason.ok).toBe(false);
+    if (!noReason.ok) expect(noReason.error.code).toBe('REASON_REQUIRED');
+
+    const pending = await listPendingApprovals(TEST_COMPANY_ID, 'OWNER');
+    expect(pending.ok).toBe(true);
+    if (pending.ok) expect(pending.data.some((p) => p.id === pr.data.id)).toBe(true);
+
+    const decided = await decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_USER_ID);
+    expect(decided.ok).toBe(true);
+    if (decided.ok) {
+      expect(decided.data.status).toBe('CONVERTED_TO_PO');
+      expect(decided.data.approvalSteps[0].status).toBe('APPROVED');
+      expect(decided.data.approvalSteps[0].approverName).toBe('John Doe');
+    }
+
+    const fetched = await getPurchaseRequest(pr.data.id);
+    expect(fetched.ok).toBe(true);
+    if (fetched.ok) expect(fetched.data.status).toBe('CONVERTED_TO_PO');
+
+    const list = await listPurchaseRequests(TEST_COMPANY_ID);
+    expect(list.ok).toBe(true);
+    if (list.ok) expect(list.data.some((p) => p.id === pr.data.id)).toBe(true);
   });
 });

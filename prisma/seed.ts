@@ -14,7 +14,7 @@
  * development/demo environments usable, and every account it creates shares one obviously-fake
  * password (see DEMO_PASSWORD below), exactly like the mock authService it replaces.
  */
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Role } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const db = new PrismaClient();
@@ -133,14 +133,12 @@ async function main() {
 
   // SupplierProfile ids are fixed strings ('supplier-abc', ...) matching src/lib/demo-data/
   // catalog.ts's demoSuppliers exactly, not auto-generated cuids - Product.supplierId (and
-  // every other domain's supplierId, once migrated) references these by that same id
-  // throughout the app, so the seed has to use it too, not whatever Prisma's default() would
-  // pick. Deleted and recreated (rather than upserted) because an early build of this script
-  // upserted these keyed by companyId with an auto-generated id - upsert can't change an
-  // existing row's id, so fixing it requires starting clean. Safe: nothing references
-  // SupplierProfile.id yet except this same seed run's own Product rows, created after this.
-  await db.supplierProfile.deleteMany({});
-
+  // every other domain's supplierId) references these by that same id throughout the app, so
+  // the seed has to use it too, not whatever Prisma's default() would pick. Upserted by id (not
+  // deleted and recreated, as an earlier build of this script did) so re-running the seed stays
+  // safe once RFQs/quotes/purchase requests/etc. reference these rows via their products -
+  // deleting SupplierProfile would cascade into Product, which those tables have real foreign
+  // keys into (Phase 14, Stage 6).
   const supplierProfiles = [
     {
       id: 'supplier-abc', companyId: 'supplier-company-abc', name: 'ABC Technology Solutions',
@@ -175,7 +173,7 @@ async function main() {
   ];
 
   for (const s of supplierProfiles) {
-    await db.supplierProfile.create({ data: s });
+    await db.supplierProfile.upsert({ where: { id: s.id }, update: s, create: s });
   }
 
   // ---------------------------------------------------------------------------------------
@@ -556,9 +554,61 @@ async function main() {
     await db.negotiationMessage.upsert({ where: { id: n.id }, update: { ...rest }, create: { ...rest, sentAt: new Date(sentAt) } });
   }
 
+  const approvalRules: { id: string; companyId: string; minAmount: number; maxAmount: number | null; requiredApproverRoles: Role[] }[] = [
+    { id: 'rule-1', companyId: 'company-acme-gh', minAmount: 0, maxAmount: 5000, requiredApproverRoles: ['PROCUREMENT_MANAGER'] },
+    { id: 'rule-2', companyId: 'company-acme-gh', minAmount: 5001, maxAmount: 50000, requiredApproverRoles: ['PROCUREMENT_MANAGER', 'FINANCE_MANAGER'] },
+    { id: 'rule-3', companyId: 'company-acme-gh', minAmount: 50001, maxAmount: null, requiredApproverRoles: ['PROCUREMENT_MANAGER', 'FINANCE_MANAGER', 'OWNER'] },
+  ];
+
+  for (const r of approvalRules) {
+    await db.approvalRule.upsert({ where: { id: r.id }, update: r, create: r });
+  }
+
+  const purchaseRequests = [
+    {
+      id: 'pr-10082', reference: 'PR-10082', companyId: 'company-acme-gh', requesterUserId: 'user-john-doe',
+      department: 'IT',
+      items: [
+        { id: 'pri-1', productId: 'prod-cisco-switch', productName: 'Cisco Catalyst Switch', supplierId: 'supplier-abc', supplierName: 'ABC Technology Solutions', quantity: 5, unitPrice: 8100 },
+      ],
+      totalAmount: 46063, reason: 'Network infrastructure upgrade',
+      approvalSteps: [{ id: 'as-1', stepOrder: 1, approverRole: 'FINANCE_MANAGER' as const, status: 'PENDING' as const }],
+      status: 'IN_APPROVAL' as const, createdAt: '2026-09-08T10:00:00Z',
+    },
+    {
+      id: 'pr-10075', reference: 'PR-10075', companyId: 'company-acme-gh', requesterUserId: 'user-michael-doe',
+      department: 'Operations',
+      items: [
+        { id: 'pri-2', productId: 'prod-office-chair', productName: 'Office Chair', supplierId: 'supplier-prime', supplierName: 'Prime Office Supplies', quantity: 10, unitPrice: 910 },
+      ],
+      totalAmount: 10438, reason: 'Office equipment for new hires',
+      approvalSteps: [
+        { id: 'as-2', stepOrder: 1, approverRole: 'PROCUREMENT_MANAGER' as const, approverUserId: 'user-john-doe', status: 'APPROVED' as const, decidedAt: '2026-09-05T15:00:00Z' },
+        { id: 'as-3', stepOrder: 2, approverRole: 'FINANCE_MANAGER' as const, status: 'PENDING' as const },
+      ],
+      status: 'IN_APPROVAL' as const, createdAt: '2026-09-05T14:30:00Z',
+    },
+  ];
+
+  for (const pr of purchaseRequests) {
+    const { items, approvalSteps, createdAt, ...rest } = pr;
+    await db.purchaseRequest.upsert({ where: { id: pr.id }, update: { ...rest }, create: { ...rest, createdAt: new Date(createdAt) } });
+    await db.purchaseRequestItem.deleteMany({ where: { requestId: pr.id } });
+    await db.purchaseRequestItem.createMany({ data: items.map((i) => ({ ...i, requestId: pr.id })) });
+    await db.approvalStep.deleteMany({ where: { requestId: pr.id } });
+    await db.approvalStep.createMany({
+      data: approvalSteps.map((s) => ({
+        ...s,
+        requestId: pr.id,
+        decidedAt: 'decidedAt' in s && s.decidedAt ? new Date(s.decidedAt) : undefined,
+      })),
+    });
+  }
+
   console.log(`Seeded ${users.length} users, ${companies.length} companies, ${memberships.length} memberships.`);
   console.log(`Seeded ${supplierProfiles.length} suppliers, ${categories.length} categories, ${products.length} products.`);
   console.log(`Seeded ${rfqs.length} RFQs, ${quotes.length} quotes, ${negotiations.length} negotiation messages.`);
+  console.log(`Seeded ${approvalRules.length} approval rules, ${purchaseRequests.length} purchase requests.`);
   console.log(`Every seeded account's password is "${DEMO_PASSWORD}" - demo data only, never use in production.`);
 }
 

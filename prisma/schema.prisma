@@ -75,6 +75,7 @@ model User {
   createdTemplates        PurchaseTemplate[]
   createdRecurring        RecurringPurchase[]
   sentNegotiationMessages NegotiationMessage[]
+  decidedApprovalSteps    ApprovalStep[]
 
   @@index([email])
 }
@@ -691,7 +692,8 @@ model ApprovalStep {
   decidedAt      DateTime?
   comment        String?
 
-  request PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  request  PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  approver User?           @relation(fields: [approverUserId], references: [id])
 
   @@unique([requestId, stepOrder])
 }
