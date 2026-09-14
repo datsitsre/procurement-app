@@ -88,11 +88,24 @@ export async function createForOrder(order: Order, client: Prisma.TransactionCli
 }
 
 /** Pays down (or fully settles) an invoice through the payment abstraction, updating
- *  `amountPaid`/`status` from the resulting charge. */
+ *  `amountPaid`/`status` from the resulting charge.
+ *
+ *  A charge is not always settled by the time this returns - a real mobile money gateway
+ *  accepts a "request to pay" and only confirms it later, via webhook or the reconciliation job
+ *  (see PaymentProvider.ts's own comment on this). While one is still outstanding for this
+ *  invoice, a second call here is refused rather than starting a second charge attempt for the
+ *  same amount due - this is what keeps a buyer re-opening the pay form (which today has no
+ *  idempotency key of its own to dedupe on; see the frontend follow-up in the final report)
+ *  from double-charging themselves while their first mobile money prompt is still pending. */
 export async function payInvoice(invoiceId: UUID, method: PaymentMethod, details: Record<string, string>, idempotencyKey?: string): Promise<ServiceResult<Invoice>> {
   const invoice = await db.invoice.findUnique({ where: { id: invoiceId }, include: INVOICE_INCLUDE });
   if (!invoice) return fail('NOT_FOUND', 'That invoice could not be found.');
   if (invoice.status === 'PAID') return fail('ALREADY_PAID', 'This invoice is already paid in full.');
+
+  const pendingPayment = await db.payment.findFirst({ where: { invoiceId, status: 'PENDING' } });
+  if (pendingPayment) {
+    return fail('PAYMENT_PENDING', 'A payment for this invoice is already awaiting confirmation. Please wait for it to complete before trying again.');
+  }
 
   const amountDue = Number(invoice.total) - Number(invoice.amountPaid);
   const { charge } = await import('./payment.service');
@@ -107,6 +120,11 @@ export async function payInvoice(invoiceId: UUID, method: PaymentMethod, details
     idempotencyKey,
   });
   if (!result.ok) return fail(result.error.code, result.error.message);
+
+  // Accepted but not yet settled (real mobile money) - leave the invoice as-is. Its status/
+  // amountPaid only move once processPaymentWebhook or the reconciliation job confirms this
+  // specific Payment as PAID.
+  if (result.data.status === 'PENDING') return ok(toInvoiceDto(invoice));
 
   const updated = await db.invoice.update({
     where: { id: invoiceId },

@@ -12,8 +12,23 @@ export interface PaymentChargeRequest {
   details: Record<string, string>;
 }
 
+/**
+ * `status` has three outcomes, not two, because a real gateway call is not always resolved by
+ * the time this function returns:
+ * - SUCCEEDED  - money has moved (or, for CREDIT_TERMS, the credit line is reserved) right now.
+ * - FAILED     - the gateway rejected the request outright (bad card, insufficient funds, ...).
+ * - PENDING    - the gateway *accepted* the request but settlement is asynchronous (this is the
+ *   normal case for mobile money "request to pay": the customer still has to approve a prompt on
+ *   their phone, which can take anywhere from seconds to minutes, or never happen at all). A
+ *   PENDING charge is not a failure and not a success - it becomes one or the other later, via
+ *   POST /api/webhooks/payments/[provider] (webhook.service.ts) once the gateway calls back.
+ *   Every mock provider in providers.ts still only ever returns SUCCEEDED/FAILED synchronously;
+ *   PENDING is exercised for real by the mobile-money gateway providers in gateways/*.ts.
+ */
 export interface PaymentChargeResult {
-  success: boolean;
+  status: 'SUCCEEDED' | 'FAILED' | 'PENDING';
+  /** The gateway's own reference for this attempt when one exists (SUCCEEDED/PENDING). Callers
+   *  key later webhook lookups off this, via Payment.reference - see payment.service.ts. */
   providerReference: string;
   failureReason?: string;
 }

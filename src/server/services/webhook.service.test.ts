@@ -18,6 +18,9 @@ const TEST_SUPPLIER_ID = `test-supplier-webhook-${Date.now()}`;
 let pendingPaymentReference: string;
 let pendingPaymentId: string;
 let invoiceId: string;
+let orderId: string;
+let orderPaymentReference: string;
+let orderPaymentId: string;
 
 beforeAll(async () => {
   await db.company.create({ data: { id: TEST_COMPANY_ID, name: 'Webhook Test Buyer Co', country: 'GH', currency: 'GHS' } });
@@ -47,7 +50,11 @@ beforeAll(async () => {
       total: 1125,
       amountPaid: 0,
       status: 'PENDING',
-      dueDate: new Date(),
+      // Not-yet-due on purpose: this fixture only exercises webhook settlement, but an
+      // already-past-due PENDING invoice is also in scope for runInvoiceDueSweep (see
+      // jobs/invoiceDueSweep.ts) - a concurrently running test file's sweep could flip this
+      // invoice to OVERDUE mid-test and fail an assertion that has nothing to do with that job.
+      dueDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
     },
   });
   invoiceId = invoice.id;
@@ -65,6 +72,36 @@ beforeAll(async () => {
     },
   });
   pendingPaymentId = payment.id;
+
+  const order = await db.order.create({
+    data: {
+      reference: `ORD-WEBHOOK-${Date.now()}`,
+      companyId: TEST_COMPANY_ID,
+      supplierId: TEST_SUPPLIER_ID,
+      subtotal: 1000,
+      tax: 125,
+      deliveryFee: 0,
+      total: 1125,
+      status: 'CONFIRMED',
+      paymentStatus: 'PENDING',
+      deliveryLocation: 'Accra',
+    },
+  });
+  orderId = order.id;
+
+  orderPaymentReference = `MTN-WEBHOOK-ORDER-${Date.now()}`;
+  const orderPayment = await db.payment.create({
+    data: {
+      companyId: TEST_COMPANY_ID,
+      supplierId: TEST_SUPPLIER_ID,
+      orderId,
+      amount: 1125,
+      method: 'MTN_MOMO',
+      status: 'PENDING',
+      reference: orderPaymentReference,
+    },
+  });
+  orderPaymentId = orderPayment.id;
 });
 
 afterEach(async () => {
@@ -76,9 +113,11 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  await db.paymentTransaction.deleteMany({ where: { paymentId: pendingPaymentId } });
-  await db.payment.delete({ where: { id: pendingPaymentId } }).catch(() => undefined);
+  await db.paymentTransaction.deleteMany({ where: { paymentId: { in: [pendingPaymentId, orderPaymentId] } } });
+  await db.payment.deleteMany({ where: { id: { in: [pendingPaymentId, orderPaymentId] } } });
   await db.invoice.delete({ where: { id: invoiceId } }).catch(() => undefined);
+  await db.orderTimelineEvent.deleteMany({ where: { orderId } });
+  await db.order.delete({ where: { id: orderId } }).catch(() => undefined);
   await db.supplierProfile.delete({ where: { id: TEST_SUPPLIER_ID } }).catch(() => undefined);
   await db.company.delete({ where: { id: `${TEST_SUPPLIER_ID}-company` } }).catch(() => undefined);
   await db.company.delete({ where: { id: TEST_COMPANY_ID } }).catch(() => undefined);
@@ -153,5 +192,24 @@ describe('processPaymentWebhook', () => {
 
     const invoice = await db.invoice.findUnique({ where: { id: invoiceId } });
     expect(invoice?.status).toBe('PENDING');
+  });
+
+  it("also settles a checkout payment's linked Order.paymentStatus - not just an invoice payment's linked invoice - and adds a PAYMENT_CONFIRMED timeline event", async () => {
+    const result = await processPaymentWebhook({ providerReference: orderPaymentReference, event: 'payment.captured' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.changed).toBe(true);
+
+    const order = await db.order.findUnique({ where: { id: orderId } });
+    expect(order?.paymentStatus).toBe('PAID');
+
+    const events = await db.orderTimelineEvent.findMany({ where: { orderId, status: 'PAYMENT_CONFIRMED' } });
+    expect(events).toHaveLength(1);
+
+    // Cleanup - this order's payment isn't reset by the shared afterEach (that only resets the
+    // invoice-linked payment), so reset it here for the next test in this file.
+    await db.paymentTransaction.deleteMany({ where: { paymentId: orderPaymentId } });
+    await db.payment.update({ where: { id: orderPaymentId }, data: { status: 'PENDING' } });
+    await db.order.update({ where: { id: orderId }, data: { paymentStatus: 'PENDING' } });
+    await db.orderTimelineEvent.deleteMany({ where: { orderId, status: 'PAYMENT_CONFIRMED' } });
   });
 });

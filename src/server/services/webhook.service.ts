@@ -67,6 +67,20 @@ export async function processPaymentWebhook(payload: PaymentWebhookPayload): Pro
         await tx.invoice.update({ where: { id: payment.invoiceId }, data: { amountPaid: invoice.total, status: 'PAID' } });
       }
     }
+
+    // Mirrors the invoice cascade above for a payment made at checkout (createFromPurchaseOrder
+    // leaves Order.paymentStatus PENDING for a real mobile money charge that hadn't settled by
+    // the time the order was created - see orders.service.ts) - the order's own paymentStatus
+    // needs the same confirmation this webhook just gave the invoice.
+    if (payment.orderId) {
+      const order = await tx.order.findUnique({ where: { id: payment.orderId } });
+      if (order && order.paymentStatus !== newStatus) {
+        await tx.order.update({ where: { id: payment.orderId }, data: { paymentStatus: newStatus } });
+        if (newStatus === 'PAID') {
+          await tx.orderTimelineEvent.create({ data: { orderId: payment.orderId, status: 'PAYMENT_CONFIRMED', label: 'Payment confirmed' } });
+        }
+      }
+    }
   });
 
   return ok({ changed: true });

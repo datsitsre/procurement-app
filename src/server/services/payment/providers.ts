@@ -1,6 +1,8 @@
 import 'server-only';
+import { env } from '@/server/env';
 import type { PaymentProvider, PaymentChargeRequest, PaymentChargeResult } from './PaymentProvider';
 import type { PaymentMethod } from '@/types/orders';
+import { MobileMoneyGatewayProvider } from './gateways/mobileMoneyProvider';
 
 function reference(prefix: string): string {
   return `${prefix}-${Math.floor(100000 + Math.random() * 899999)}`;
@@ -14,27 +16,12 @@ class CardPaymentProvider implements PaymentProvider {
   async charge(request: PaymentChargeRequest): Promise<PaymentChargeResult> {
     const cardNumber = request.details.cardNumber?.replace(/\s+/g, '') ?? '';
     if (!/^\d{16}$/.test(cardNumber)) {
-      return { success: false, providerReference: '', failureReason: 'Enter a valid 16-digit card number.' };
+      return { status: 'FAILED', providerReference: '', failureReason: 'Enter a valid 16-digit card number.' };
     }
     if (!/^\d{3,4}$/.test(request.details.cvv ?? '')) {
-      return { success: false, providerReference: '', failureReason: 'Enter a valid CVV.' };
+      return { status: 'FAILED', providerReference: '', failureReason: 'Enter a valid CVV.' };
     }
-    return { success: true, providerReference: reference('CARD') };
-  }
-}
-
-/** One provider class handles all three Ghanaian mobile money networks (section 26/56) - the
- *  network only changes the reference prefix and which wallet the (mock) debit hits; the
- *  validation and charge flow are identical. */
-class MobileMoneyProvider implements PaymentProvider {
-  constructor(public readonly method: 'MTN_MOMO' | 'TELECEL_CASH' | 'AIRTELTIGO_MONEY', private readonly networkLabel: string) {}
-
-  async charge(request: PaymentChargeRequest): Promise<PaymentChargeResult> {
-    const phone = request.details.phone?.replace(/\s+/g, '') ?? '';
-    if (!/^0\d{9}$/.test(phone)) {
-      return { success: false, providerReference: '', failureReason: 'Enter a valid 10-digit mobile money number (starting with 0).' };
-    }
-    return { success: true, providerReference: reference(this.networkLabel) };
+    return { status: 'SUCCEEDED', providerReference: reference('CARD') };
   }
 }
 
@@ -46,9 +33,9 @@ class BankTransferProvider implements PaymentProvider {
 
   async charge(request: PaymentChargeRequest): Promise<PaymentChargeResult> {
     if (!request.details.bankReference?.trim()) {
-      return { success: false, providerReference: '', failureReason: 'Enter your bank transfer reference.' };
+      return { status: 'FAILED', providerReference: '', failureReason: 'Enter your bank transfer reference.' };
     }
-    return { success: true, providerReference: reference('BANK') };
+    return { status: 'SUCCEEDED', providerReference: reference('BANK') };
   }
 }
 
@@ -58,7 +45,7 @@ class WalletProvider implements PaymentProvider {
   readonly method: PaymentMethod = 'WALLET';
 
   async charge(): Promise<PaymentChargeResult> {
-    return { success: true, providerReference: reference('WALLET') };
+    return { status: 'SUCCEEDED', providerReference: reference('WALLET') };
   }
 }
 
@@ -75,17 +62,17 @@ class CreditTermsProvider implements PaymentProvider {
   async charge(request: PaymentChargeRequest): Promise<PaymentChargeResult> {
     const available = Number(request.details.creditAvailable ?? '0');
     if (request.amount > available) {
-      return { success: false, providerReference: '', failureReason: 'This exceeds your company’s available credit.' };
+      return { status: 'FAILED', providerReference: '', failureReason: 'This exceeds your company’s available credit.' };
     }
-    return { success: true, providerReference: reference('CREDIT') };
+    return { status: 'SUCCEEDED', providerReference: reference('CREDIT') };
   }
 }
 
 export const paymentProviders: Record<PaymentMethod, PaymentProvider> = {
   CARD: new CardPaymentProvider(),
-  MTN_MOMO: new MobileMoneyProvider('MTN_MOMO', 'MTN'),
-  TELECEL_CASH: new MobileMoneyProvider('TELECEL_CASH', 'TELECEL'),
-  AIRTELTIGO_MONEY: new MobileMoneyProvider('AIRTELTIGO_MONEY', 'ATMONEY'),
+  MTN_MOMO: new MobileMoneyGatewayProvider('MTN_MOMO', 'MTN', env.MTN_MOMO),
+  TELECEL_CASH: new MobileMoneyGatewayProvider('TELECEL_CASH', 'TELECEL', env.TELECEL_CASH),
+  AIRTELTIGO_MONEY: new MobileMoneyGatewayProvider('AIRTELTIGO_MONEY', 'ATMONEY', env.AIRTELTIGO_MONEY),
   BANK_TRANSFER: new BankTransferProvider(),
   WALLET: new WalletProvider(),
   CREDIT_TERMS: new CreditTermsProvider(),

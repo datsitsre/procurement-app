@@ -44,9 +44,11 @@ external scheduler once the app is running:
 - A **GitHub Actions scheduled workflow** running `curl -X POST -H "x-cron-secret: $CRON_SECRET" https://<host>/api/cron/<job>`
 - **System crontab + curl** on a self-hosted box
 
-Point either job at roughly an hourly interval. Both fail closed (401) until `CRON_SECRET` is
-set to the same value the scheduler sends as the `x-cron-secret` header - see `.env.example` for
-the exact routes and what each one does.
+Point `invoice-due-sweep` and `low-stock-sweep` at roughly an hourly interval, and
+`pending-payment-sweep` (reconciles mobile money payments a webhook never confirmed) every few
+minutes if any real mobile money gateway below is configured - it's a no-op otherwise. All three
+fail closed (401) until `CRON_SECRET` is set to the same value the scheduler sends as the
+`x-cron-secret` header - see `.env.example` for the exact routes and what each one does.
 
 ## Health check
 

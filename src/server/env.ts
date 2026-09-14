@@ -25,6 +25,37 @@ function optional(name: string, fallback: string): string {
   return process.env[name] || fallback;
 }
 
+/**
+ * Config for one mobile money network's real gateway (Collections-style "request to pay" - see
+ * server/services/payment/gateways/momoGatewayClient.ts). Returns null - not a config with empty
+ * strings - when any of subscriptionKey/apiUser/apiKey is unset, so callers (providers.ts) can
+ * use `=== null` as the single "is this network actually configured" check and fall back to a
+ * local simulation instead. Nothing ships real values for any of these three prefixes; every
+ * network runs in fallback mode until an operator supplies real credentials.
+ */
+export interface MobileMoneyGatewayEnv {
+  baseUrl: string;
+  subscriptionKey: string;
+  apiUser: string;
+  apiKey: string;
+  targetEnvironment: string;
+}
+
+function optionalMobileMoneyGateway(prefix: string, defaultBaseUrl: string): MobileMoneyGatewayEnv | null {
+  const subscriptionKey = optional(`${prefix}_SUBSCRIPTION_KEY`, '');
+  const apiUser = optional(`${prefix}_API_USER`, '');
+  const apiKey = optional(`${prefix}_API_KEY`, '');
+  if (!subscriptionKey || !apiUser || !apiKey) return null;
+
+  return {
+    baseUrl: optional(`${prefix}_BASE_URL`, defaultBaseUrl),
+    subscriptionKey,
+    apiUser,
+    apiKey,
+    targetEnvironment: optional(`${prefix}_TARGET_ENVIRONMENT`, 'sandbox'),
+  };
+}
+
 export const env = {
   NODE_ENV: optional('NODE_ENV', 'development') as 'development' | 'test' | 'staging' | 'production',
   DATABASE_URL: required('DATABASE_URL'),
@@ -39,6 +70,15 @@ export const env = {
   // ...) sends back on every /api/cron/* request. Optional for the same reason as the webhook
   // secret above - the cron routes themselves fail closed while this is empty.
   CRON_SECRET: optional('CRON_SECRET', ''),
+  // Real mobile money gateways (deployment-readiness follow-up: wiring a real payment gateway).
+  // MTN MoMo's Collections API is publicly documented (momodeveloper.mtn.com) and its base URL
+  // default points at MTN's own sandbox; Telecel Cash and AirtelTigo Money have no equivalent
+  // public developer portal, so their defaults are empty - an operator must supply the real base
+  // URL along with credentials once they have it from that network or an aggregator. See
+  // gateways/mobileMoneyProvider.ts for what happens while any of these is null.
+  MTN_MOMO: optionalMobileMoneyGateway('MTN_MOMO', 'https://sandbox.momodeveloper.mtn.com'),
+  TELECEL_CASH: optionalMobileMoneyGateway('TELECEL_CASH', ''),
+  AIRTELTIGO_MONEY: optionalMobileMoneyGateway('AIRTELTIGO_MONEY', ''),
 };
 
 export const isProduction = env.NODE_ENV === 'production';

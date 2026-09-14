@@ -64,6 +64,15 @@ export async function charge(input: ChargeInput): Promise<ServiceResult<Payment>
   const reference = `pay-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
   const result = await provider.charge({ amount: input.amount, currency: input.currency, reference, details });
 
+  // PENDING is not a failure - the gateway accepted the request but settlement is asynchronous
+  // (a mobile money "request to pay" prompt the customer still has to approve). The Payment row
+  // is created PENDING and later flipped PAID/FAILED by processPaymentWebhook (webhook.service.ts)
+  // or the reconciliation job (jobs/pendingPaymentSweep.ts) - callers of `charge()` must check
+  // the returned Payment's own `status`, not just whether this call was `ok`, before treating an
+  // order/invoice as actually paid. See PaymentProvider.ts's comment on PaymentChargeResult.
+  const paymentStatus = result.status === 'SUCCEEDED' ? 'PAID' : result.status === 'PENDING' ? 'PENDING' : 'FAILED';
+  const transactionEvent = result.status === 'SUCCEEDED' ? 'CAPTURED' : result.status === 'PENDING' ? 'INITIATED' : 'FAILED';
+
   const payment = await db.$transaction(async (tx) => {
     const created = await tx.payment.create({
       data: {
@@ -73,8 +82,8 @@ export async function charge(input: ChargeInput): Promise<ServiceResult<Payment>
         orderId: input.orderId,
         amount: input.amount,
         method: input.method,
-        status: result.success ? 'PAID' : 'FAILED',
-        reference: result.success ? result.providerReference : reference,
+        status: paymentStatus,
+        reference: result.status === 'FAILED' ? reference : result.providerReference,
         idempotencyKey: input.idempotencyKey,
       },
     });
@@ -82,16 +91,16 @@ export async function charge(input: ChargeInput): Promise<ServiceResult<Payment>
       data: {
         paymentId: created.id,
         provider: input.method,
-        providerReference: result.success ? result.providerReference : undefined,
-        event: result.success ? 'CAPTURED' : 'FAILED',
+        providerReference: result.status === 'FAILED' ? undefined : result.providerReference,
+        event: transactionEvent,
         amount: input.amount,
-        rawPayload: result.success ? undefined : { failureReason: result.failureReason },
+        rawPayload: result.status === 'FAILED' ? { failureReason: result.failureReason } : undefined,
       },
     });
     return created;
   });
 
-  if (!result.success) {
+  if (result.status === 'FAILED') {
     return fail('PAYMENT_FAILED', result.failureReason ?? 'Payment failed. Please try again or use a different method.');
   }
   return ok(toPaymentDto(payment));

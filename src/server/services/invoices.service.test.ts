@@ -157,4 +157,21 @@ describe('payInvoice', () => {
       expect(reread.data.amountPaid).toBe(0);
     }
   });
+
+  it('refuses to start a second charge while a payment for this invoice is already PENDING - a real mobile money charge is asynchronous, so a re-submitted pay form must not double-charge', async () => {
+    const order = await createScratchOrder('PENDING');
+    const invoice = await createForOrder(order);
+
+    await db.payment.create({
+      data: { companyId: TEST_COMPANY_ID, invoiceId: invoice.id, amount: invoice.total, method: 'MTN_MOMO', status: 'PENDING', reference: `pay-pending-${Date.now()}` },
+    });
+
+    const result = await payInvoice(invoice.id, 'MTN_MOMO', { phone: '0244000000' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('PAYMENT_PENDING');
+
+    const reread = await getInvoice(invoice.id);
+    expect(reread.ok).toBe(true);
+    if (reread.ok) expect(reread.data.amountPaid).toBe(0);
+  });
 });

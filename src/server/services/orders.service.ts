@@ -79,10 +79,13 @@ export async function createFromPurchaseOrder(
   });
   if (!chargeResult.ok) return fail(chargeResult.error.code, chargeResult.error.message);
 
-  // A successful charge is either a real payment (CARD/momo/bank/wallet) or a credit-terms
-  // reservation - only the latter leaves the invoice still due, exactly like Stage 7's version
-  // derived it, just now gated behind an actual charge attempt instead of assumed.
-  const paymentStatus: Order['paymentStatus'] = method === 'CREDIT_TERMS' ? 'PENDING' : 'PAID';
+  // Three ways a "successful" charge (chargeResult.ok) can leave the order not-yet-paid:
+  // - CREDIT_TERMS is a reservation, not a real payment - the invoice stays due until later.
+  // - A real mobile money gateway accepted the request but hasn't settled it yet (PENDING) -
+  //   the customer still has to approve the prompt on their phone. webhook.service.ts flips
+  //   this order's paymentStatus (and its invoice) to PAID once that confirmation arrives.
+  const paymentStatus: Order['paymentStatus'] =
+    method === 'CREDIT_TERMS' || chargeResult.data.status === 'PENDING' ? 'PENDING' : 'PAID';
   const now = new Date();
   const expectedDeliveryDate = new Date(now.getTime() + 6 * 24 * 60 * 60 * 1000);
 

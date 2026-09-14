@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Check, CircleCheck } from 'lucide-react';
+import { ArrowLeft, Check, CircleCheck, Clock } from 'lucide-react';
 import { useActiveCompany, useActiveMembership, useTenantContext } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { purchaseOrderService } from '@/services/purchase-order.service';
@@ -324,7 +324,29 @@ export default function CheckoutPage() {
           </div>
         )}
 
-        {stepIndex === 4 && confirmedOrder && (
+        {/* A real mobile money charge is asynchronous (see orders.service.ts's createFromPurchaseOrder) -
+            it comes back with the order's paymentStatus still PENDING until the customer approves the
+            prompt on their phone. CREDIT_TERMS is also PENDING, but deliberately so (it's a pay-later
+            reservation, not a payment awaiting confirmation) - only the mobile money methods get this
+            distinct "still pending" screen. */}
+        {stepIndex === 4 && confirmedOrder && confirmedOrder.paymentStatus === 'PENDING' &&
+          (method === 'MTN_MOMO' || method === 'TELECEL_CASH' || method === 'AIRTELTIGO_MONEY') && (
+          <div className="flex flex-col items-center gap-4 py-6 text-center">
+            <Clock className="h-12 w-12 text-warning" aria-hidden="true" />
+            <div>
+              <h2 className="text-h2">Order placed - payment pending</h2>
+              <p className="text-body text-text-secondary">
+                {confirmedOrder.reference} was placed on {formatDate(confirmedOrder.createdAt)}. Approve the payment prompt on your phone to
+                confirm it - we&apos;ll update this order once it goes through.
+              </p>
+            </div>
+            <PriceDisplay amount={confirmedOrder.total} size="lg" />
+            <Button onClick={() => router.push(`/orders/${confirmedOrder.id}`)}>Track your order</Button>
+          </div>
+        )}
+
+        {stepIndex === 4 && confirmedOrder &&
+          !(confirmedOrder.paymentStatus === 'PENDING' && (method === 'MTN_MOMO' || method === 'TELECEL_CASH' || method === 'AIRTELTIGO_MONEY')) && (
           <div className="flex flex-col items-center gap-4 py-6 text-center">
             <CircleCheck className="h-12 w-12 text-success" aria-hidden="true" />
             <div>
