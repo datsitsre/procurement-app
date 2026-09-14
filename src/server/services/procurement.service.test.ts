@@ -79,6 +79,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // acceptQuote/decideStep (Stage 7) now build a real PurchaseOrder inline - clean those up
+  // before anything they reference (Product/SupplierProfile).
+  await db.purchaseOrderItem.deleteMany({ where: { purchaseOrder: { companyId: TEST_COMPANY_ID } } });
+  await db.purchaseOrder.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
   await db.negotiationMessage.deleteMany({ where: { rfq: { companyId: TEST_COMPANY_ID } } });
   await db.quoteItem.deleteMany({ where: { quote: { rfq: { companyId: TEST_COMPANY_ID } } } });
   await db.quote.deleteMany({ where: { rfq: { companyId: TEST_COMPANY_ID } } });
@@ -253,11 +257,12 @@ describe('negotiation and acceptance', () => {
     expect(thread.ok).toBe(true);
     if (thread.ok) expect(thread.data).toHaveLength(2);
 
-    const accepted = await acceptQuote(rfq.data.id, quote.data.id);
+    const accepted = await acceptQuote(rfq.data.id, quote.data.id, 'John Doe');
     expect(accepted.ok).toBe(true);
     if (accepted.ok) {
       expect(accepted.data.rfq.status).toBe('ACCEPTED');
       expect(accepted.data.rfq.acceptedQuoteId).toBe(quote.data.id);
+      expect(accepted.data.purchaseOrderId).toBeDefined();
     }
   });
 });
@@ -352,11 +357,11 @@ describe('purchase requests + spending limits + approvals (Phase 14, Stage 6)', 
     expect(pr.data.approvalSteps[0].approverRole).toBe('OWNER');
     expect(pr.data.status).toBe('IN_APPROVAL');
 
-    const wrongApprover = await decideStep(pr.data.id, 'FINANCE_MANAGER', 'APPROVED', TEST_USER_ID);
+    const wrongApprover = await decideStep(pr.data.id, 'FINANCE_MANAGER', 'APPROVED', TEST_USER_ID, 'John Doe');
     expect(wrongApprover.ok).toBe(false);
     if (!wrongApprover.ok) expect(wrongApprover.error.code).toBe('WRONG_APPROVER');
 
-    const noReason = await decideStep(pr.data.id, 'OWNER', 'REJECTED', TEST_USER_ID);
+    const noReason = await decideStep(pr.data.id, 'OWNER', 'REJECTED', TEST_USER_ID, 'John Doe');
     expect(noReason.ok).toBe(false);
     if (!noReason.ok) expect(noReason.error.code).toBe('REASON_REQUIRED');
 
@@ -364,7 +369,7 @@ describe('purchase requests + spending limits + approvals (Phase 14, Stage 6)', 
     expect(pending.ok).toBe(true);
     if (pending.ok) expect(pending.data.some((p) => p.id === pr.data.id)).toBe(true);
 
-    const decided = await decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_USER_ID);
+    const decided = await decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_USER_ID, 'John Doe');
     expect(decided.ok).toBe(true);
     if (decided.ok) {
       expect(decided.data.status).toBe('CONVERTED_TO_PO');

@@ -112,12 +112,15 @@ export default function CheckoutPage() {
       return;
     }
 
-    const paymentStatus = method === 'CREDIT_TERMS' ? 'PENDING' : 'PAID';
-    const order = await ordersService.createFromPurchaseOrder(po, method, paymentStatus);
-    await purchaseOrderService.markConverted(po.id, order.id);
-    await invoicesService.createForOrder(order);
+    const orderResult = await ordersService.createFromPurchaseOrder(po, method);
+    if (!orderResult.ok) {
+      setSubmitError(orderResult.error.message);
+      setSubmitting(false);
+      return;
+    }
+    await invoicesService.createForOrder(orderResult.data);
 
-    setConfirmedOrder(order);
+    setConfirmedOrder(orderResult.data);
     setSubmitting(false);
     setStepIndex(4);
   }

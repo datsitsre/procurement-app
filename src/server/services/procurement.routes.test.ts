@@ -129,6 +129,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // acceptQuote/decideStep (Stage 7) build real PurchaseOrders inline - clean those up first.
+  await db.purchaseOrderItem.deleteMany({ where: { purchaseOrder: { companyId: BUYER_COMPANY_ID } } });
+  await db.purchaseOrder.deleteMany({ where: { companyId: BUYER_COMPANY_ID } });
   await db.quoteItem.deleteMany({ where: { quote: { rfqId: RFQ_ID } } });
   await db.quote.deleteMany({ where: { rfqId: RFQ_ID } });
   await db.rFQSupplier.deleteMany({ where: { rfqId: RFQ_ID } });

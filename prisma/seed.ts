@@ -605,10 +605,176 @@ async function main() {
     });
   }
 
+  // ---------------------------------------------------------------------------------------
+  // Commerce (Phase 14, Stage 7) - purchase orders, orders (with their status timeline,
+  // shipment, and delivery history), and disputes. Ported from src/lib/demo-data/
+  // {purchase-orders,orders,order-tracking,disputes}.ts, same ids.
+  // ---------------------------------------------------------------------------------------
+
+  const purchaseOrders = [
+    {
+      id: 'po-2026-00182', reference: 'PO-2026-00182', companyId: 'company-acme-gh', supplierId: 'supplier-abc',
+      items: [{ id: 'poi-1', productId: 'prod-cisco-switch', productName: 'Cisco Catalyst Switch', quantity: 5, unitPrice: 8100 }],
+      subtotal: 40500, tax: 5063, deliveryFee: 500, total: 46063, paymentTerms: 'Net 30',
+      deliveryLocation: 'Accra Warehouse', authorizedByName: 'Sarah Smith', createdAt: '2026-09-08T15:30:00Z',
+    },
+  ];
+
+  for (const po of purchaseOrders) {
+    const { items, createdAt, ...rest } = po;
+    await db.purchaseOrder.upsert({ where: { id: po.id }, update: { ...rest }, create: { ...rest, createdAt: new Date(createdAt) } });
+    await db.purchaseOrderItem.deleteMany({ where: { purchaseOrderId: po.id } });
+    await db.purchaseOrderItem.createMany({ data: items.map((i) => ({ ...i, purchaseOrderId: po.id })) });
+  }
+
+  const orders = [
+    {
+      id: 'order-10082', reference: 'ORD-10082', companyId: 'company-acme-gh', supplierId: 'supplier-abc',
+      purchaseOrderId: 'po-2026-00182', department: 'IT',
+      items: [{ id: 'oi-1', productId: 'prod-cisco-switch', productName: 'Cisco Catalyst Switch', quantity: 5, unitPrice: 8100 }],
+      subtotal: 40500, tax: 5063, deliveryFee: 500, total: 46063,
+      status: 'PROCESSING' as const, paymentStatus: 'PAID' as const, deliveryLocation: 'Accra Warehouse',
+      expectedDeliveryDate: '2026-09-18T00:00:00Z', createdAt: '2026-09-08T10:30:00Z',
+    },
+    {
+      id: 'order-10081', reference: 'ORD-10081', companyId: 'company-acme-gh', supplierId: 'supplier-prime',
+      department: 'Administration',
+      items: [{ id: 'oi-2', productId: 'prod-office-chair', productName: 'Office Chair', quantity: 10, unitPrice: 910 }],
+      subtotal: 9100, tax: 1138, deliveryFee: 200, total: 10438,
+      status: 'SHIPPED' as const, paymentStatus: 'PAID' as const, deliveryLocation: 'Accra Warehouse',
+      expectedDeliveryDate: '2026-09-14T00:00:00Z', createdAt: '2026-09-05T14:00:00Z',
+    },
+    {
+      id: 'order-10072', reference: 'ORD-10072', companyId: 'company-acme-gh', supplierId: 'supplier-wae',
+      department: 'IT',
+      items: [{ id: 'oi-3', productId: 'prod-apc-ups', productName: 'APC UPS', quantity: 6, unitPrice: 3050 }],
+      subtotal: 18300, tax: 2288, deliveryFee: 400, total: 20988,
+      status: 'DELIVERED' as const, paymentStatus: 'PAID' as const, deliveryLocation: 'Accra Warehouse',
+      createdAt: '2026-08-22T09:15:00Z',
+    },
+    {
+      id: 'order-10065', reference: 'ORD-10065', companyId: 'company-acme-gh', supplierId: 'supplier-abc',
+      department: 'IT',
+      items: [{ id: 'oi-4', productId: 'prod-hp-probook', productName: 'HP ProBook Laptop', quantity: 8, unitPrice: 5950 }],
+      subtotal: 47600, tax: 5950, deliveryFee: 500, total: 54050,
+      status: 'PARTIALLY_DELIVERED' as const, paymentStatus: 'PAID' as const, deliveryLocation: 'Accra Warehouse',
+      createdAt: '2026-08-11T11:00:00Z',
+    },
+    {
+      id: 'order-10050', reference: 'ORD-10050', companyId: 'company-acme-gh', supplierId: 'supplier-aie',
+      department: 'Operations',
+      items: [{ id: 'oi-5', productId: 'prod-safety-equipment', productName: 'Safety Equipment Kit', quantity: 50, unitPrice: 250 }],
+      subtotal: 12500, tax: 1563, deliveryFee: 300, total: 14363,
+      status: 'CANCELLED' as const, paymentStatus: 'REFUNDED' as const, deliveryLocation: 'Accra Warehouse',
+      createdAt: '2026-07-28T09:00:00Z',
+    },
+  ];
+
+  for (const o of orders) {
+    const { items, createdAt, expectedDeliveryDate, ...rest } = o;
+    await db.order.upsert({
+      where: { id: o.id },
+      update: { ...rest, expectedDeliveryDate: expectedDeliveryDate ? new Date(expectedDeliveryDate) : null },
+      create: { ...rest, createdAt: new Date(createdAt), expectedDeliveryDate: expectedDeliveryDate ? new Date(expectedDeliveryDate) : undefined },
+    });
+    await db.orderItem.deleteMany({ where: { orderId: o.id } });
+    await db.orderItem.createMany({ data: items.map((i) => ({ ...i, orderId: o.id })) });
+  }
+
+  // The PurchaseOrder <-> Order link is bidirectional in the schema (each holds the other's id) -
+  // the Order side is set at create time above, the PurchaseOrder side has to be a follow-up
+  // update since the Order didn't exist yet when the PurchaseOrder was created.
+  await db.purchaseOrder.update({ where: { id: 'po-2026-00182' }, data: { orderId: 'order-10082' } });
+
+  const timelineEvents = [
+    { id: 'ote-1', orderId: 'order-10082', status: 'PENDING', label: 'Order placed', occurredAt: '2026-09-08T10:30:00Z' },
+    { id: 'ote-2', orderId: 'order-10082', status: 'PAYMENT_CONFIRMED', label: 'Payment confirmed', occurredAt: '2026-09-08T10:35:00Z' },
+    { id: 'ote-3', orderId: 'order-10082', status: 'CONFIRMED', label: 'Supplier confirmed the order', occurredAt: '2026-09-08T14:10:00Z' },
+    { id: 'ote-4', orderId: 'order-10082', status: 'PROCESSING', label: 'Preparing shipment', occurredAt: '2026-09-09T09:00:00Z' },
+    { id: 'ote-5', orderId: 'order-10081', status: 'PENDING', label: 'Order placed', occurredAt: '2026-09-05T14:00:00Z' },
+    { id: 'ote-6', orderId: 'order-10081', status: 'PAYMENT_CONFIRMED', label: 'Payment confirmed', occurredAt: '2026-09-05T14:05:00Z' },
+    { id: 'ote-7', orderId: 'order-10081', status: 'CONFIRMED', label: 'Supplier confirmed the order', occurredAt: '2026-09-05T16:30:00Z' },
+    { id: 'ote-8', orderId: 'order-10081', status: 'PROCESSING', label: 'Preparing shipment', occurredAt: '2026-09-06T09:00:00Z' },
+    { id: 'ote-9', orderId: 'order-10081', status: 'SHIPPED', label: 'Shipped, on the way', occurredAt: '2026-09-08T08:00:00Z' },
+    { id: 'ote-10', orderId: 'order-10072', status: 'PENDING', label: 'Order placed', occurredAt: '2026-08-22T09:15:00Z' },
+    { id: 'ote-11', orderId: 'order-10072', status: 'PAYMENT_CONFIRMED', label: 'Payment confirmed', occurredAt: '2026-08-22T09:20:00Z' },
+    { id: 'ote-12', orderId: 'order-10072', status: 'CONFIRMED', label: 'Supplier confirmed the order', occurredAt: '2026-08-22T13:00:00Z' },
+    { id: 'ote-13', orderId: 'order-10072', status: 'PROCESSING', label: 'Preparing shipment', occurredAt: '2026-08-23T09:00:00Z' },
+    { id: 'ote-14', orderId: 'order-10072', status: 'SHIPPED', label: 'Shipped, on the way', occurredAt: '2026-08-24T08:00:00Z' },
+    { id: 'ote-15', orderId: 'order-10072', status: 'DELIVERED', label: 'Delivered', occurredAt: '2026-08-25T15:40:00Z' },
+    { id: 'ote-16', orderId: 'order-10065', status: 'PENDING', label: 'Order placed', occurredAt: '2026-08-11T11:00:00Z' },
+    { id: 'ote-17', orderId: 'order-10065', status: 'PAYMENT_CONFIRMED', label: 'Payment confirmed', occurredAt: '2026-08-11T11:05:00Z' },
+    { id: 'ote-18', orderId: 'order-10065', status: 'CONFIRMED', label: 'Supplier confirmed the order', occurredAt: '2026-08-11T15:00:00Z' },
+    { id: 'ote-19', orderId: 'order-10065', status: 'PROCESSING', label: 'Preparing shipment', occurredAt: '2026-08-12T09:00:00Z' },
+    { id: 'ote-20', orderId: 'order-10065', status: 'SHIPPED', label: 'Shipped, on the way', occurredAt: '2026-08-13T08:00:00Z' },
+    { id: 'ote-21', orderId: 'order-10065', status: 'PARTIALLY_DELIVERED', label: '5 of 8 items delivered', occurredAt: '2026-08-14T16:00:00Z' },
+    { id: 'ote-22', orderId: 'order-10050', status: 'PENDING', label: 'Order placed', occurredAt: '2026-07-28T09:00:00Z' },
+    { id: 'ote-23', orderId: 'order-10050', status: 'CANCELLED', label: 'Cancelled - item out of stock at supplier', occurredAt: '2026-07-28T13:00:00Z' },
+  ];
+
+  for (const e of timelineEvents) {
+    const { occurredAt, ...rest } = e;
+    await db.orderTimelineEvent.upsert({ where: { id: e.id }, update: rest, create: { ...rest, occurredAt: new Date(occurredAt) } });
+  }
+
+  const shipments = [
+    { id: 'ship-1', orderId: 'order-10082', trackingNumber: 'GH-TRK-88213', status: 'PREPARING' as const },
+    { id: 'ship-2', orderId: 'order-10081', trackingNumber: 'GH-TRK-88190', driverName: 'Kwame Owusu', status: 'IN_TRANSIT' as const, dispatchedAt: '2026-09-08T08:00:00Z' },
+    { id: 'ship-3', orderId: 'order-10072', trackingNumber: 'GH-TRK-87905', driverName: 'Abena Mensah', status: 'DELIVERED' as const, dispatchedAt: '2026-08-24T08:00:00Z' },
+    { id: 'ship-4', orderId: 'order-10065', trackingNumber: 'GH-TRK-87610', driverName: 'Kojo Asante', status: 'DELIVERED' as const, dispatchedAt: '2026-08-13T08:00:00Z' },
+    { id: 'ship-5', orderId: 'order-10065', trackingNumber: 'GH-TRK-87611', status: 'IN_TRANSIT' as const, dispatchedAt: '2026-08-15T08:00:00Z' },
+  ];
+
+  for (const s of shipments) {
+    const { dispatchedAt, ...rest } = s;
+    await db.shipment.upsert({
+      where: { id: s.id },
+      update: { ...rest, dispatchedAt: dispatchedAt ? new Date(dispatchedAt) : null },
+      create: { ...rest, dispatchedAt: dispatchedAt ? new Date(dispatchedAt) : undefined },
+    });
+  }
+
+  const deliveries = [
+    { id: 'del-1', orderId: 'order-10072', shipmentId: 'ship-3', orderItemId: 'oi-3', orderedQty: 6, deliveredQty: 6, deliveredAt: '2026-08-25T15:40:00Z' },
+    { id: 'del-2', orderId: 'order-10065', shipmentId: 'ship-4', orderItemId: 'oi-4', orderedQty: 8, deliveredQty: 5, notes: 'Remaining 3 units back-ordered, arriving on the next shipment.', deliveredAt: '2026-08-14T16:00:00Z' },
+  ];
+
+  for (const d of deliveries) {
+    const { deliveredAt, ...rest } = d;
+    await db.delivery.upsert({ where: { id: d.id }, update: rest, create: { ...rest, deliveredAt: new Date(deliveredAt) } });
+  }
+
+  const disputes = [
+    {
+      id: 'dispute-1', orderId: 'order-10072', companyId: 'company-acme-gh', supplierId: 'supplier-wae',
+      reason: 'Item arrived damaged',
+      description: 'Two of the six APC UPS units arrived with cracked casings, likely from drop damage in transit. Requesting a replacement or partial refund.',
+      status: 'OPEN' as const, createdAt: '2026-08-27T10:00:00Z',
+    },
+    {
+      id: 'dispute-2', orderId: 'order-10050', companyId: 'company-acme-gh', supplierId: 'supplier-aie',
+      reason: 'Order cancelled by supplier',
+      description: 'Supplier cancelled after confirming stock was available, leaving us to source safety equipment elsewhere on short notice. Requesting a full refund.',
+      status: 'RESOLVED_REFUND' as const,
+      resolutionNote: 'Confirmed with the supplier - stock was miscounted at their warehouse. Full refund issued.',
+      createdAt: '2026-07-29T09:00:00Z', resolvedAt: '2026-07-30T14:00:00Z',
+    },
+  ];
+
+  for (const d of disputes) {
+    const { createdAt, resolvedAt, ...rest } = d;
+    await db.dispute.upsert({
+      where: { id: d.id },
+      update: { ...rest, resolvedAt: resolvedAt ? new Date(resolvedAt) : null },
+      create: { ...rest, createdAt: new Date(createdAt), resolvedAt: resolvedAt ? new Date(resolvedAt) : undefined },
+    });
+  }
+
   console.log(`Seeded ${users.length} users, ${companies.length} companies, ${memberships.length} memberships.`);
   console.log(`Seeded ${supplierProfiles.length} suppliers, ${categories.length} categories, ${products.length} products.`);
   console.log(`Seeded ${rfqs.length} RFQs, ${quotes.length} quotes, ${negotiations.length} negotiation messages.`);
   console.log(`Seeded ${approvalRules.length} approval rules, ${purchaseRequests.length} purchase requests.`);
+  console.log(`Seeded ${purchaseOrders.length} purchase orders, ${orders.length} orders, ${disputes.length} disputes.`);
   console.log(`Every seeded account's password is "${DEMO_PASSWORD}" - demo data only, never use in production.`);
 }
 

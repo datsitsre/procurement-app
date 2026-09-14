@@ -187,10 +187,14 @@ export async function sendNegotiationMessage(
 }
 
 /** Marks the RFQ accepted and records which quote won (section 20 - lets analytics attribute a
- *  win to the exact quote, not just "the RFQ is ACCEPTED"). Does NOT create a PurchaseOrder -
- *  that's still the client-side mock purchase-order.service.ts's job, called by the client
- *  procurement.service.ts's acceptQuote with the real RFQ/Quote DTOs this returns. */
-export async function acceptQuote(rfqId: UUID, quoteId: UUID): Promise<ServiceResult<{ rfq: RFQ; quote: Quote }>> {
+ *  win to the exact quote, not just "the RFQ is ACCEPTED"), then builds the resulting
+ *  PurchaseOrder in the same request (Phase 14, Stage 7 - previously a follow-up client-side
+ *  mock call; see purchase-order.service.ts's own comment on why this boundary moved). */
+export async function acceptQuote(
+  rfqId: UUID,
+  quoteId: UUID,
+  authorizedByName: string,
+): Promise<ServiceResult<{ rfq: RFQ; quote: Quote; purchaseOrderId: UUID }>> {
   const rfq = await db.rFQ.findUnique({ where: { id: rfqId } });
   const quote = await db.quote.findUnique({ where: { id: quoteId }, include: QUOTE_INCLUDE });
   if (!rfq || !quote || quote.rfqId !== rfqId) return fail('NOT_FOUND', 'That RFQ or quote could not be found.');
@@ -201,7 +205,12 @@ export async function acceptQuote(rfqId: UUID, quoteId: UUID): Promise<ServiceRe
     include: RFQ_INCLUDE,
   });
 
-  return ok({ rfq: toRfqDto(updated), quote: toQuoteDto(quote) });
+  const rfqDto = toRfqDto(updated);
+  const quoteDto = toQuoteDto(quote);
+  const { createFromQuote } = await import('./purchase-order.service');
+  const po = await createFromQuote(rfqDto, quoteDto, authorizedByName);
+
+  return ok({ rfq: rfqDto, quote: quoteDto, purchaseOrderId: po.id });
 }
 
 // ---- Purchase requests (Stage 6) ----
@@ -308,13 +317,16 @@ export async function listPendingApprovals(companyId: UUID, role: Role): Promise
 }
 
 /** Rejecting a step requires `comment` (enforced here, not just in the UI) so the requester
- *  always knows what to fix. Does NOT create a PurchaseOrder when every step is approved - that
- *  stays the client-side mock's job, triggered by the caller when it sees CONVERTED_TO_PO. */
+ *  always knows what to fix. Builds a PurchaseOrder per distinct supplier once every step is
+ *  approved (Phase 14, Stage 7 - previously a follow-up client-side mock call triggered by the
+ *  caller seeing CONVERTED_TO_PO). `authorizedByName` names whoever's approval completed the
+ *  request, for the resulting PurchaseOrder's own record of who authorized it. */
 export async function decideStep(
   purchaseRequestId: UUID,
   callerRole: Role,
   decision: 'APPROVED' | 'REJECTED',
   approverUserId: UUID,
+  authorizedByName: string,
   comment?: string,
 ): Promise<ServiceResult<PurchaseRequest>> {
   const pr = await db.purchaseRequest.findUnique({ where: { id: purchaseRequestId }, include: { approvalSteps: true } });
@@ -347,6 +359,11 @@ export async function decideStep(
 
     return tx.purchaseRequest.update({ where: { id: purchaseRequestId }, data: { status }, include: PURCHASE_REQUEST_INCLUDE });
   });
+
+  if (updated.status === 'CONVERTED_TO_PO') {
+    const { createFromPurchaseRequest } = await import('./purchase-order.service');
+    await createFromPurchaseRequest(toPurchaseRequestDto(updated), authorizedByName);
+  }
 
   return ok(toPurchaseRequestDto(updated));
 }

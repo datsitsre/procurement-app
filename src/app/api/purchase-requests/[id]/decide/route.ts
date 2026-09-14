@@ -27,7 +27,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/purchas
   const parsed = DecideStepSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid request.' }, { status: 422 });
 
-  const result = await decideStep(id, auth.role, parsed.data.decision, auth.userId, parsed.data.comment);
+  const result = await decideStep(id, auth.role, parsed.data.decision, auth.userId, auth.userName, parsed.data.comment);
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
   return NextResponse.json(result.data);
 }

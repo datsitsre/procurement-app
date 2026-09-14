@@ -1,10 +1,6 @@
-import { delay, fail, ok } from './base';
-import { catalogService } from './catalog.service';
-import { resolveTierPrice } from '@/types/catalog';
+import { apiRequest } from './base';
 import type { ServiceResult, UUID } from '@/types/common';
-import type { Cart, CartItem } from '@/types/cart';
-
-const CART_STORAGE_PREFIX = 'procurement.cart.';
+import type { Cart } from '@/types/cart';
 
 export interface CartService {
   getCart(companyId: UUID): Promise<ServiceResult<Cart>>;
@@ -13,82 +9,26 @@ export interface CartService {
   clear(companyId: UUID): Promise<ServiceResult<Cart>>;
 }
 
-function storageKey(companyId: UUID): string {
-  return `${CART_STORAGE_PREFIX}${companyId}`;
-}
-
-function readCart(companyId: UUID): Cart {
-  if (typeof window === 'undefined') return { id: `cart-${companyId}`, companyId, items: [] };
-  const raw = window.localStorage.getItem(storageKey(companyId));
-  if (!raw) return { id: `cart-${companyId}`, companyId, items: [] };
-  try {
-    return JSON.parse(raw) as Cart;
-  } catch {
-    return { id: `cart-${companyId}`, companyId, items: [] };
-  }
-}
-
-function writeCart(cart: Cart) {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(storageKey(cart.companyId), JSON.stringify(cart));
-}
-
 /**
- * Every cart is scoped to a `companyId` (tenant) - stored under its own localStorage key, and
- * every method takes the company id explicitly rather than reading some ambient "current
- * company" so it's structurally impossible to read or write another tenant's cart from here
- * (section 47's multi-tenancy requirement, enforced at the same layer a real backend would).
+ * Calls the real `/api/companies/[companyId]/cart` backend (Phase 14, Stage 7) - one Cart row
+ * per company, same shape and MOQ/tier-pricing rules as the mock it replaces.
  */
-class MockCartService implements CartService {
+class ApiCartService implements CartService {
   async getCart(companyId: UUID): Promise<ServiceResult<Cart>> {
-    await delay(150);
-    return ok(readCart(companyId));
+    return apiRequest<Cart>(`/api/companies/${companyId}/cart`);
   }
 
   async setQuantity(companyId: UUID, productId: UUID, quantity: number): Promise<ServiceResult<Cart>> {
-    await delay(150);
-    // Reads through catalog.service (not the raw seed array) so a supplier's price/stock edit
-    // is reflected the moment it's added to a cart - section 11.1's "never silently use old
-    // pricing" applies just as much to a fresh add as it does to a reorder.
-    const productResult = await catalogService.getProductById(productId);
-    if (!productResult.ok) return fail('NOT_FOUND', 'That product could not be found.');
-    const product = productResult.data;
-
-    if (quantity > 0 && quantity < product.moq) {
-      return fail('BELOW_MOQ', `${product.name} has a minimum order quantity of ${product.moq} units.`);
-    }
-
-    const cart = readCart(companyId);
-    const existingIndex = cart.items.findIndex((i) => i.productId === productId);
-    const { unitPrice } = resolveTierPrice(product, quantity);
-
-    let items: CartItem[];
-    if (quantity <= 0) {
-      items = cart.items.filter((i) => i.productId !== productId);
-    } else if (existingIndex >= 0) {
-      items = cart.items.map((i, idx) => (idx === existingIndex ? { ...i, quantity, unitPrice } : i));
-    } else {
-      items = [
-        ...cart.items,
-        { id: `cartitem-${productId}`, productId, supplierId: product.supplierId, quantity, unitPrice },
-      ];
-    }
-
-    const next: Cart = { ...cart, items };
-    writeCart(next);
-    return ok(next);
+    return apiRequest<Cart>(`/api/companies/${companyId}/cart/items/${productId}`, { method: 'PUT', body: JSON.stringify({ quantity }) });
   }
 
   async removeItem(companyId: UUID, productId: UUID): Promise<ServiceResult<Cart>> {
-    return this.setQuantity(companyId, productId, 0);
+    return apiRequest<Cart>(`/api/companies/${companyId}/cart/items/${productId}`, { method: 'DELETE' });
   }
 
   async clear(companyId: UUID): Promise<ServiceResult<Cart>> {
-    await delay(150);
-    const next: Cart = { id: `cart-${companyId}`, companyId, items: [] };
-    writeCart(next);
-    return ok(next);
+    return apiRequest<Cart>(`/api/companies/${companyId}/cart`, { method: 'DELETE' });
   }
 }
 
-export const cartService: CartService = new MockCartService();
+export const cartService: CartService = new ApiCartService();

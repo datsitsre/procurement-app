@@ -1,4 +1,4 @@
-import { apiRequest, ok } from './base';
+import { apiRequest } from './base';
 import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { ApprovalRule, NegotiationMessage, PurchaseRequest, PurchaseRequestItem, Quote, RFQ, RFQItem } from '@/types/procurement';
 import type { Role } from '@/config/rbac';
@@ -168,21 +168,10 @@ class ApiProcurementService implements ProcurementService {
     });
   }
 
-  async acceptQuote(
-    rfqId: UUID,
-    quoteId: UUID,
-    authorizedByName: string,
-  ): Promise<ServiceResult<{ purchaseOrderId: UUID }>> {
-    const result = await apiRequest<{ rfq: RFQ; quote: Quote }>(`/api/rfqs/${rfqId}/quotes/${quoteId}/accept`, { method: 'POST' });
-    if (!result.ok) return result;
-
-    // Building a PurchaseOrder from an accepted quote is still purchase-order.service's (mock)
-    // job - the server only updates the RFQ/Quote side (see its own acceptQuote comment).
-    // Imported lazily to avoid a circular import between the two service modules, the same
-    // pattern the old mock acceptQuote used.
-    const { purchaseOrderService } = await import('./purchase-order.service');
-    const po = await purchaseOrderService.createFromQuote(result.data.rfq, result.data.quote, authorizedByName);
-    return ok({ purchaseOrderId: po.id });
+  async acceptQuote(rfqId: UUID, quoteId: UUID): Promise<ServiceResult<{ purchaseOrderId: UUID }>> {
+    // The server builds the resulting PurchaseOrder in the same request now (Phase 14, Stage 7)
+    // - no separate client-side purchase-order.service call needed anymore.
+    return apiRequest<{ purchaseOrderId: UUID }>(`/api/rfqs/${rfqId}/quotes/${quoteId}/accept`, { method: 'POST' });
   }
 
   // ---- Purchase requests ----
@@ -204,28 +193,14 @@ class ApiProcurementService implements ProcurementService {
     return apiRequest<PurchaseRequest[]>(`/api/companies/${companyId}/purchase-requests/pending`);
   }
 
-  async decideStep(
-    purchaseRequestId: UUID,
-    callerRole: Role,
-    decision: 'APPROVED' | 'REJECTED',
-    caller: TenantContext,
-    comment?: string,
-  ): Promise<ServiceResult<PurchaseRequest>> {
-    const result = await apiRequest<PurchaseRequest>(`/api/purchase-requests/${purchaseRequestId}/decide`, {
+  async decideStep(purchaseRequestId: UUID, callerRole: Role, decision: 'APPROVED' | 'REJECTED', caller: TenantContext, comment?: string): Promise<ServiceResult<PurchaseRequest>> {
+    // The server builds a PurchaseOrder per supplier once every step is approved, in the same
+    // request now (Phase 14, Stage 7) - no separate client-side purchase-order.service call
+    // needed anymore.
+    return apiRequest<PurchaseRequest>(`/api/purchase-requests/${purchaseRequestId}/decide`, {
       method: 'POST',
       body: JSON.stringify({ decision, comment }),
     });
-
-    // Building a PurchaseOrder once every step is approved is still purchase-order.service's
-    // (mock) job - the server only updates the purchase request/approval-step side (see its own
-    // decideStep comment), the same acceptQuote boundary Stage 5 already established.
-    if (result.ok && result.data.status === 'CONVERTED_TO_PO') {
-      const { purchaseOrderService } = await import('./purchase-order.service');
-      const { RoleLabels } = await import('@/config/rbac');
-      await purchaseOrderService.createFromPurchaseRequest(result.data, RoleLabels[callerRole] ?? 'Approver');
-    }
-
-    return result;
   }
 
   // ---- Approval rules (section 12) ----
