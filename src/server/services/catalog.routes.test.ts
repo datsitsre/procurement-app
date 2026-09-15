@@ -6,6 +6,10 @@ import { createSession } from '@/server/auth/session';
 import { POST as createProductRoute } from '@/app/api/products/route';
 import { PATCH as updateProductRoute } from '@/app/api/products/[productId]/route';
 import { PATCH as updateInventoryRoute } from '@/app/api/products/[productId]/inventory/route';
+import { GET as listSuppliersRoute } from '@/app/api/suppliers/route';
+import { GET as getSupplierBySlugRoute } from '@/app/api/suppliers/slug/[slug]/route';
+import { GET as listSuppliersForModerationRoute } from '@/app/api/suppliers/moderation/route';
+import { PATCH as verifySupplierRoute } from '@/app/api/suppliers/[supplierId]/verification/route';
 
 /**
  * Phase 14, Stage 4 - regression suite at the real API boundary for "supplier modifying another
@@ -19,8 +23,11 @@ const OWNER_COMPANY_ID = `${OWNER_SUPPLIER_ID}-company`;
 const OWNER_USER_ID = 'user-adwoa-mensah'; // seeded SUPPLIER_ADMIN at supplier-company-abc
 const OTHER_USER_ID = 'user-kofi-boateng'; // seeded SUPPLIER_ADMIN at supplier-company-prime (supplier-prime)
 
+const PLATFORM_ADMIN_USER_ID = 'user-grace-owusu'; // seeded PLATFORM_ADMIN at platform-hq
+
 let ownerSessionToken: string;
 let otherSupplierSessionToken: string;
+let platformAdminSessionToken: string;
 let categoryId: string;
 let warehouseId: string;
 
@@ -62,6 +69,7 @@ beforeAll(async () => {
   // The other supplier's session uses their real, pre-existing seeded company (supplier-company-
   // prime / supplier-prime) - a genuinely different supplier, no scratch data needed for them.
   otherSupplierSessionToken = (await createSession({ userId: OTHER_USER_ID, activeCompanyId: 'supplier-company-prime' })).token;
+  platformAdminSessionToken = (await createSession({ userId: PLATFORM_ADMIN_USER_ID, activeCompanyId: 'platform-hq' })).token;
 });
 
 afterAll(async () => {
@@ -140,5 +148,59 @@ describe("Supplier modifying another supplier's product (real API boundary)", ()
     expect(rightUpdateResponse.status).toBe(200);
     const updated = await rightUpdateResponse.json();
     expect(updated.basePrice).toBe(8500);
+  });
+});
+
+describe('Suppliers API (real API boundary)', () => {
+  it('GET /api/suppliers is public and lists the verified scratch supplier', async () => {
+    const response = await listSuppliersRoute(new NextRequest(`http://localhost/api/suppliers?search=${encodeURIComponent('Routes Test Supplier')}`));
+    expect(response.status).toBe(200);
+    const suppliers = await response.json();
+    expect(suppliers.some((s: { id: string }) => s.id === OWNER_SUPPLIER_ID)).toBe(true);
+  });
+
+  it('GET /api/suppliers/slug/[slug] is public and 404s for a slug that does not exist', async () => {
+    const found = await getSupplierBySlugRoute(new NextRequest('http://localhost/api/suppliers/slug/does-not-exist'), {
+      params: Promise.resolve({ slug: 'does-not-exist' }),
+    });
+    expect(found.status).toBe(404);
+  });
+
+  it('GET /api/suppliers/moderation refuses a non-platform-admin and allows the platform admin', async () => {
+    const refused = await listSuppliersForModerationRoute(requestFor('/api/suppliers/moderation', ownerSessionToken));
+    expect(refused.status).toBe(403);
+
+    const allowed = await listSuppliersForModerationRoute(requestFor('/api/suppliers/moderation', platformAdminSessionToken));
+    expect(allowed.status).toBe(200);
+    const suppliers = await allowed.json();
+    expect(suppliers.some((s: { id: string }) => s.id === OWNER_SUPPLIER_ID)).toBe(true);
+  });
+
+  it('PATCH /api/suppliers/[supplierId]/verification refuses a non-platform-admin (even the supplier itself) and allows the platform admin', async () => {
+    const refused = await verifySupplierRoute(
+      requestFor(`/api/suppliers/${OWNER_SUPPLIER_ID}/verification`, ownerSessionToken, { method: 'PATCH', body: JSON.stringify({ decision: 'SUSPENDED' }) }),
+      { params: Promise.resolve({ supplierId: OWNER_SUPPLIER_ID }) },
+    );
+    expect(refused.status).toBe(403);
+
+    const allowed = await verifySupplierRoute(
+      requestFor(`/api/suppliers/${OWNER_SUPPLIER_ID}/verification`, platformAdminSessionToken, {
+        method: 'PATCH',
+        body: JSON.stringify({ decision: 'SUSPENDED' }),
+      }),
+      { params: Promise.resolve({ supplierId: OWNER_SUPPLIER_ID }) },
+    );
+    expect(allowed.status).toBe(200);
+    const updated = await allowed.json();
+    expect(updated.verification).toBe('SUSPENDED');
+
+    // Restore, so this file's own earlier "public directory" assertions aren't order-dependent.
+    await verifySupplierRoute(
+      requestFor(`/api/suppliers/${OWNER_SUPPLIER_ID}/verification`, platformAdminSessionToken, {
+        method: 'PATCH',
+        body: JSON.stringify({ decision: 'VERIFIED' }),
+      }),
+      { params: Promise.resolve({ supplierId: OWNER_SUPPLIER_ID }) },
+    );
   });
 });

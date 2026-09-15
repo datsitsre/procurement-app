@@ -1,6 +1,4 @@
-import { apiRequest, delay, ok, fail } from './base';
-import { auditLogService } from './audit-log.service';
-import { demoSuppliers } from '@/lib/demo-data/catalog';
+import { apiRequest } from './base';
 import type { Role } from '@/config/rbac';
 import type { ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { Category, Product, SupplierProfile, Warehouse } from '@/types/catalog';
@@ -13,38 +11,27 @@ export interface Actor {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Suppliers - still localStorage-backed (Phase 14, Stage 4 migrated products/categories/
-// warehouses only). SupplierProfile now also exists for real in Postgres (Product.supplierId
-// is a real FK to it), but ~18 call sites across this app read supplier data through
-// *synchronous* accessors (getSupplierById, getSupplierByCompanyId) that a real network-backed
-// service can't offer without either a cache-staleness/reactivity problem or a much larger
-// refactor than this stage's "smallest coherent increment" - see the Phase 14 session notes.
-// Deferred to whichever future stage migrates RFQs/suppliers together.
+// Suppliers - real (server/services/catalog.service.ts's listSuppliers/listAllSuppliers/
+// getSupplierBySlug/verifySupplier), same as products/categories/warehouses. The one thing that
+// couldn't move wholesale: getSupplierById/getSupplierByCompanyId are *synchronous* (~16 call
+// sites across this app read supplier data that way), which a network-backed service can't
+// serve directly without a caching layer - and a cache built from listSuppliers() alone would
+// only ever hold VERIFIED/PREMIUM_VERIFIED suppliers, silently missing a supplier looking at
+// their own not-yet-verified profile. That specific case (useAuth.tsx's useTenantContext,
+// resolving a supplier's own SupplierProfile.id to build API paths) was fixed properly instead -
+// it's now embedded directly on the session (Company.supplierProfileId), the same join
+// server/auth/context.ts's resolveTenant already does server-side, so it never depends on this
+// cache at all. Everything else that calls getSupplierById/getSupplierByCompanyId is a display
+// lookup (a supplier's name next to a quote/order/RFQ) where a real-but-possibly-cold cache is a
+// straightforward, honest improvement over permanently-fake demo data - populated here by
+// whichever of listSuppliers/listAllSuppliers/getSupplierBySlug actually ran, so pages that
+// already fetch suppliers for their own list view get warm, real data for the same lookups.
 // ---------------------------------------------------------------------------------------------
 
-const SUPPLIER_OVERRIDE_KEY = 'catalog.suppliers.v1.overrides';
+const supplierCache = new Map<UUID, SupplierProfile>();
 
-function readSupplierOverrides(): Record<UUID, SupplierProfile> {
-  if (typeof window === 'undefined') return {};
-  const raw = window.localStorage.getItem(SUPPLIER_OVERRIDE_KEY);
-  if (!raw) return {};
-  try {
-    return JSON.parse(raw) as Record<UUID, SupplierProfile>;
-  } catch {
-    return {};
-  }
-}
-
-function writeSupplierOverride(supplier: SupplierProfile) {
-  if (typeof window === 'undefined') return;
-  const store = readSupplierOverrides();
-  store[supplier.id] = supplier;
-  window.localStorage.setItem(SUPPLIER_OVERRIDE_KEY, JSON.stringify(store));
-}
-
-function allSuppliers(): SupplierProfile[] {
-  const overrides = readSupplierOverrides();
-  return demoSuppliers.map((s) => overrides[s.id] ?? s);
+function cacheSuppliers(suppliers: SupplierProfile[]): void {
+  for (const s of suppliers) supplierCache.set(s.id, s);
 }
 
 export interface NewProductInput {
@@ -78,12 +65,18 @@ export interface ProductFilters {
   sortBy?: 'relevance' | 'priceAsc' | 'priceDesc' | 'rating';
 }
 
+export interface SupplierFilters {
+  /** Matches against the supplier's own declared `categories` (display names, not slugs). */
+  category?: string;
+  search?: string;
+}
+
 export interface CatalogService {
   listCategories(): Promise<ServiceResult<Category[]>>;
   listProducts(filters?: ProductFilters): Promise<ServiceResult<Product[]>>;
   getProductBySlug(slug: string): Promise<ServiceResult<Product>>;
   getProductById(id: UUID): Promise<ServiceResult<Product>>;
-  listSuppliers(): Promise<ServiceResult<SupplierProfile[]>>;
+  listSuppliers(filters?: SupplierFilters): Promise<ServiceResult<SupplierProfile[]>>;
   /** Every supplier regardless of verification status - the admin verification queue (section
    *  46) reads this, not the buyer-facing `listSuppliers`. */
   listAllSuppliers(): Promise<ServiceResult<SupplierProfile[]>>;
@@ -133,11 +126,11 @@ export interface CatalogService {
 
 /**
  * Products/categories/warehouses call the real `/api/products`, `/api/categories`, and
- * `/api/suppliers/[supplierId]/*` backend (Phase 14, Stage 4). Suppliers themselves stay
- * localStorage-backed (see the block comment above `allSuppliers`). `callerRole`/`caller` are
- * still accepted by every mutation (every existing page already passes them) but are never sent
- * over the wire - the API derives the caller's role and tenant (supplierId) from the session
- * cookie itself.
+ * `/api/suppliers/[supplierId]/*` backend (Phase 14, Stage 4); suppliers themselves call the
+ * real `/api/suppliers*` backend too (see the block comment above `supplierCache`).
+ * `callerRole`/`caller` are still accepted by every mutation (every existing page already passes
+ * them) but are never sent over the wire - the API derives the caller's role and tenant
+ * (supplierId) from the session cookie itself.
  */
 class ApiCatalogService implements CatalogService {
   async listCategories(): Promise<ServiceResult<Category[]>> {
@@ -164,51 +157,43 @@ class ApiCatalogService implements CatalogService {
     return apiRequest<Product>(`/api/products/${id}`);
   }
 
-  async listSuppliers(): Promise<ServiceResult<SupplierProfile[]>> {
-    await delay(250);
-    // The buyer-facing supplier directory only ever shows verified suppliers (section 46) - a
-    // supplier still PENDING_VERIFICATION or SUSPENDED can't be found, invited to an RFQ, or
-    // bought from until an admin verifies them.
-    return ok(allSuppliers().filter((s) => s.verification === 'VERIFIED' || s.verification === 'PREMIUM_VERIFIED'));
+  async listSuppliers(filters: SupplierFilters = {}): Promise<ServiceResult<SupplierProfile[]>> {
+    const params = new URLSearchParams();
+    if (filters.category) params.set('category', filters.category);
+    if (filters.search) params.set('search', filters.search);
+    const query = params.toString();
+    const result = await apiRequest<SupplierProfile[]>(`/api/suppliers${query ? `?${query}` : ''}`);
+    if (result.ok) cacheSuppliers(result.data);
+    return result;
   }
 
   async listAllSuppliers(): Promise<ServiceResult<SupplierProfile[]>> {
-    await delay(250);
-    return ok(allSuppliers());
+    const result = await apiRequest<SupplierProfile[]>('/api/suppliers/moderation');
+    if (result.ok) cacheSuppliers(result.data);
+    return result;
   }
 
   async getSupplierBySlug(slug: string): Promise<ServiceResult<SupplierProfile>> {
-    await delay(250);
-    const supplier = allSuppliers().find((s) => s.slug === slug);
-    if (!supplier) return fail('NOT_FOUND', 'That supplier could not be found.');
-    return ok(supplier);
+    const result = await apiRequest<SupplierProfile>(`/api/suppliers/slug/${encodeURIComponent(slug)}`);
+    if (result.ok) cacheSuppliers([result.data]);
+    return result;
   }
 
   getSupplierById(id: string): SupplierProfile | undefined {
-    return allSuppliers().find((s) => s.id === id);
+    return supplierCache.get(id);
   }
 
   getSupplierByCompanyId(companyId: UUID): SupplierProfile | undefined {
-    return allSuppliers().find((s) => s.companyId === companyId);
+    return [...supplierCache.values()].find((s) => s.companyId === companyId);
   }
 
-  async verifySupplier(supplierId: UUID, decision: 'VERIFIED' | 'SUSPENDED' | 'REJECTED', callerRole: Role, actor: Actor): Promise<ServiceResult<SupplierProfile>> {
-    await delay(300);
-    const supplier = allSuppliers().find((s) => s.id === supplierId);
-    if (!supplier) return fail('NOT_FOUND', 'That supplier could not be found.');
-
-    const updated: SupplierProfile = { ...supplier, verification: decision };
-    writeSupplierOverride(updated);
-    auditLogService.record({
-      actorId: actor.id,
-      actorName: actor.name,
-      action: 'SUPPLIER_VERIFICATION_CHANGED',
-      entityType: 'Supplier',
-      entityId: supplierId,
-      previousValue: { verification: supplier.verification },
-      newValue: { verification: decision },
+  async verifySupplier(supplierId: UUID, decision: 'VERIFIED' | 'SUSPENDED' | 'REJECTED'): Promise<ServiceResult<SupplierProfile>> {
+    const result = await apiRequest<SupplierProfile>(`/api/suppliers/${supplierId}/verification`, {
+      method: 'PATCH',
+      body: JSON.stringify({ decision }),
     });
-    return ok(updated);
+    if (result.ok) cacheSuppliers([result.data]);
+    return result;
   }
 
   async listProductsForSupplier(supplierId: UUID): Promise<ServiceResult<Product[]>> {

@@ -4,11 +4,16 @@ import { db } from '@/server/db';
 import {
   createProduct,
   getProductById,
+  getSupplierById,
+  getSupplierBySlug,
+  listAllSuppliers,
   listCategories,
   listProducts,
+  listSuppliers,
   moderateProduct,
   updateInventory,
   updateProduct,
+  verifySupplier,
 } from './catalog.service';
 
 /**
@@ -18,6 +23,8 @@ import {
  */
 
 const TEST_SUPPLIER_ID = `test-supplier-catalog-${Date.now()}`;
+const TEST_SUPPLIER_SLUG = `catalog-test-supplier-${Date.now()}`;
+const PENDING_SUPPLIER_ID = `test-supplier-catalog-pending-${Date.now()}`;
 const TEST_CATEGORY_ID = `test-category-catalog-${Date.now()}`;
 const TEST_WAREHOUSE_ID = `test-warehouse-catalog-${Date.now()}`;
 
@@ -30,11 +37,27 @@ beforeAll(async () => {
       id: TEST_SUPPLIER_ID,
       companyId: `${TEST_SUPPLIER_ID}-company`,
       name: 'Catalog Test Supplier',
-      slug: `catalog-test-supplier-${Date.now()}`,
+      slug: TEST_SUPPLIER_SLUG,
       city: 'Accra',
       country: 'Ghana',
       description: '',
       verification: 'VERIFIED',
+      categories: ['Test Widgets'],
+    },
+  });
+  await db.company.create({
+    data: { id: `${PENDING_SUPPLIER_ID}-company`, name: 'Catalog Test Pending Supplier Co', country: 'GH', currency: 'GHS', isSupplier: true },
+  });
+  await db.supplierProfile.create({
+    data: {
+      id: PENDING_SUPPLIER_ID,
+      companyId: `${PENDING_SUPPLIER_ID}-company`,
+      name: 'Catalog Test Pending Supplier',
+      slug: `catalog-test-pending-supplier-${Date.now()}`,
+      city: 'Accra',
+      country: 'Ghana',
+      description: '',
+      verification: 'PENDING_VERIFICATION',
     },
   });
   await db.category.create({ data: { id: TEST_CATEGORY_ID, name: 'Test Category', slug: `test-category-${Date.now()}` } });
@@ -47,6 +70,8 @@ afterAll(async () => {
   await db.category.delete({ where: { id: TEST_CATEGORY_ID } }).catch(() => undefined);
   await db.supplierProfile.delete({ where: { id: TEST_SUPPLIER_ID } }).catch(() => undefined);
   await db.company.delete({ where: { id: `${TEST_SUPPLIER_ID}-company` } }).catch(() => undefined);
+  await db.supplierProfile.delete({ where: { id: PENDING_SUPPLIER_ID } }).catch(() => undefined);
+  await db.company.delete({ where: { id: `${PENDING_SUPPLIER_ID}-company` } }).catch(() => undefined);
 });
 
 describe('Categories', () => {
@@ -188,5 +213,65 @@ describe('Products', () => {
     if (updated.ok) expect(updated.data.inventory).toHaveLength(2);
 
     await db.warehouse.delete({ where: { id: secondWarehouse.id } });
+  });
+});
+
+describe('Suppliers', () => {
+  it('the buyer-facing directory only ever shows VERIFIED/PREMIUM_VERIFIED suppliers', async () => {
+    const result = await listSuppliers();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.some((s) => s.id === TEST_SUPPLIER_ID)).toBe(true);
+    expect(result.data.some((s) => s.id === PENDING_SUPPLIER_ID)).toBe(false);
+  });
+
+  it('filters the directory by the supplier-declared category name', async () => {
+    const matching = await listSuppliers({ category: 'Test Widgets' });
+    expect(matching.ok).toBe(true);
+    if (matching.ok) expect(matching.data.some((s) => s.id === TEST_SUPPLIER_ID)).toBe(true);
+
+    const nonMatching = await listSuppliers({ category: 'Not A Real Category' });
+    expect(nonMatching.ok).toBe(true);
+    if (nonMatching.ok) expect(nonMatching.data.some((s) => s.id === TEST_SUPPLIER_ID)).toBe(false);
+  });
+
+  it('listAllSuppliers includes an unverified supplier the buyer-facing directory hides', async () => {
+    const result = await listAllSuppliers();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.some((s) => s.id === PENDING_SUPPLIER_ID)).toBe(true);
+  });
+
+  it('getSupplierBySlug and getSupplierById both resolve the same real supplier, and 404 for one that does not exist', async () => {
+    const bySlug = await getSupplierBySlug(TEST_SUPPLIER_SLUG);
+    expect(bySlug.ok).toBe(true);
+    if (bySlug.ok) expect(bySlug.data.id).toBe(TEST_SUPPLIER_ID);
+
+    const byId = await getSupplierById(TEST_SUPPLIER_ID);
+    expect(byId.ok).toBe(true);
+    if (byId.ok) expect(byId.data.slug).toBe(TEST_SUPPLIER_SLUG);
+
+    const missing = await getSupplierBySlug('does-not-exist');
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.error.code).toBe('NOT_FOUND');
+  });
+
+  it('verifySupplier changes verification and records an audit entry', async () => {
+    const suspended = await verifySupplier(TEST_SUPPLIER_ID, 'SUSPENDED', { id: 'user-grace-owusu', name: 'Grace Owusu' });
+    expect(suspended.ok).toBe(true);
+    if (suspended.ok) expect(suspended.data.verification).toBe('SUSPENDED');
+
+    // A suspended supplier drops out of the buyer-facing directory immediately.
+    const directory = await listSuppliers();
+    expect(directory.ok).toBe(true);
+    if (directory.ok) expect(directory.data.some((s) => s.id === TEST_SUPPLIER_ID)).toBe(false);
+
+    const audit = await db.auditLog.findFirst({
+      where: { entityType: 'SupplierProfile', entityId: TEST_SUPPLIER_ID, action: 'SUPPLIER_VERIFICATION_CHANGED' },
+      orderBy: { timestamp: 'desc' },
+    });
+    expect(audit).not.toBeNull();
+
+    // Restore for any other test in this file that expects TEST_SUPPLIER_ID to be VERIFIED.
+    await verifySupplier(TEST_SUPPLIER_ID, 'VERIFIED', { id: 'user-grace-owusu', name: 'Grace Owusu' });
   });
 });

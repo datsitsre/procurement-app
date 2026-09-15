@@ -33,3 +33,7 @@ export const ModerateProductSchema = z.object({
   decision: z.enum(['PUBLISHED', 'REJECTED']),
   note: z.string().trim().max(1000).optional(),
 });
+
+export const VerifySupplierSchema = z.object({
+  decision: z.enum(['VERIFIED', 'SUSPENDED', 'REJECTED']),
+});

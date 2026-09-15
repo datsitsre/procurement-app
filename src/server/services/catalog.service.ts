@@ -1,18 +1,23 @@
 import 'server-only';
 import { db } from '@/server/db';
 import { fail, ok } from '@/services/base';
-import { toCategoryDto, toProductDto, toWarehouseDto } from '@/server/dto/catalog';
+import { toCategoryDto, toProductDto, toSupplierProfileDto, toWarehouseDto } from '@/server/dto/catalog';
 import { recordAudit } from './audit.service';
 import type { ServiceResult, UUID } from '@/types/common';
-import type { Category, Product, Warehouse } from '@/types/catalog';
+import type { Category, Product, SupplierProfile, Warehouse } from '@/types/catalog';
 import type { Prisma } from '@prisma/client';
 
 /**
  * The real, database-backed counterpart to src/services/catalog.service.ts's mock - products,
- * categories, and warehouses only (Phase 14, Stage 4). Suppliers stay on the existing mock for
- * now - see the block comment in the client catalog.service.ts for why. Route handlers under
- * app/api/products/* and app/api/categories/* call these after their own auth/permission checks
- * have already passed.
+ * categories, warehouses, and (as of this file's supplier directory functions) suppliers (Phase
+ * 14, Stage 4 migrated products/categories/warehouses; suppliers were deliberately deferred at
+ * the time - see the client catalog.service.ts's own removed block comment on why - since ~18
+ * call sites across the app read supplier data through *synchronous* accessors a real
+ * network-backed service can't serve directly. That's solved client-side (an in-memory cache
+ * populated by whichever async call ran most recently), not here - this file only needs to
+ * offer real async reads/writes, the same shape every other domain in this file already has.
+ * Route handlers under app/api/products/*, app/api/categories/*, and app/api/suppliers/* call
+ * these after their own auth/permission checks have already passed.
  */
 
 const PRODUCT_INCLUDE = { specifications: true, priceTiers: true, inventory: true } satisfies Prisma.ProductInclude;
@@ -210,4 +215,74 @@ export async function moderateProduct(
   });
 
   return ok(toProductDto(product));
+}
+
+export interface SupplierFilters {
+  /** Matched against the supplier's own `categories` string array - which holds display names
+   *  ("Networking", "Office Equipment"), not slugs, since a supplier's declared specialties
+   *  aren't tied to the Category table the way a product's categoryId is. */
+  category?: string;
+  search?: string;
+}
+
+/** The buyer-facing supplier directory - only ever VERIFIED/PREMIUM_VERIFIED suppliers (section
+ *  46) - a supplier still PENDING_VERIFICATION or SUSPENDED can't be found, invited to an RFQ,
+ *  or bought from until an admin verifies them. */
+export async function listSuppliers(filters: SupplierFilters = {}): Promise<ServiceResult<SupplierProfile[]>> {
+  const text = filters.search?.trim();
+  const suppliers = await db.supplierProfile.findMany({
+    where: {
+      verification: { in: ['VERIFIED', 'PREMIUM_VERIFIED'] },
+      ...(filters.category ? { categories: { has: filters.category } } : {}),
+      ...(text
+        ? { OR: [{ name: { contains: text, mode: 'insensitive' } }, { description: { contains: text, mode: 'insensitive' } }] }
+        : {}),
+    },
+    orderBy: { rating: 'desc' },
+  });
+  return ok(suppliers.map(toSupplierProfileDto));
+}
+
+/** Every supplier regardless of verification status - the admin verification queue (section 46)
+ *  reads this, not the buyer-facing listSuppliers. */
+export async function listAllSuppliers(): Promise<ServiceResult<SupplierProfile[]>> {
+  // SupplierProfile has no createdAt of its own to order a "newest first" queue by - name is
+  // at least stable and predictable for an admin scanning the full list.
+  const suppliers = await db.supplierProfile.findMany({ orderBy: { name: 'asc' } });
+  return ok(suppliers.map(toSupplierProfileDto));
+}
+
+export async function getSupplierBySlug(slug: string): Promise<ServiceResult<SupplierProfile>> {
+  const supplier = await db.supplierProfile.findUnique({ where: { slug } });
+  if (!supplier) return fail('NOT_FOUND', 'That supplier could not be found.');
+  return ok(toSupplierProfileDto(supplier));
+}
+
+export async function getSupplierById(id: UUID): Promise<ServiceResult<SupplierProfile>> {
+  const supplier = await db.supplierProfile.findUnique({ where: { id } });
+  if (!supplier) return fail('NOT_FOUND', 'That supplier could not be found.');
+  return ok(toSupplierProfileDto(supplier));
+}
+
+export async function verifySupplier(
+  supplierId: UUID,
+  decision: 'VERIFIED' | 'SUSPENDED' | 'REJECTED',
+  actor: { id: string; name: string },
+): Promise<ServiceResult<SupplierProfile>> {
+  const existing = await db.supplierProfile.findUnique({ where: { id: supplierId } });
+  if (!existing) return fail('NOT_FOUND', 'That supplier could not be found.');
+
+  const supplier = await db.supplierProfile.update({ where: { id: supplierId }, data: { verification: decision } });
+
+  await recordAudit({
+    actorId: actor.id,
+    actorName: actor.name,
+    action: 'SUPPLIER_VERIFICATION_CHANGED',
+    entityType: 'SupplierProfile',
+    entityId: supplierId,
+    previousValue: { verification: existing.verification },
+    newValue: { verification: decision },
+  });
+
+  return ok(toSupplierProfileDto(supplier));
 }

@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Scale } from 'lucide-react';
+import Link from 'next/link';
+import { Scale, X } from 'lucide-react';
 import { catalogService } from '@/services/catalog.service';
 import { useCart } from '@/hooks/useCart';
 import { useAsyncData } from '@/hooks/useAsyncData';
@@ -37,6 +38,11 @@ export default function CatalogPage() {
   const [sortBy, setSortBy] = useState<'relevance' | 'priceAsc' | 'priceDesc' | 'rating'>('relevance');
   const [addingId, setAddingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Set once from the URL (e.g. "View products" on a supplier's own page) - filters the catalog
+  // down to just that supplier's listings. Not exposed as its own filter control here; clearing
+  // it means leaving this page and coming back without the query param.
+  const supplierId = searchParams.get('supplier');
+  const supplier = supplierId ? catalogService.getSupplierById(supplierId) : undefined;
   // Lazy initializer, not an effect - sessionStorage is read once on mount without a
   // synchronous setState-in-effect (the SSR pass never touches `window`).
   const [compareIds, setCompareIds] = useState<string[]>(readCompareIds);
@@ -45,9 +51,9 @@ export default function CatalogPage() {
     catalogService.listCategories().then((r) => r.ok && setCategories(r.data));
   }, []);
 
-  const filterKey = JSON.stringify({ selectedCategory, search, sortBy });
+  const filterKey = JSON.stringify({ selectedCategory, search, sortBy, supplierId });
   const { data: products } = useAsyncData(filterKey, () =>
-    catalogService.listProducts({ categorySlug: selectedCategory ?? undefined, search: search || undefined, sortBy }),
+    catalogService.listProducts({ categorySlug: selectedCategory ?? undefined, search: search || undefined, sortBy, supplierId: supplierId ?? undefined }),
   );
 
   function persistCompare(ids: string[]) {
@@ -86,6 +92,18 @@ export default function CatalogPage() {
         <h1 className="text-h1">Catalog</h1>
         <p className="text-body text-text-secondary">Browse products from verified suppliers.</p>
       </div>
+
+      {supplierId && (
+        <div className="flex items-center justify-between rounded-md border border-border bg-surface px-3 py-2 text-sm">
+          <span>
+            Showing products from <span className="font-medium">{supplier?.name ?? 'this supplier'}</span>
+          </span>
+          <Link href="/catalog" className="flex items-center gap-1 text-text-secondary hover:text-text-primary">
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+            Clear
+          </Link>
+        </div>
+      )}
 
       {message && (
         <div role="alert" className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Wallet, Package, CheckSquare, FileText, Receipt, Star, ShieldCheck } from 'lucide-react';
 import { useAuth, useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
 import { SupplierDashboard } from '@/features/supplier/SupplierDashboard';
+import { FinanceDashboard } from '@/features/finance/FinanceDashboard';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { ordersService } from '@/services/orders.service';
 import { invoicesService } from '@/services/invoices.service';
@@ -26,6 +27,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const workspace = useWorkspace();
   const company = useActiveCompany();
+  const membership = useActiveMembership();
 
   // The platform workspace's home is /admin, not this buyer/supplier dashboard - login always
   // lands here first (it has no way to know the workspace ahead of time), so bounce onward.
@@ -41,6 +43,10 @@ export default function DashboardPage() {
     if (!supplier) return null;
     return <SupplierDashboard supplier={supplier} />;
   }
+
+  // Finance Manager's job is invoices/payments/approvals/credit exposure, not supplier
+  // discovery - the generic BuyerDashboard's own framing has nothing to do with that role.
+  if (membership?.role === 'FINANCE_MANAGER') return <FinanceDashboard />;
 
   return <BuyerDashboard />;
 }

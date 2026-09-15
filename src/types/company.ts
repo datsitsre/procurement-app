@@ -27,6 +27,13 @@ export interface Company {
   creditAvailable?: number;
   isSupplier: boolean;
   isBuyer: boolean;
+  /** This company's own SupplierProfile.id when isSupplier is true - a different id from
+   *  Company.id, and the one every supplier-scoped API path actually keys on
+   *  (/api/suppliers/[supplierId]/*). Present directly on the session so
+   *  useTenantContext (useAuth.tsx) can resolve it synchronously, the same join
+   *  server/auth/context.ts's resolveTenant already does server-side - no async catalog
+   *  lookup needed for something this load-bearing. */
+  supplierProfileId?: UUID;
   /** Companies operating under the same parent group, for the company switcher (section 10). */
   parentGroupId?: UUID;
   createdAt: ISODateTime;

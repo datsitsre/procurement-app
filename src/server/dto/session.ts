@@ -13,7 +13,7 @@ export async function buildSessionPayload(userId: string, requestedActiveCompany
 
   const memberships = await db.companyMembership.findMany({
     where: { userId, status: 'ACTIVE' },
-    include: { company: { include: { addresses: true } } },
+    include: { company: { include: { addresses: true, supplierProfile: { select: { id: true } } } } },
   });
 
   const activeCompanyId =
@@ -71,6 +71,7 @@ export async function buildSessionPayload(userId: string, requestedActiveCompany
       creditAvailable: m.company.creditAvailable ? Number(m.company.creditAvailable) : undefined,
       isSupplier: m.company.isSupplier,
       isBuyer: m.company.isBuyer,
+      supplierProfileId: m.company.supplierProfile?.id,
       parentGroupId: m.company.parentGroupId ?? undefined,
       createdAt: m.company.createdAt.toISOString(),
     })),

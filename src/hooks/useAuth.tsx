@@ -10,7 +10,6 @@ import {
   type RegisterInput,
   type Session,
 } from '@/services/auth.service';
-import { catalogService } from '@/services/catalog.service';
 import { hasPermission, type Permission } from '@/config/rbac';
 import type { ServiceError, TenantContext } from '@/types/common';
 
@@ -126,10 +125,10 @@ export function useTenantContext(): TenantContext {
   return useMemo(() => {
     if (workspace === 'platform') return { isPlatformAdmin: true };
     if (!company) return {};
-    if (workspace === 'supplier') {
-      const supplier = catalogService.getSupplierByCompanyId(company.id);
-      return { supplierId: supplier?.id };
-    }
+    // Read directly off the session (company.supplierProfileId), not an async catalog lookup -
+    // this resolves synchronously and is never stale, the same join
+    // server/auth/context.ts's resolveTenant already does server-side from the session alone.
+    if (workspace === 'supplier') return { supplierId: company.supplierProfileId };
     return { companyId: company.id };
   }, [company, workspace]);
 }

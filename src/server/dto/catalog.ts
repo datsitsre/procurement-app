@@ -1,11 +1,12 @@
 import 'server-only';
-import type { Category, InventoryRecord, PriceTier, Product, ProductSpecification, Warehouse } from '@/types/catalog';
+import type { Category, InventoryRecord, PriceTier, Product, ProductSpecification, SupplierProfile, Warehouse } from '@/types/catalog';
 import type {
   Category as PrismaCategory,
   InventoryRecord as PrismaInventoryRecord,
   PriceTier as PrismaPriceTier,
   Product as PrismaProduct,
   ProductSpecification as PrismaProductSpecification,
+  SupplierProfile as PrismaSupplierProfile,
   Warehouse as PrismaWarehouse,
 } from '@prisma/client';
 
@@ -31,6 +32,26 @@ export function toInventoryDto(i: PrismaInventoryRecord): InventoryRecord {
 
 export function toWarehouseDto(w: PrismaWarehouse): Warehouse {
   return { id: w.id, supplierId: w.supplierId, name: w.name, city: w.city, isDefault: w.isDefault };
+}
+
+export function toSupplierProfileDto(s: PrismaSupplierProfile): SupplierProfile {
+  return {
+    id: s.id,
+    companyId: s.companyId,
+    name: s.name,
+    slug: s.slug,
+    logoUrl: s.logoUrl ?? undefined,
+    categories: s.categories,
+    city: s.city,
+    country: s.country,
+    verification: s.verification,
+    rating: Number(s.rating),
+    reviewCount: s.reviewCount,
+    responseTimeHours: s.responseTimeHours,
+    completedOrders: s.completedOrders,
+    certifications: s.certifications,
+    description: s.description,
+  };
 }
 
 type ProductWithRelations = PrismaProduct & {
