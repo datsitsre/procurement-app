@@ -17,7 +17,7 @@ export function BottomNav({ items, moreHref }: BottomNavProps) {
   const pathname = usePathname();
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-30 flex h-(--bottom-nav-height) border-t border-border bg-surface lg:hidden">
+    <nav className="fixed inset-x-0 bottom-0 z-30 flex h-(--bottom-nav-height) border-t border-border bg-surface lg:hidden print:hidden">
       {items.map((item) => {
         const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
         const Icon = item.icon;

@@ -10,7 +10,7 @@ import { UserMenu } from './UserMenu';
  *  fixed sidebar) and mobile (above the page content, with bottom nav replacing the sidebar). */
 export function Topbar() {
   return (
-    <header className="sticky top-0 z-20 flex h-(--topbar-height) items-center gap-3 border-b border-border bg-surface px-4 lg:px-6">
+    <header className="sticky top-0 z-20 flex h-(--topbar-height) items-center gap-3 border-b border-border bg-surface px-4 lg:px-6 print:hidden">
       <div className="relative hidden flex-1 max-w-md md:block">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" aria-hidden="true" />
         <input

@@ -1,4 +1,5 @@
 import { fail, ok } from './base';
+import { primeSupplierCache } from './catalog.service';
 import { demoCompanies, demoCompanyUsers, demoUsers } from '@/lib/demo-data/companies';
 import type { ServiceResult, UUID, CountryCode, CurrencyCode } from '@/types/common';
 import type { Company, CompanyUser, User } from '@/types/company';
@@ -143,6 +144,14 @@ function mirrorIntoRuntimeCache(payload: ServerSessionPayload): Session | null {
     users: upsertById(runtime.users, demoUserIds.has(payload.user.id) ? [] : [payload.user]),
     companyUsers: upsertById(runtime.companyUsers, payload.memberships.filter((m) => !demoMembershipIds.has(m.id))),
   });
+
+  // Every company on this session that has one gets its real SupplierProfile primed into
+  // catalog.service.ts's sync cache right now, from data already in hand - not lazily, the next
+  // time some page happens to call listSuppliers(). getSupplierByCompanyId(activeCompany.id) is
+  // how the supplier dashboard, Products & Inventory, and ~6 other pages resolve *their own*
+  // profile; a cold cache there doesn't just show a blank name, it makes the whole page render
+  // nothing (see primeSupplierCache's own comment).
+  primeSupplierCache(payload.companies.flatMap((c) => (c.supplierProfile ? [c.supplierProfile] : [])));
 
   return { user: payload.user, memberships: payload.memberships, activeCompanyId: payload.activeCompanyId };
 }

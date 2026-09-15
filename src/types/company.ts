@@ -1,4 +1,5 @@
 import type { Address, CountryCode, CurrencyCode, ISODateTime, UUID } from './common';
+import type { SupplierProfile } from './catalog';
 import type { Role } from '@/config/rbac';
 
 export type CreditTerm = 'PREPAID' | 'NET_7' | 'NET_15' | 'NET_30' | 'NET_60';
@@ -34,6 +35,12 @@ export interface Company {
    *  server/auth/context.ts's resolveTenant already does server-side - no async catalog
    *  lookup needed for something this load-bearing. */
   supplierProfileId?: UUID;
+  /** The full profile, alongside `supplierProfileId` - every page that resolves "my own
+   *  supplier profile" (the supplier dashboard, Products & Inventory, ~6 others) needs more
+   *  than just the id, and reads it via catalogService.getSupplierByCompanyId, which useAuth.tsx's
+   *  AuthProvider primes with this on every session load (primeSupplierCache) - see that
+   *  function's own comment for why a lazily-populated cache alone isn't safe for this case. */
+  supplierProfile?: SupplierProfile;
   /** Companies operating under the same parent group, for the company switcher (section 10). */
   parentGroupId?: UUID;
   createdAt: ISODateTime;

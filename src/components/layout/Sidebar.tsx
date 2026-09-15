@@ -19,7 +19,7 @@ export function Sidebar({ items, brandLabel = 'Procurement' }: SidebarProps) {
   const { can } = useAuth();
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-(--sidebar-width) flex-col border-r border-border bg-surface lg:flex">
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-(--sidebar-width) flex-col border-r border-border bg-surface lg:flex print:hidden">
       <div className="flex h-(--topbar-height) items-center gap-2 border-b border-border px-5">
         <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
           P

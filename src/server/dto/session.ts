@@ -1,5 +1,6 @@
 import 'server-only';
 import { db } from '@/server/db';
+import { toSupplierProfileDto } from '@/server/dto/catalog';
 
 /**
  * Builds the exact JSON shape src/services/auth.service.ts's `Session` interface expects (plus
@@ -13,7 +14,7 @@ export async function buildSessionPayload(userId: string, requestedActiveCompany
 
   const memberships = await db.companyMembership.findMany({
     where: { userId, status: 'ACTIVE' },
-    include: { company: { include: { addresses: true, supplierProfile: { select: { id: true } } } } },
+    include: { company: { include: { addresses: true, supplierProfile: true } } },
   });
 
   const activeCompanyId =
@@ -72,6 +73,7 @@ export async function buildSessionPayload(userId: string, requestedActiveCompany
       isSupplier: m.company.isSupplier,
       isBuyer: m.company.isBuyer,
       supplierProfileId: m.company.supplierProfile?.id,
+      supplierProfile: m.company.supplierProfile ? toSupplierProfileDto(m.company.supplierProfile) : undefined,
       parentGroupId: m.company.parentGroupId ?? undefined,
       createdAt: m.company.createdAt.toISOString(),
     })),

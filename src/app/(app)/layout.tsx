@@ -53,14 +53,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="min-h-screen bg-background">
         <a
           href="#main-content"
-          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-accent focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-accent-foreground"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-accent focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-accent-foreground print:hidden"
         >
           Skip to main content
         </a>
         <Sidebar items={navItems} brandLabel={brandByWorkspace[workspace]} />
-        <div className="flex flex-col lg:pl-(--sidebar-width)">
+        {/* print:pl-0 - the sidebar it's otherwise reserving room for is print:hidden, so without
+            this a printed/saved-to-PDF page keeps a blank left gutter the width of the sidebar. */}
+        <div className="flex flex-col lg:pl-(--sidebar-width) print:pl-0">
           <Topbar />
-          <main id="main-content" tabIndex={-1} className="flex-1 px-4 pt-6 pb-24 lg:px-6 lg:pb-10">
+          {/* print:pb-0 - pb-24 exists to clear the mobile bottom nav, which is itself
+              print:hidden; left as-is this would just be blank trailing space in a PDF. */}
+          <main id="main-content" tabIndex={-1} className="flex-1 px-4 pt-6 pb-24 lg:px-6 lg:pb-10 print:p-0">
             {children}
           </main>
         </div>

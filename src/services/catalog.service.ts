@@ -15,23 +15,30 @@ export interface Actor {
 // getSupplierBySlug/verifySupplier), same as products/categories/warehouses. The one thing that
 // couldn't move wholesale: getSupplierById/getSupplierByCompanyId are *synchronous* (~16 call
 // sites across this app read supplier data that way), which a network-backed service can't
-// serve directly without a caching layer - and a cache built from listSuppliers() alone would
-// only ever hold VERIFIED/PREMIUM_VERIFIED suppliers, silently missing a supplier looking at
-// their own not-yet-verified profile. That specific case (useAuth.tsx's useTenantContext,
-// resolving a supplier's own SupplierProfile.id to build API paths) was fixed properly instead -
-// it's now embedded directly on the session (Company.supplierProfileId), the same join
-// server/auth/context.ts's resolveTenant already does server-side, so it never depends on this
-// cache at all. Everything else that calls getSupplierById/getSupplierByCompanyId is a display
-// lookup (a supplier's name next to a quote/order/RFQ) where a real-but-possibly-cold cache is a
-// straightforward, honest improvement over permanently-fake demo data - populated here by
-// whichever of listSuppliers/listAllSuppliers/getSupplierBySlug actually ran, so pages that
-// already fetch suppliers for their own list view get warm, real data for the same lookups.
+// serve directly without a caching layer. A cache built lazily from whichever list/detail call
+// happened to run is fine for the true *display* lookups (a supplier's name next to a quote),
+// but every getSupplierByCompanyId(activeCompany.id) call site - the supplier dashboard, the
+// Products & Inventory page, and six others - resolves the CALLER'S OWN supplier profile, and a
+// cold cache there doesn't just show a blank name, it makes the whole page render nothing. That
+// case is handled properly: useAuth.tsx's AuthProvider calls primeSupplierCache() with every
+// company's full SupplierProfile the moment a session loads (see server/dto/session.ts -
+// buildSessionPayload embeds it directly, the same join server/auth/context.ts's resolveTenant
+// already does server-side) - so the caller's own profile is warm before any page using it can
+// even render, never dependent on some other page having fetched a supplier list first.
 // ---------------------------------------------------------------------------------------------
 
 const supplierCache = new Map<UUID, SupplierProfile>();
 
 function cacheSuppliers(suppliers: SupplierProfile[]): void {
   for (const s of suppliers) supplierCache.set(s.id, s);
+}
+
+/** Seeds the cache getSupplierById/getSupplierByCompanyId read from, with data that's already
+ *  known rather than fetched - every company on the session (useAuth.tsx's AuthProvider, right
+ *  after login/session-load) and, incidentally, every result any real listSuppliers/
+ *  listAllSuppliers/getSupplierBySlug call returns (see cacheSuppliers above, which this wraps). */
+export function primeSupplierCache(suppliers: SupplierProfile[]): void {
+  cacheSuppliers(suppliers);
 }
 
 export interface NewProductInput {

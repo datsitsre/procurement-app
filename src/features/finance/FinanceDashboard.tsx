@@ -81,11 +81,16 @@ export function FinanceDashboard() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-h1">Finance overview</h1>
-        <p className="text-body text-text-secondary">
-          {company?.name} · {membership ? RoleLabels[membership.role] : ''} · {session?.user.name.split(' ')[0]}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-h1">Finance overview</h1>
+          <p className="text-body text-text-secondary">
+            {company?.name} · {membership ? RoleLabels[membership.role] : ''} · {session?.user.name.split(' ')[0]}
+          </p>
+        </div>
+        <Link href="/balance-sheet" className="text-sm font-medium text-accent hover:underline">
+          View balance sheet
+        </Link>
       </div>
 
       {loading ? (

@@ -61,9 +61,14 @@ export function SupplierDashboard({ supplier }: { supplier: SupplierProfile }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-h1">Good day, {session?.user.name.split(' ')[0]}</h1>
-        <p className="text-body text-text-secondary">{supplier.name} · Supplier workspace</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-h1">Good day, {session?.user.name.split(' ')[0]}</h1>
+          <p className="text-body text-text-secondary">{supplier.name} · Supplier workspace</p>
+        </div>
+        <Link href="/balance-sheet" className="text-sm font-medium text-accent hover:underline">
+          View balance sheet
+        </Link>
       </div>
 
       {loading ? (

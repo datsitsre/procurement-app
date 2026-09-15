@@ -176,6 +176,7 @@ export const demoCompanies: Company[] = [
     creditTerms: 'PREPAID',
     isBuyer: false,
     isSupplier: true,
+    supplierProfileId: 'supplier-abc',
     createdAt: '2024-06-01T09:00:00Z',
   },
   {
@@ -191,6 +192,7 @@ export const demoCompanies: Company[] = [
     creditTerms: 'PREPAID',
     isBuyer: false,
     isSupplier: true,
+    supplierProfileId: 'supplier-prime',
     createdAt: '2024-07-15T09:00:00Z',
   },
   {
@@ -207,6 +209,7 @@ export const demoCompanies: Company[] = [
     creditTerms: 'PREPAID',
     isBuyer: false,
     isSupplier: true,
+    supplierProfileId: 'supplier-aie',
     createdAt: '2024-05-20T09:00:00Z',
   },
   {
@@ -222,6 +225,7 @@ export const demoCompanies: Company[] = [
     creditTerms: 'PREPAID',
     isBuyer: false,
     isSupplier: true,
+    supplierProfileId: 'supplier-wae',
     createdAt: '2024-08-10T09:00:00Z',
   },
   {
@@ -237,6 +241,7 @@ export const demoCompanies: Company[] = [
     creditTerms: 'PREPAID',
     isBuyer: false,
     isSupplier: true,
+    supplierProfileId: 'supplier-kpp',
     createdAt: '2026-09-01T09:00:00Z',
   },
   // Platform operator (Phase 6) - neither a buyer nor a supplier tenant; exists only so a

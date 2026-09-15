@@ -13,6 +13,7 @@ import {
   Settings,
   ShoppingCart,
   PiggyBank,
+  Scale,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { Permission } from './rbac';
@@ -39,6 +40,7 @@ export const buyerNav: NavItem[] = [
   { label: 'Budgets', href: '/budgets', icon: PiggyBank, permission: 'analytics.read' },
   { label: 'Invoices', href: '/invoices', icon: Receipt, permission: 'invoices.read' },
   { label: 'Payments', href: '/payments', icon: Wallet, permission: 'payments.read' },
+  { label: 'Balance sheet', href: '/balance-sheet', icon: Scale, permission: 'invoices.read' },
   { label: 'Analytics', href: '/analytics', icon: BarChart3, permission: 'analytics.read' },
   { label: 'Team', href: '/team', icon: Users, permission: 'users.manage' },
   { label: 'Settings', href: '/settings', icon: Settings },
@@ -65,6 +67,7 @@ export const supplierNav: NavItem[] = [
   { label: 'RFQs', href: '/rfqs', icon: FileText },
   { label: 'Invoices', href: '/invoices', icon: Receipt },
   { label: 'Payments', href: '/payments', icon: Wallet },
+  { label: 'Balance sheet', href: '/balance-sheet', icon: Scale },
   { label: 'Team', href: '/team', icon: Users },
   { label: 'Analytics', href: '/analytics', icon: BarChart3 },
   { label: 'Settings', href: '/settings', icon: Settings },
