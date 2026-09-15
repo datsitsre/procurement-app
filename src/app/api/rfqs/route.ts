@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { Permission } from '@/config/rbac';
 import { requireCompanyAccess } from '@/server/auth/require';
+import { enforceRateLimit } from '@/server/auth/rate-limit';
 import { createRfq, listRfqs } from '@/server/services/procurement.service';
 import { NewRfqSchema } from '@/server/validation/procurement';
 
@@ -21,6 +22,10 @@ export async function POST(request: NextRequest) {
 
   const access = await requireCompanyAccess(request, companyId, Permission.RFQ_CREATE);
   if (!access.ok) return access.response;
+
+  const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+  const limited = enforceRateLimit('rfqCreate', `${access.auth.userId}:${ip}`);
+  if (limited) return limited;
 
   const parsed = NewRfqSchema.safeParse(body);
   if (!parsed.success) {

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { Permission, hasPermission } from '@/config/rbac';
 import { getAuthContext, unauthorized, forbidden } from '@/server/auth/context';
 import { isSameOrigin } from '@/server/auth/csrf';
+import { enforceRateLimit } from '@/server/auth/rate-limit';
 import { getRfq, listNegotiationMessages, listQuotesForRfq, sendNegotiationMessage } from '@/server/services/procurement.service';
 import { SendNegotiationMessageSchema } from '@/server/validation/procurement';
 import { ownsRecord } from '@/services/base';
@@ -55,6 +56,10 @@ export async function POST(request: NextRequest, ctx: Ctx) {
   } else {
     return forbidden();
   }
+
+  const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+  const limited = enforceRateLimit('negotiation', `${auth.userId}:${ip}`);
+  if (limited) return limited;
 
   const body = await request.json().catch(() => null);
   const parsed = SendNegotiationMessageSchema.safeParse(body);

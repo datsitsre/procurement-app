@@ -25,8 +25,8 @@ export async function POST(request: NextRequest) {
   const { email, password } = parsed.data;
 
   const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
-  const rateLimitKey = `login:${ip}:${email.toLowerCase()}`;
-  if (!checkRateLimit(rateLimitKey)) {
+  const rateLimitKey = `${ip}:${email.toLowerCase()}`;
+  if (!checkRateLimit('auth', rateLimitKey)) {
     return NextResponse.json({ error: 'Too many attempts. Try again later.' }, { status: 429 });
   }
 
@@ -34,10 +34,10 @@ export async function POST(request: NextRequest) {
   const passwordOk = user ? await verifyPassword(password, user.passwordHash) : false;
 
   if (!user || !passwordOk) {
-    recordAttempt(rateLimitKey);
+    recordAttempt('auth', rateLimitKey);
     return NextResponse.json(INVALID_CREDENTIALS, { status: 401 });
   }
-  clearAttempts(rateLimitKey);
+  clearAttempts('auth', rateLimitKey);
 
   const payload = await buildSessionPayload(user.id);
   if (!payload) return NextResponse.json(INVALID_CREDENTIALS, { status: 401 });

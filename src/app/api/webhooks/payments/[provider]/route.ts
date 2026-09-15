@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { enforceRateLimit } from '@/server/auth/rate-limit';
 import { processPaymentWebhook, verifyWebhookSignature } from '@/server/services/webhook.service';
 import { PaymentWebhookSchema } from '@/server/validation/webhooks';
 
@@ -14,6 +15,13 @@ import { PaymentWebhookSchema } from '@/server/validation/webhooks';
  */
 export async function POST(request: NextRequest, ctx: RouteContext<'/api/webhooks/payments/[provider]'>) {
   const { provider } = await ctx.params;
+
+  // Bounds signature-guessing spam without throttling a real provider's own legitimate retry
+  // traffic (section 6/7) - keyed by IP + provider, not by anything inside the (as yet
+  // unverified) request body.
+  const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+  const limited = enforceRateLimit('webhook', `${provider}:${ip}`);
+  if (limited) return limited;
 
   // Verify the signature over the exact raw bytes received - parsing to JSON first (and letting
   // whitespace/key-order differences creep in) could let a tampered body slip past the check.

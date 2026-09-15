@@ -3,6 +3,7 @@ import { db } from '@/server/db';
 import { hashPassword } from '@/server/auth/password';
 import { createSession, setSessionCookie } from '@/server/auth/session';
 import { isSameOrigin } from '@/server/auth/csrf';
+import { enforceRateLimit } from '@/server/auth/rate-limit';
 import { buildSessionPayload } from '@/server/dto/session';
 import { RegisterSchema } from '@/server/validation/auth';
 
@@ -16,6 +17,10 @@ export async function POST(request: NextRequest) {
   if (!isSameOrigin(request)) {
     return NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 });
   }
+
+  const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+  const limited = enforceRateLimit('auth', `register:${ip}`);
+  if (limited) return limited;
 
   const body = await request.json().catch(() => null);
   const parsed = RegisterSchema.safeParse(body);

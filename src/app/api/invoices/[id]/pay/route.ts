@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { Permission } from '@/config/rbac';
 import { requireCompanyAccess } from '@/server/auth/require';
+import { enforceRateLimit } from '@/server/auth/rate-limit';
 import { getInvoice, payInvoice } from '@/server/services/invoices.service';
 import { PayInvoiceSchema } from '@/server/validation/orders';
 
@@ -15,6 +16,10 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/invoice
 
   const access = await requireCompanyAccess(request, invoice.data.companyId, Permission.PAYMENTS_CREATE);
   if (!access.ok) return access.response;
+
+  const ip = request.headers.get('x-forwarded-for') ?? 'unknown';
+  const limited = enforceRateLimit('payment', `${access.auth.userId}:${ip}`);
+  if (limited) return limited;
 
   const body = await request.json().catch(() => null);
   const parsed = PayInvoiceSchema.safeParse(body);
