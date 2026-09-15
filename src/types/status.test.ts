@@ -19,4 +19,10 @@ describe('getStatusLabel', () => {
     expect(getStatusLabel('PARTIALLY_DELIVERED')).toBe('Partially Delivered');
     expect(getStatusLabel('PENDING')).toBe('Pending');
   });
+
+  it('overrides plain title-casing for a status with an embedded acronym', () => {
+    // Plain title-casing would produce "Converted To Po" ("PO" -> "Po") - wrong, and not how
+    // the rest of the app refers to a purchase order (never a bare "PO").
+    expect(getStatusLabel('CONVERTED_TO_PO')).toBe('Converted to purchase order');
+  });
 });

@@ -170,6 +170,13 @@ function titleCase(status: string): string {
     .join(' ');
 }
 
+/** Status values plain title-casing gets wrong - just the ones with an embedded acronym
+ *  ("PO" -> "Po", not "PO"). Spelled out rather than kept as an acronym ("Converted to PO"),
+ *  matching the rest of the app's own vocabulary - the nav says "Purchase orders", never "POs". */
+const STATUS_LABEL_OVERRIDES: Record<string, string> = {
+  CONVERTED_TO_PO: 'Converted to purchase order',
+};
+
 export const statusToneMaps = {
   order: orderTones,
   payment: paymentTones,
@@ -189,5 +196,5 @@ export function getStatusTone(domain: StatusDomain, status: string): StatusTone 
 }
 
 export function getStatusLabel(status: string): string {
-  return titleCase(status);
+  return STATUS_LABEL_OVERRIDES[status] ?? titleCase(status);
 }
