@@ -15,6 +15,7 @@ import { ErrorState } from '@/components/ui/ErrorState';
 import { SkeletonText } from '@/components/ui/Skeleton';
 import { BUYER_ROLES, RoleLabels, SUPPLIER_ROLES, type Role } from '@/config/rbac';
 import { resizeImageToDataUrl } from '@/utils/image';
+import type { Department } from '@/types/company';
 
 export default function TeamPage() {
   const company = useActiveCompany();
@@ -105,6 +106,49 @@ function TeamMemberSection({ companyId, callerRole }: { companyId: string; calle
           </ul>
         )}
       </Card>
+    </div>
+  );
+}
+
+/** A real dropdown of the company's own declared departments (Settings > Company > Departments -
+ *  companyService.listDepartments), not a blank free-text box - CompanyMembership.department is
+ *  still just a plain string (no FK to the Department table; see that model's own history), so
+ *  this only changes what's offered to pick from, not the shape of what gets saved. The current
+ *  value is always kept selectable even if it's since been removed from the company's own list
+ *  (an old/legacy department name), so editing a member never silently drops what they already
+ *  had set. */
+function DepartmentSelect({
+  id,
+  companyId,
+  value,
+  onChange,
+}: {
+  id: string;
+  companyId: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const { data: departments } = useAsyncData<Department[]>(companyId, () => companyService.listDepartments(companyId));
+  const names = [...new Set([...(departments ?? []).map((d) => d.name), ...(value ? [value] : [])])];
+
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1 block text-sm font-medium text-text-primary">
+        Department
+      </label>
+      <select
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+      >
+        <option value="">No department</option>
+        {names.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -228,7 +272,7 @@ function AddTeamMemberForm({ companyId, callerRole, onAdded }: { companyId: stri
                 ))}
               </select>
             </div>
-            <Input label="Department (optional)" placeholder="e.g. Sales" value={department} onChange={(e) => setDepartment(e.target.value)} />
+            <DepartmentSelect id="team-member-department" companyId={companyId} value={department} onChange={setDepartment} />
           </div>
 
           {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
@@ -346,7 +390,7 @@ function EditTeamMemberForm({
             ))}
           </select>
         </div>
-        <Input label="Department" placeholder="e.g. Sales" value={department} onChange={(e) => setDepartment(e.target.value)} />
+        <DepartmentSelect id={`edit-department-${member.user.id}`} companyId={companyId} value={department} onChange={setDepartment} />
       </div>
 
       {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
