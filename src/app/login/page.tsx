@@ -1,34 +1,80 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
+import { workspaceForRole, type Workspace } from '@/config/rbac';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { cn } from '@/utils/cn';
+
+const DEMO_ACCOUNTS: Record<'buyer' | 'supplier', { email: string; label: string }> = {
+  buyer: { email: 'john.doe@acmetech.example', label: 'company user' },
+  supplier: { email: 'adwoa.mensah@abctech.example', label: 'supplier' },
+};
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { session, login, switchCompany } = useAuth();
+  // Which kind of account this sign-in is for. A single login (email + password) can't itself
+  // tell buyer from supplier - it only knows which company memberships the account has, and
+  // which one lands active by default (whichever the backend picked first) may not be the one
+  // being signed in for. This picks which membership to make active after a successful login,
+  // rather than leaving that to chance - see the effect below.
+  const [workspace, setWorkspace] = useState<'buyer' | 'supplier'>('buyer');
   // Deliberately empty, not pre-filled with a real demo account (see the "Demo account" hint
   // below the form instead) - a pre-filled value here meant switching accounts silently logged
   // you back in as whoever was pre-filled unless you noticed and cleared it first.
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Distinct from `error` (a failed sign-in) - this account signed in fine, just doesn't have the
+  // workspace kind that was selected. Shown with a "Continue" the visitor acts on, rather than
+  // auto-navigating past a message they'd have no chance to actually read.
+  const [noWorkspaceNotice, setNoWorkspaceNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // `login()` only reports success/failure, not the resulting session (useAuth's `session`
+  // updates on its own render cycle, not synchronously after `await login(...)`) - so the
+  // workspace-matching switch below has to happen in an effect once `session` actually changes,
+  // gated by this flag so it only fires right after a login this page itself triggered, not on
+  // every session update for any other reason.
+  const awaitingWorkspaceMatch = useRef(false);
+
+  useEffect(() => {
+    if (!awaitingWorkspaceMatch.current || !session) return;
+    awaitingWorkspaceMatch.current = false;
+
+    // Resolved from a Promise callback, not directly in the effect body - same rule
+    // useAsyncData's own fetch callback follows: React's guidance is to call setState "in a
+    // callback function when external state changes", not synchronously while handling the
+    // change itself.
+    Promise.resolve().then(async () => {
+      const match = session.memberships.find((m) => workspaceForRole(m.role) === (workspace as Workspace));
+      if (!match) {
+        setNoWorkspaceNotice(`This account has no ${workspace} workspace - it's signed in with what it does have instead.`);
+        return;
+      }
+      if (match.companyId !== session.activeCompanyId) {
+        await switchCompany(match.companyId);
+      }
+      router.push('/dashboard');
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per login attempt, keyed on session changing; `workspace` is read at trigger time via the ref guard, not meant to re-run if it changes afterward
+  }, [session]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
+    setNoWorkspaceNotice(null);
+    awaitingWorkspaceMatch.current = true;
     const err = await login(email, password);
     setSubmitting(false);
     if (err) {
+      awaitingWorkspaceMatch.current = false;
       setError(err.message);
-      return;
     }
-    router.push('/dashboard');
   }
 
   return (
@@ -43,13 +89,40 @@ export default function LoginPage() {
 
         <div className="rounded-lg border border-border bg-surface p-6 shadow-sm">
           <h1 className="text-h2 mb-1">Sign in</h1>
-          <p className="text-body mb-6 text-text-secondary">
+          <p className="text-body mb-4 text-text-secondary">
             Sign in to your company&rsquo;s procurement workspace.
           </p>
+
+          <div role="radiogroup" aria-label="Sign in as" className="mb-5 grid grid-cols-2 gap-1 rounded-md bg-neutral-bg p-1">
+            {(['buyer', 'supplier'] as const).map((w) => (
+              <button
+                key={w}
+                type="button"
+                role="radio"
+                aria-checked={workspace === w}
+                onClick={() => setWorkspace(w)}
+                className={cn(
+                  'rounded-md py-1.5 text-sm font-medium transition-colors',
+                  workspace === w ? 'bg-surface text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary',
+                )}
+              >
+                {w === 'buyer' ? 'Company user' : 'Supplier'}
+              </button>
+            ))}
+          </div>
 
           {error && (
             <div role="alert" className="mb-4 rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
               {error}
+            </div>
+          )}
+
+          {noWorkspaceNotice && (
+            <div role="status" className="mb-4 flex flex-col gap-2 rounded-md border border-warning-border bg-warning-bg px-3 py-2 text-sm text-warning">
+              <p>{noWorkspaceNotice}</p>
+              <Button size="sm" variant="outline" className="w-fit" onClick={() => router.push('/dashboard')}>
+                Continue
+              </Button>
             </div>
           )}
 
@@ -77,7 +150,8 @@ export default function LoginPage() {
           </form>
 
           <p className="mt-4 text-caption">
-            Demo account: <code className="rounded bg-neutral-bg px-1 py-0.5">john.doe@acmetech.example</code> / password{' '}
+            Demo {DEMO_ACCOUNTS[workspace].label} account:{' '}
+            <code className="rounded bg-neutral-bg px-1 py-0.5">{DEMO_ACCOUNTS[workspace].email}</code> / password{' '}
             <code className="rounded bg-neutral-bg px-1 py-0.5">password123</code>
           </p>
         </div>
