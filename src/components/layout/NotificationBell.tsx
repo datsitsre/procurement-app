@@ -5,25 +5,28 @@ import Link from 'next/link';
 import { Bell } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { useAuth } from '@/hooks/useAuth';
+import { useAsyncData } from '@/hooks/useAsyncData';
 import { notificationService } from '@/services/notification.service';
 import { formatRelativeTime } from '@/utils/format';
 import type { Notification } from '@/types/notification';
 import { EmptyState } from '@/components/ui/EmptyState';
 
+// Polled, not just fetched once, so a notification another party's action just created (a
+// negotiation reply, a quote arriving, ...) shows up here on its own - the alternative is the
+// unread dot never appearing until the viewer happens to reload the page.
+const POLL_INTERVAL_MS = 20_000;
+
 export function NotificationBell() {
   const { session } = useAuth();
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [loading, setLoading] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!session) return;
-    notificationService.list(session.user.id).then((result) => {
-      if (result.ok) setNotifications(result.data);
-      setLoading(false);
-    });
-  }, [session]);
+  const { data, loading, reload } = useAsyncData<Notification[]>(
+    session?.user.id ?? null,
+    () => notificationService.list(session!.user.id),
+    { pollIntervalMs: POLL_INTERVAL_MS },
+  );
+  const notifications = data ?? [];
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -44,7 +47,7 @@ export function NotificationBell() {
 
   async function markAllRead() {
     await notificationService.markAllRead(session!.user.id);
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    reload();
   }
 
   return (

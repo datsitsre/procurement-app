@@ -24,11 +24,18 @@ export interface NegotiationThreadProps {
  * actually allowed to post is enforced server-side (see the negotiations route), never by which
  * page happens to render this component.
  */
+// Polled while the thread is open, not just fetched once, so a reply from the other side (who
+// has no way to push this page an update) appears on its own instead of requiring the viewer to
+// close and reopen the thread, or reload the page, to find out.
+const POLL_INTERVAL_MS = 5_000;
+
 export function NegotiationThread({ rfqId, quoteId }: NegotiationThreadProps) {
   const membership = useActiveMembership();
   const key = `${rfqId}:${quoteId}`;
-  const { data: messages, reload } = useAsyncData<NegotiationMessage[]>(key, () =>
-    procurementService.listNegotiationMessages(rfqId, quoteId),
+  const { data: messages, reload } = useAsyncData<NegotiationMessage[]>(
+    key,
+    () => procurementService.listNegotiationMessages(rfqId, quoteId),
+    { pollIntervalMs: POLL_INTERVAL_MS },
   );
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
