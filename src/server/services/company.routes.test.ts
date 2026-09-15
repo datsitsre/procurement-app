@@ -6,6 +6,7 @@ import { createSession } from '@/server/auth/session';
 import { GET as getCompanyRoute } from '@/app/api/companies/[companyId]/route';
 import { GET as listDepartmentsRoute, POST as createDepartmentRoute } from '@/app/api/companies/[companyId]/departments/route';
 import { DELETE as deleteDepartmentRoute } from '@/app/api/companies/[companyId]/departments/[departmentId]/route';
+import { GET as listTeamRoute, POST as addTeamMemberRoute } from '@/app/api/companies/[companyId]/team/route';
 
 /**
  * Phase 14, Stage 3 - regression suite at the real API boundary: authentication, permission,
@@ -40,8 +41,11 @@ beforeAll(async () => {
   sessionToken = created.token;
 });
 
+const NEW_TEAM_MEMBER_EMAIL = `routes-new-team-member-${Date.now()}@example.test`;
+
 afterAll(async () => {
   await db.companyMembership.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
+  await db.user.deleteMany({ where: { email: NEW_TEAM_MEMBER_EMAIL } });
   await db.company.delete({ where: { id: TEST_COMPANY_ID } }).catch(() => undefined);
 });
 
@@ -107,5 +111,52 @@ describe('Departments API (create/list/delete through the real route stack)', ()
     });
     const response = await createDepartmentRoute(request, { params: Promise.resolve({ companyId: TEST_COMPANY_ID }) });
     expect(response.status).toBe(403);
+  });
+});
+
+describe('POST /api/companies/[companyId]/team (add a team member through the real route stack)', () => {
+  it('rejects a mutation with no Origin header (CSRF guard, via requireCompanyAccess itself)', async () => {
+    const request = new NextRequest(`http://localhost/api/companies/${TEST_COMPANY_ID}/team`, {
+      method: 'POST',
+      headers: { cookie: `session_token=${sessionToken}` },
+      body: JSON.stringify({ email: 'no-origin@example.test', role: 'EMPLOYEE' }),
+    });
+    const response = await addTeamMemberRoute(request, { params: Promise.resolve({ companyId: TEST_COMPANY_ID }) });
+    expect(response.status).toBe(403);
+  });
+
+  it("refuses adding a team member to a company the caller isn't a member of", async () => {
+    const request = requestFor(`/api/companies/company-not-mine/team`, {
+      method: 'POST',
+      body: JSON.stringify({ email: 'hijacked@example.test', name: 'Hijacked', role: 'EMPLOYEE' }),
+    });
+    const response = await addTeamMemberRoute(request, { params: Promise.resolve({ companyId: 'company-not-mine' }) });
+    expect(response.status).toBe(404);
+  });
+
+  it("refuses a role this company's own workspace can't grant", async () => {
+    const request = requestFor(`/api/companies/${TEST_COMPANY_ID}/team`, {
+      method: 'POST',
+      body: JSON.stringify({ email: 'wrong-role@example.test', name: 'Wrong Role', role: 'SUPPLIER_ADMIN' }),
+    });
+    const response = await addTeamMemberRoute(request, { params: Promise.resolve({ companyId: TEST_COMPANY_ID }) });
+    expect(response.status).toBe(422);
+  });
+
+  it('adds a brand-new team member end-to-end, with a real temporary password, then lists them', async () => {
+    const addRequest = requestFor(`/api/companies/${TEST_COMPANY_ID}/team`, {
+      method: 'POST',
+      body: JSON.stringify({ email: NEW_TEAM_MEMBER_EMAIL, name: 'Routes New Member', role: 'EMPLOYEE', department: 'Ops' }),
+    });
+    const addResponse = await addTeamMemberRoute(addRequest, { params: Promise.resolve({ companyId: TEST_COMPANY_ID }) });
+    expect(addResponse.status).toBe(200);
+    const added = await addResponse.json();
+    expect(added.user.email).toBe(NEW_TEAM_MEMBER_EMAIL);
+    expect(added.temporaryPassword).toBeTruthy();
+
+    const listRequest = requestFor(`/api/companies/${TEST_COMPANY_ID}/team`);
+    const listResponse = await listTeamRoute(listRequest, { params: Promise.resolve({ companyId: TEST_COMPANY_ID }) });
+    const list = await listResponse.json();
+    expect(list.some((m: { user: { email: string } }) => m.user.email === NEW_TEAM_MEMBER_EMAIL)).toBe(true);
   });
 });

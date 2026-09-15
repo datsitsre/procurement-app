@@ -9,6 +9,21 @@ export interface TeamMember {
   user: User;
 }
 
+export interface AddedTeamMember extends TeamMember {
+  /** Set only when adding this person created a brand-new account (no existing account matched
+   *  the email) - the generated password to share with them, since this app has no email
+   *  delivery to send an invite link through instead. */
+  temporaryPassword?: string;
+}
+
+export interface NewTeamMemberInput {
+  email: string;
+  /** Only required when no account exists yet for `email`. */
+  name?: string;
+  role: Role;
+  department?: string;
+}
+
 export interface NewBranchInput {
   companyId: UUID;
   name: string;
@@ -33,6 +48,7 @@ export interface CompanyProfilePatch {
 
 export interface CompanyService {
   listTeamMembers(companyId: UUID, callerRole: Role): Promise<ServiceResult<TeamMember[]>>;
+  addTeamMember(companyId: UUID, input: NewTeamMemberInput, callerRole: Role): Promise<ServiceResult<AddedTeamMember>>;
 
   /** Company profile fields (section 10) - name, registration/tax numbers, industry, contact
    *  details. Requires SETTINGS_MANAGE and that `caller` actually belongs to this company. */
@@ -76,6 +92,10 @@ export interface CompanyService {
 class ApiCompanyService implements CompanyService {
   async listTeamMembers(companyId: UUID): Promise<ServiceResult<TeamMember[]>> {
     return apiRequest<TeamMember[]>(`/api/companies/${companyId}/team`);
+  }
+
+  async addTeamMember(companyId: UUID, input: NewTeamMemberInput): Promise<ServiceResult<AddedTeamMember>> {
+    return apiRequest<AddedTeamMember>(`/api/companies/${companyId}/team`, { method: 'POST', body: JSON.stringify(input) });
   }
 
   async updateCompanyProfile(companyId: UUID, patch: CompanyProfilePatch): Promise<ServiceResult<Company>> {

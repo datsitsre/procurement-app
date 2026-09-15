@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { Role } from '@/config/rbac';
 
 /** The company settings form always submits every field, even ones left blank (matching the
  *  mock's original behavior of saving the whole `CompanyProfilePatch` object as-is) - so
@@ -43,4 +44,15 @@ export const NewBranchSchema = z.object({
 
 export const SetSpendingLimitSchema = z.object({
   amount: z.number().min(0, 'Set a spending limit of zero or more'),
+});
+
+export const NewTeamMemberSchema = z.object({
+  email: z.string().trim().min(1, 'Enter an email address').max(254).email('Enter a valid email address'),
+  // Only actually required when no account exists yet for the email - addTeamMember checks
+  // that itself once it knows whether an account already exists; validated as loosely-optional
+  // here so submitting without a name for an *existing* account isn't rejected before the
+  // service even gets to look.
+  name: z.string().trim().max(200).optional(),
+  role: z.nativeEnum(Role),
+  department: z.string().trim().max(200).optional(),
 });

@@ -3,7 +3,7 @@ import { db } from '@/server/db';
 import { fail, ok } from '@/services/base';
 import type { ServiceResult, UUID } from '@/types/common';
 import type { Branch, Company, CompanyUser, CostCenter, Department, User } from '@/types/company';
-import type { Role } from '@/config/rbac';
+import { BUYER_ROLES, SUPPLIER_ROLES, type Role } from '@/config/rbac';
 import { toBranchDto, toCompanyDto, toCostCenterDto, toDepartmentDto, toMembershipDto, toUserDto } from '@/server/dto/company';
 
 /**
@@ -46,6 +46,78 @@ export interface TeamMember {
 export async function listTeamMembers(companyId: UUID): Promise<ServiceResult<TeamMember[]>> {
   const memberships = await db.companyMembership.findMany({ where: { companyId }, include: { user: true } });
   return ok(memberships.map((m) => ({ membership: toMembershipDto(m), user: toUserDto(m.user) })));
+}
+
+export interface NewTeamMemberInput {
+  email: string;
+  /** Only required when no account exists yet for `email` - ignored otherwise (an existing
+   *  account's name is its own). */
+  name?: string;
+  role: Role;
+  department?: string;
+}
+
+export interface AddedTeamMember extends TeamMember {
+  /** Set only when a brand-new account was created for this email - see
+   *  server/auth/password.ts's generateTemporaryPassword for why: this app has no email
+   *  delivery, so the caller shows this once for the admin to share with the new member
+   *  themselves. Undefined when an existing account was just given a new membership - they
+   *  already have their own password and don't need a new one. */
+  temporaryPassword?: string;
+}
+
+/** Adds someone to this company - either a brand-new account (created here, with a generated
+ *  temporary password) or an existing one (just a new CompanyMembership row; this is exactly
+ *  how a person like the seeded John Doe ends up belonging to several companies at once, see
+ *  DEMO_ACCOUNTS.md). Either way the new membership is ACTIVE immediately, not a pending
+ *  "invited, must accept" state - there's no accept-an-invite flow for it to be pending on, and
+ *  an admin adding someone here is already vouching for them having real access now. */
+export async function addTeamMember(companyId: UUID, input: NewTeamMemberInput): Promise<ServiceResult<AddedTeamMember>> {
+  const email = input.email.trim().toLowerCase();
+  if (!email) return fail('EMPTY', 'Enter an email address.');
+
+  // Never trust the caller's chosen role at face value - it must be one this company can
+  // actually grant. Without this check, USERS_MANAGE at any ordinary buyer or supplier company
+  // would double as a path to PLATFORM_ADMIN (a platform-wide role, not a company one) or to a
+  // role belonging to the other side of the marketplace entirely (a buyer company handing out
+  // SUPPLIER_ADMIN, or vice versa).
+  const company = await db.company.findUnique({ where: { id: companyId } });
+  if (!company) return fail('NOT_FOUND', 'That company could not be found.');
+  const allowedRoles = company.isSupplier ? SUPPLIER_ROLES : BUYER_ROLES;
+  if (!allowedRoles.includes(input.role)) {
+    return fail('INVALID_ROLE', `${input.role} is not a role this company can grant.`);
+  }
+
+  const existingUser = await db.user.findUnique({ where: { email } });
+
+  if (existingUser) {
+    const existingMembership = await db.companyMembership.findUnique({
+      where: { companyId_userId: { companyId, userId: existingUser.id } },
+    });
+    if (existingMembership) return fail('ALREADY_MEMBER', 'This person already has access to this company.');
+
+    const membership = await db.companyMembership.create({
+      data: { companyId, userId: existingUser.id, role: input.role, department: input.department, status: 'ACTIVE', joinedAt: new Date() },
+    });
+    return ok({ membership: toMembershipDto(membership), user: toUserDto(existingUser) });
+  }
+
+  const name = input.name?.trim();
+  if (!name) return fail('NAME_REQUIRED', "Enter this person's name - no account exists yet for this email.");
+
+  const { hashPassword, generateTemporaryPassword } = await import('@/server/auth/password');
+  const temporaryPassword = generateTemporaryPassword();
+  const passwordHash = await hashPassword(temporaryPassword);
+
+  const { user, membership } = await db.$transaction(async (tx) => {
+    const user = await tx.user.create({ data: { name, email, passwordHash } });
+    const membership = await tx.companyMembership.create({
+      data: { companyId, userId: user.id, role: input.role, department: input.department, status: 'ACTIVE', joinedAt: new Date() },
+    });
+    return { user, membership };
+  });
+
+  return ok({ membership: toMembershipDto(membership), user: toUserDto(user), temporaryPassword });
 }
 
 export async function listDepartments(companyId: UUID): Promise<ServiceResult<Department[]>> {

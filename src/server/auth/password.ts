@@ -1,4 +1,5 @@
 import 'server-only';
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 
 /** Cost factor for bcrypt - 12 is a reasonable balance of security vs. login latency for 2026
@@ -16,4 +17,14 @@ export async function hashPassword(password: string): Promise<string> {
  *  doesn't exist" through different error shapes (see auth API's constant-shape error response). */
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   return bcrypt.compare(password, hash);
+}
+
+/** A random password for a brand-new team member added by an admin (company.service.ts's
+ *  addTeamMember) - this app has no email delivery to send a real invite link through, so the
+ *  admin adding them is shown this value once, to share out of band, instead. 12 base64url
+ *  characters from 9 random bytes (~72 bits of entropy) - short enough to read aloud or type,
+ *  long enough that guessing it isn't a realistic attack. Never stored or logged anywhere;
+ *  only its bcrypt hash (via hashPassword) persists. */
+export function generateTemporaryPassword(): string {
+  return crypto.randomBytes(9).toString('base64url');
 }
