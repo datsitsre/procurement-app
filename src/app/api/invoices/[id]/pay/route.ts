@@ -4,7 +4,10 @@ import { requireCompanyAccess } from '@/server/auth/require';
 import { enforceRateLimit } from '@/server/auth/rate-limit';
 import { getInvoice, payInvoice } from '@/server/services/invoices.service';
 import { logger } from '@/server/observability/logger';
+import { withErrorHandling } from '@/server/errors';
 import { PayInvoiceSchema } from '@/server/validation/orders';
+
+const ROUTE = '/api/invoices/[id]/pay';
 
 /** Only the invoice's own billed company may pay it - without this, any authenticated buyer
  *  with PAYMENTS_CREATE could pay off (and mark PAID) an invoice belonging to a company they
@@ -12,13 +15,15 @@ import { PayInvoiceSchema } from '@/server/validation/orders';
  *
  *  High-risk domain (section 12/24) - logs invoiceId/companyId/method/status/errorCode/duration
  *  for every attempt, but never `details` (the payment method's own raw fields - a phone number,
- *  a card fragment, provider-specific data) and never a full request body. */
-export async function POST(request: NextRequest, ctx: RouteContext<'/api/invoices/[id]/pay'>) {
+ *  a card fragment, provider-specific data) and never a full request body. Wrapped in
+ *  withErrorHandling as a safety net for anything unexpected (e.g. a raw database error) that
+ *  none of this route's own explicit branches below already catch - a payment endpoint is
+ *  exactly where an unhandled exception must never fall through to Next's own bare 500. */
+export const POST = withErrorHandling(ROUTE, async (request: NextRequest, ctx: RouteContext<'/api/invoices/[id]/pay'>) => {
   const startedAt = Date.now();
   const requestId = request.headers.get('x-request-id') ?? undefined;
-  const route = '/api/invoices/[id]/pay';
   function complete(status: number, fields: { errorCode?: string; userId?: string; companyId?: string; method?: string } = {}) {
-    logger.info('invoice payment attempt completed', { requestId, route, method: 'POST', invoiceId: id, status, durationMs: Date.now() - startedAt, ...fields });
+    logger.info('invoice payment attempt completed', { requestId, route: ROUTE, method: 'POST', invoiceId: id, status, durationMs: Date.now() - startedAt, ...fields });
   }
 
   const { id } = await ctx.params;
@@ -56,4 +61,4 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/invoice
   }
   complete(200, { userId: access.auth.userId, companyId: invoice.data.companyId, method: parsed.data.method });
   return NextResponse.json(result.data);
-}
+});
