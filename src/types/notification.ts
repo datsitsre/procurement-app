@@ -11,7 +11,9 @@ export type NotificationType =
   | 'ORDER_SHIPPED'
   | 'DELIVERY_DELAYED'
   | 'INVOICE_DUE'
-  | 'LOW_STOCK';
+  | 'LOW_STOCK'
+  | 'RECURRING_PURCHASE_GENERATED'
+  | 'RECURRING_PURCHASE_FAILED';
 
 export interface Notification {
   id: UUID;

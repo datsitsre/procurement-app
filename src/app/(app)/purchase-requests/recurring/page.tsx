@@ -74,12 +74,12 @@ function RecurringPurchasesView({
   tenant: TenantContext;
 }) {
   const { lines } = useCart();
-  const { data: schedules, reload } = useAsyncData<RecurringPurchase[]>(companyId, async () => {
-    // Run due schedules first (section 11.2's stand-in for a real cron job - see the doc comment
-    // on recurringService.runDue), so the list below always reflects the latest run.
-    await recurringService.runDue(companyId, callerRole, tenant);
-    return recurringService.listRecurringPurchases(companyId);
-  });
+  // No longer runs due schedules as a side effect of loading this page (Phase 15) - a real
+  // backend cron (`/api/cron/recurring-purchase-sweep`) now does that on a schedule, whether or
+  // not anyone ever opens this page. "Run due schedules now" below still exists as a manual,
+  // authenticated trigger for the same server-side sweep, for whoever wants to see it happen
+  // immediately rather than wait for the next scheduled run.
+  const { data: schedules, reload } = useAsyncData<RecurringPurchase[]>(companyId, () => recurringService.listRecurringPurchases(companyId));
   const { data: departments } = useAsyncData<Department[]>(companyId, () => companyService.listDepartments(companyId));
   const { data: costCenters } = useAsyncData<CostCenter[]>(companyId, () => companyService.listCostCenters(companyId));
   const [creating, setCreating] = useState(false);

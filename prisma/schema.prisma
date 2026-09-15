@@ -147,6 +147,7 @@ model Company {
   costCenters           CostCenter[]
   memberships           CompanyMembership[]
   budgets               Budget[]
+  budgetAlertSettings   BudgetAlertSettings?
   spendingLimits        SpendingLimit[]
   approvalRules         ApprovalRule[]
   supplierProfile       SupplierProfile?
@@ -270,21 +271,37 @@ enum BudgetScope {
 /// demand from real PAID orders, never stored as a running total here - see the `listUtilization`
 /// query this model backs, ported from budgets.service.ts.
 model Budget {
-  id           String       @id @default(cuid())
-  companyId    String
-  scope        BudgetScope
+  id        String       @id @default(cuid())
+  companyId String
+  scope     BudgetScope
   department   String?
   costCenterId String?
   period       BudgetPeriod
   year         Int
   month        Int?
   amount       Decimal      @db.Decimal(14, 2)
-  createdAt    DateTime     @default(now())
+  /// Running total reserved by purchase requests still in flight (SUBMITTED/IN_APPROVAL/
+  /// APPROVED/CONVERTED_TO_PO - anything not REJECTED/CANCELLED) against this budget. Distinct
+  /// from "actual" spend, which is computed live from real paid orders, never stored here -
+  /// this column exists only so a concurrent purchase-request creation can be checked/reserved
+  /// atomically (an `UPDATE ... WHERE committedAmount + :amount <= amount`), not because this
+  /// app tracks formal accounting balances.
+  committedAmount Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt       DateTime @default(now())
 
   company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   costCenter CostCenter? @relation(fields: [costCenterId], references: [id])
 
   @@index([companyId])
+}
+
+/// A company's own budget-alert-threshold overrides (e.g. "flag at 70/85/100% used") - absence
+/// of a row means the company uses the application default (see DEFAULT_ALERT_THRESHOLDS).
+model BudgetAlertSettings {
+  companyId  String @id
+  thresholds Int[]
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 }
 
 /// Per-role maximum single-purchase-request amount (section 11.5) - a business rule layered on
@@ -647,7 +664,13 @@ model PurchaseRequest {
   totalAmount     Decimal               @db.Decimal(14, 2)
   reason          String
   status          PurchaseRequestStatus @default(SUBMITTED)
-  createdAt       DateTime              @default(now())
+  /// The budget (if any) this request reserved committed spend against at creation time - stored
+  /// explicitly, not re-resolved later, so releasing the reservation on rejection/cancellation
+  /// always targets the exact budget it came from even if the company's budget configuration has
+  /// since changed (a new, more specific budget added; the original one edited or removed).
+  budgetId             String?
+  budgetReservedAmount Decimal?              @db.Decimal(14, 2)
+  createdAt            DateTime              @default(now())
 
   company        Company               @relation("BuyerPurchaseRequests", fields: [companyId], references: [id], onDelete: Cascade)
   requester      User                  @relation("PurchaseRequestRequester", fields: [requesterUserId], references: [id])
@@ -830,15 +853,31 @@ model RecurringPurchaseItem {
 
 /// One execution of a RecurringPurchase - links to the PurchaseRequest it produced, so "last ran
 /// on..." can deep-link to what was actually created instead of just a bare timestamp.
+/// `occurrenceAt` is the schedule's own `nextRunAt` value *at the moment it became due* (not the
+/// wall-clock time the sweep happened to run) - the `@@unique` on it with `recurringId` is what
+/// makes "one schedule occurrence -> one generated purchase request" a real database guarantee
+/// (section 22), not just an application-level assumption: two overlapping sweep runs racing the
+/// same due schedule can both attempt to insert a row for the same occurrence, but only one
+/// insert can ever succeed.
 model RecurringPurchaseRun {
   id                String   @id @default(cuid())
   recurringId       String
-  purchaseRequestId String
+  purchaseRequestId String?
+  occurrenceAt      DateTime
+  status            RecurringRunStatus @default(SUCCEEDED)
+  failureReason     String?
   ranAt             DateTime @default(now())
 
   recurring RecurringPurchase @relation(fields: [recurringId], references: [id], onDelete: Cascade)
 
+  @@unique([recurringId, occurrenceAt])
   @@index([recurringId])
+}
+
+enum RecurringRunStatus {
+  SUCCEEDED
+  FAILED
+  SKIPPED
 }
 
 // =========================================================================

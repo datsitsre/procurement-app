@@ -67,7 +67,7 @@ All of the following are real, Postgres-backed, and covered by at least route-bo
 |---|---|---|---|
 | Catalog | Browse/search/filter products & suppliers, product detail, compare | Manage own products & inventory, moderation queue visibility | Moderate listings, verify/suspend suppliers |
 | RFQ & negotiation | Create RFQ, invite suppliers, compare quotes, **two-way negotiation thread**, accept a quote | Respond to RFQ invites, submit quote, **reply in the same negotiation thread** | — |
-| Procurement | Purchase requests, configurable multi-step approval rules (admin-defined, by spend band/role), purchase orders, spending limits | — | — |
+| Procurement | Purchase requests, configurable multi-step approval rules (admin-defined, by spend band/role), purchase orders, spending limits, **budgets** (company/department/cost-center-scoped, enforced server-side against every new purchase request, not just displayed), **purchase templates** (reusable product lists, no stored price - re-validated at use time), **recurring/scheduled purchases** (real cron-driven, idempotent, never bypasses approval or budget checks) | — | — |
 | Orders | Checkout (real payment charge before order creation), order timeline, disputes | Fulfillment (processing → dispatch → delivered), shipment tracking | Cross-tenant order/dispute oversight |
 | Invoices & payments | Pay via a provider abstraction (card/mobile money/bank transfer/wallet/credit terms), invoice aging | Receive payments, invoice history | Cross-tenant payment oversight |
 | Notifications | Real, DB-backed, polled (not just seeded) — RFQ/quote/negotiation/approval/payment/shipment/invoice-due/low-stock events | Same | — |
@@ -86,7 +86,7 @@ All of the following are real, Postgres-backed, and covered by at least route-bo
 - **A formal balance sheet / general ledger**: no cash accounts, no owner's equity, no chart of accounts anywhere in the schema — the "Balance sheet" page is scoped to what's real (AP/AR aging + inventory value) and says so on the page itself.
 - **True multi-tab, multi-account sessions**: sessions are httpOnly cookies (deliberate, for XSS resistance) and therefore scoped to the browser, not the tab — this is standard cookie behavior, not a bug, and wasn't "fixed" by downgrading the storage mechanism.
 - **Docker**: a multi-stage `Dockerfile` + `output: 'standalone'` exist and were reviewed against the standard Next.js pattern, but **never actually run** — `docker` isn't installed in the development environment this was built in.
-- **Budgets, purchase templates, and recurring/scheduled purchases**: found during a later hardening pass (see the git history for the "backend production hardening" commits, step 9) to still be entirely client-side, `localStorage`-backed mocks (`src/services/budgets.service.ts`, `templates.service.ts`, `recurring.service.ts`) with no Prisma model, no API route, and no server-side tenant-isolation or authorization at all - despite living in the same "Procurement" area of the UI as the real, Postgres-backed purchase requests/approvals/purchase orders. **This document previously listed them as real, Postgres-backed features in section 4's table - that was inaccurate and has been corrected.** They persist only in one browser's local storage, are lost on a cleared cache, and aren't enforced server-side the way every other mutation in this app is - worth flagging clearly to an external reviewer rather than leaving mixed in with the genuinely-migrated features.
+- ~~Budgets, purchase templates, and recurring/scheduled purchases were client-side localStorage mocks~~ - **resolved (Phase 15)**: all three are now real, Postgres-backed, API-routed, tenant-isolated, RBAC-protected. The `Budget`/`PurchaseTemplate`/`RecurringPurchase` Prisma models (and their live database tables) already existed before this phase - they had simply never been wired to a service or route. See section 4's table and the dedicated write-up in section 10 below for the budget-enforcement/recurring-execution architecture. `PROJECT_SCOPE.md` previously (both originally, and then again after a later hardening pass) described these inconsistently; this is the corrected, current state, and every claim here was live-verified against a real running instance, not assumed from reading the code.
 
 ## 6. Security posture (what's been specifically checked, not just assumed)
 
@@ -97,8 +97,8 @@ All of the following are real, Postgres-backed, and covered by at least route-bo
 
 ## 7. Testing
 
-- **220 tests / 32 files**, entirely at the service and API-route boundary against a real Postgres database — no service-layer mocking. Client-side/UI-only components are not unit-tested (this codebase's own convention); those changes are instead verified live against a running instance (see below).
-- Every new feature added this session was also **live-verified** against a running production build (`next build` + `NODE_ENV=production next start`) using real HTTP requests and, for UI flows, a real browser session — not just "tests pass."
+- **40 test files / 300 tests** (updated through Phase 15), entirely at the service and API-route boundary against a real Postgres database — no service-layer mocking. Client-side/UI-only components are not unit-tested (this codebase's own convention); those changes are instead verified live against a running instance (see below).
+- Every new feature added across this session's hardening/completion phases was also **live-verified** against a running production build (`next build` + `NODE_ENV=production next start`) using real HTTP requests and, for UI flows, a real browser session — not just "tests pass."
 
 ## 8. Known rough edges worth an outside eye on
 
@@ -107,7 +107,40 @@ All of the following are real, Postgres-backed, and covered by at least route-bo
 - No soft-delete/undo on most destructive actions (removing a department/cost center/branch is immediate).
 - The invoice-pay UI has no client-generated idempotency key of its own (the *server* now refuses a second charge attempt while one is already pending for the same invoice, closing the practical double-charge risk, but the defense is server-side only).
 
-## 9. Suggested angles for the external review
+## 9. Budgets, purchase templates, and recurring purchases (Phase 15 architecture)
+
+**Budgets.** `Budget` (company/department/cost-center-scoped, annual or monthly). Utilization
+shown to the buyer is computed live from real PAID orders (never a stored running total, so it
+can't drift). Enforcement is a separate, narrower concern: a `committedAmount` column tracks
+reserved-but-not-yet-final spend, updated with an atomic conditional SQL update
+(`UPDATE ... WHERE committedAmount + :amount <= amount`) - the same row-level-lock technique this
+app already uses for quote acceptance and approval decisions - so two purchase requests racing the
+same budget can never both be admitted when combined they'd exceed it. Creating a purchase request
+resolves the single most specific applicable budget (cost center, else department, else
+company-wide, for the request's own period) and reserves against it inside the same transaction as
+the insert; a rejection releases the reservation. This is deliberately not a formal
+accounting/ledger system - no cash accounts, no double-entry, no chart of accounts.
+
+**Purchase templates.** A named, reusable list of `(productId, quantity)` pairs - no price is ever
+stored. Applying one goes through the normal cart → checkout path, so current price/availability
+is always re-fetched, never assumed from when the template was saved.
+
+**Recurring purchases.** A schedule (`frequency`, optional department/cost-center, a product list)
+with a `nextRunAt`. Execution is a real backend sweep
+(`POST /api/cron/recurring-purchase-sweep`, authenticated the same way every other cron job in
+this app is) - not something the browser computes. Idempotency is a real database guarantee: the
+sweep atomically claims a due occurrence with a conditional update (`WHERE nextRunAt = <the exact
+due value>`), so two overlapping sweeps can never both generate a purchase request for the same
+occurrence. A schedule missed for multiple occurrences (the scheduler was offline) generates
+exactly one purchase request and fast-forwards to the next real future occurrence, rather than
+backlogging one per missed interval. Every generated request goes through
+`createPurchaseRequest` unchanged - the same approval rules, spending limits, and budget
+enforcement a manually-submitted request faces; a schedule never bypasses any of them. Each
+execution attempt (success, skipped - no available items, or failed - e.g. exceeded a budget) is
+recorded on `RecurringPurchaseRun`, so a failure is visible and diagnosable rather than silent, and
+is never silently retried into a duplicate request.
+
+## 10. Suggested angles for the external review
 
 If you're pasting this into ChatGPT (or another model) for a second opinion, the most useful things to ask it to focus on are probably:
 

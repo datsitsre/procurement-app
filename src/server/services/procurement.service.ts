@@ -331,21 +331,48 @@ export async function createPurchaseRequest(input: CreatePurchaseRequestInput): 
   const reference = `PR-${Math.floor(10000 + Math.random() * 89999)}`;
   const steps = await resolveApprovalSteps(input.companyId, totalAmount);
 
-  const pr = await db.purchaseRequest.create({
-    data: {
-      reference,
-      companyId: input.companyId,
-      requesterUserId: input.requesterUserId,
-      department: input.department,
-      costCenterId: input.costCenterId,
-      totalAmount,
-      reason: input.reason,
-      status: 'IN_APPROVAL',
-      items: { create: input.items },
-      approvalSteps: { create: steps },
-    },
-    include: PURCHASE_REQUEST_INCLUDE,
+  // Budget enforcement (section 6/32) - resolves the single most specific budget this request's
+  // department/cost-center/company scope would draw against (never a client-supplied budget id),
+  // then atomically reserves the amount inside the same transaction as the insert. No applicable
+  // budget at all is not a constraint (matches the pre-existing "budgets are informational unless
+  // configured" behavior); an applicable budget that doesn't have room rejects the request before
+  // any row is written.
+  const { findApplicableBudget, reserveBudget } = await import('./budget.service');
+  const now = new Date();
+  const applicableBudget = await findApplicableBudget(input.companyId, input.department, input.costCenterId, now);
+
+  const pr = await db.$transaction(async (tx) => {
+    if (applicableBudget) {
+      const reserved = await reserveBudget(applicableBudget.id, totalAmount, tx);
+      if (!reserved) return 'BUDGET_EXCEEDED' as const;
+    }
+
+    return tx.purchaseRequest.create({
+      data: {
+        reference,
+        companyId: input.companyId,
+        requesterUserId: input.requesterUserId,
+        department: input.department,
+        costCenterId: input.costCenterId,
+        totalAmount,
+        reason: input.reason,
+        status: 'IN_APPROVAL',
+        budgetId: applicableBudget?.id,
+        budgetReservedAmount: applicableBudget ? totalAmount : undefined,
+        items: { create: input.items },
+        approvalSteps: { create: steps },
+      },
+      include: PURCHASE_REQUEST_INCLUDE,
+    });
   });
+
+  if (pr === 'BUDGET_EXCEEDED') {
+    const available = applicableBudget!.amount - applicableBudget!.committedAmount;
+    return fail(
+      'BUDGET_EXCEEDED',
+      `This request totals ${totalAmount.toLocaleString()}, which exceeds the ${available.toLocaleString()} remaining in the applicable budget. Reduce the request or ask someone to adjust the budget.`,
+    );
+  }
 
   const prDto = toPurchaseRequestDto(pr);
   const firstStep = prDto.approvalSteps[0];
@@ -412,6 +439,7 @@ export async function decideStep(
   }
 
   const { createFromPurchaseRequest } = await import('./purchase-order.service');
+  const { releaseBudget } = await import('./budget.service');
 
   const updated = await db.$transaction(async (tx) => {
     const { count } = await tx.approvalStep.updateMany({
@@ -429,6 +457,13 @@ export async function decideStep(
     }
 
     const request = await tx.purchaseRequest.update({ where: { id: purchaseRequestId }, data: { status }, include: PURCHASE_REQUEST_INCLUDE });
+
+    // A rejected request releases whatever budget it had reserved (section 6) - never lets a
+    // dead request permanently shrink the budget's available room. An approved-but-not-yet-final
+    // step keeps its reservation, since the request is still alive and could still convert to a PO.
+    if (status === 'REJECTED' && pr.budgetId && pr.budgetReservedAmount) {
+      await releaseBudget(pr.budgetId, Number(pr.budgetReservedAmount), tx);
+    }
 
     // Building the resulting PurchaseOrder(s) in the same transaction as the status flip - a
     // failure here rolls back the approval decision too, rather than leaving the request stuck
