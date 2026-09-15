@@ -19,16 +19,23 @@ interface WorkspaceMatch {
   role: string;
 }
 
-function matchingMemberships(session: Session, workspace: 'buyer' | 'supplier'): WorkspaceMatch[] {
+function matchingMemberships(session: Session, workspace: Workspace): WorkspaceMatch[] {
   const companies = companiesOf(session);
   return session.memberships
-    .filter((m) => workspaceForRole(m.role) === (workspace as Workspace))
+    .filter((m) => workspaceForRole(m.role) === workspace)
     .map((m) => ({ companyId: m.companyId, companyName: companies.find((c) => c.id === m.companyId)?.name ?? 'Unknown company', role: RoleLabels[m.role] }));
 }
 
-const DEMO_ACCOUNTS: Record<'buyer' | 'supplier', { email: string; label: string }> = {
+const WORKSPACE_OPTIONS: { value: Workspace; label: string }[] = [
+  { value: 'buyer', label: 'Company user' },
+  { value: 'supplier', label: 'Supplier' },
+  { value: 'platform', label: 'Platform admin' },
+];
+
+const DEMO_ACCOUNTS: Record<Workspace, { email: string; label: string }> = {
   buyer: { email: 'john.doe@acmetech.example', label: 'company user' },
   supplier: { email: 'adwoa.mensah@abctech.example', label: 'supplier' },
+  platform: { email: 'grace.owusu@platform.example', label: 'platform admin' },
 };
 
 export default function LoginPage() {
@@ -39,7 +46,7 @@ export default function LoginPage() {
   // which one lands active by default (whichever the backend picked first) may not be the one
   // being signed in for. This picks which membership to make active after a successful login,
   // rather than leaving that to chance - see the effect below.
-  const [workspace, setWorkspace] = useState<'buyer' | 'supplier'>('buyer');
+  const [workspace, setWorkspace] = useState<Workspace>('buyer');
   // Deliberately empty, not pre-filled with a real demo account (see the "Demo account" hint
   // below the form instead) - a pre-filled value here meant switching accounts silently logged
   // you back in as whoever was pre-filled unless you noticed and cleared it first.
@@ -127,20 +134,20 @@ export default function LoginPage() {
             Sign in to your company&rsquo;s procurement workspace.
           </p>
 
-          <div role="radiogroup" aria-label="Sign in as" className="mb-5 grid grid-cols-2 gap-1 rounded-md bg-neutral-bg p-1">
-            {(['buyer', 'supplier'] as const).map((w) => (
+          <div role="radiogroup" aria-label="Sign in as" className="mb-5 grid grid-cols-3 gap-1 rounded-md bg-neutral-bg p-1">
+            {WORKSPACE_OPTIONS.map((option) => (
               <button
-                key={w}
+                key={option.value}
                 type="button"
                 role="radio"
-                aria-checked={workspace === w}
-                onClick={() => setWorkspace(w)}
+                aria-checked={workspace === option.value}
+                onClick={() => setWorkspace(option.value)}
                 className={cn(
                   'rounded-md py-1.5 text-sm font-medium transition-colors',
-                  workspace === w ? 'bg-surface text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary',
+                  workspace === option.value ? 'bg-surface text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary',
                 )}
               >
-                {w === 'buyer' ? 'Company user' : 'Supplier'}
+                {option.label}
               </button>
             ))}
           </div>
