@@ -15,6 +15,9 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/rfqs/[r
   if (!access.ok) return access.response;
 
   const result = await acceptQuote(rfqId, quoteId, access.auth.userName);
-  if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 404 });
+  if (!result.ok) {
+    const status = result.error.code === 'CONFLICT' ? 409 : 404;
+    return NextResponse.json({ error: result.error.message }, { status });
+  }
   return NextResponse.json(result.data);
 }

@@ -297,6 +297,53 @@ describe('negotiation and acceptance', () => {
       expect(accepted.data.purchaseOrderId).toBeDefined();
     }
   });
+
+  it('two concurrent acceptQuote calls for the same RFQ never both succeed - only one purchase order is ever created (section 6/25 - concurrency)', async () => {
+    const rfq = await createRfq({
+      companyId: TEST_COMPANY_ID,
+      createdByUserId: TEST_USER_ID,
+      items: [{ productId: TEST_PRODUCT_ID, productName: 'Procurement Test Widget', quantity: 5 }],
+      requiredDeliveryDate: new Date().toISOString(),
+      deliveryLocation: 'Accra',
+      supplierIds: [TEST_SUPPLIER_ID],
+    });
+    expect(rfq.ok).toBe(true);
+    if (!rfq.ok) return;
+    notifiedEntityIds.push(rfq.data.id);
+
+    const quote = await submitQuote({
+      rfqId: rfq.data.id,
+      supplierId: TEST_SUPPLIER_ID,
+      items: [{ productId: TEST_PRODUCT_ID, quantity: 5, unitPrice: 80 }],
+      deliveryDays: 3,
+      warrantyMonths: 12,
+    });
+    expect(quote.ok).toBe(true);
+    if (!quote.ok) return;
+
+    const countBefore = await db.purchaseOrder.count({ where: { companyId: TEST_COMPANY_ID, supplierId: TEST_SUPPLIER_ID } });
+
+    // Fires both requests genuinely concurrently (not sequentially awaited) - the real shape of
+    // a double-click or a retried request racing the original.
+    const [first, second] = await Promise.all([
+      acceptQuote(rfq.data.id, quote.data.id, 'John Doe'),
+      acceptQuote(rfq.data.id, quote.data.id, 'John Doe'),
+    ]);
+
+    const results = [first, second];
+    const succeeded = results.filter((r) => r.ok);
+    const failed = results.filter((r) => !r.ok);
+    expect(succeeded).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    if (!failed[0].ok) expect(failed[0].error.code).toBe('CONFLICT');
+
+    // Exactly one new purchase order was created by this exchange - not two - the real invariant
+    // a duplicate/partial transaction would have violated. Counted as a before/after delta
+    // (rather than a bare total) since this same describe block's earlier test also leaves a PO
+    // behind for this company/supplier pair.
+    const countAfter = await db.purchaseOrder.count({ where: { companyId: TEST_COMPANY_ID, supplierId: TEST_SUPPLIER_ID } });
+    expect(countAfter - countBefore).toBe(1);
+  });
 });
 
 describe('approval rules (Phase 14, Stage 6)', () => {
@@ -421,5 +468,37 @@ describe('purchase requests + spending limits + approvals (Phase 14, Stage 6)', 
     const list = await listPurchaseRequests(TEST_COMPANY_ID);
     expect(list.ok).toBe(true);
     if (list.ok) expect(list.data.some((p) => p.id === pr.data.id)).toBe(true);
+  });
+
+  it('two concurrent decideStep approvals on the same final step never both convert to a PO - only one purchase order is ever created (section 6/25 - concurrency)', async () => {
+    const pr = await createPurchaseRequest({
+      companyId: TEST_COMPANY_ID,
+      requesterUserId: TEST_USER_ID,
+      items: [{ productId: TEST_PRODUCT_ID, productName: 'Procurement Test Widget', supplierId: TEST_SUPPLIER_ID, supplierName: 'Procurement Test Supplier', quantity: 1, unitPrice: 50 }],
+      reason: 'Concurrency test',
+    });
+    expect(pr.ok).toBe(true);
+    if (!pr.ok) return;
+    notifiedEntityIds.push(pr.data.id);
+    expect(pr.data.approvalSteps).toHaveLength(1);
+
+    const countBefore = await db.purchaseOrder.count({ where: { purchaseRequestId: pr.data.id } });
+
+    // Fires both requests genuinely concurrently - the real shape of a double-click or a
+    // retried request racing the original approval.
+    const [first, second] = await Promise.all([
+      decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_USER_ID, 'John Doe'),
+      decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_USER_ID, 'John Doe'),
+    ]);
+
+    const results = [first, second];
+    const succeeded = results.filter((r) => r.ok);
+    const failed = results.filter((r) => !r.ok);
+    expect(succeeded).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    if (!failed[0].ok) expect(failed[0].error.code).toBe('CONFLICT');
+
+    const countAfter = await db.purchaseOrder.count({ where: { purchaseRequestId: pr.data.id } });
+    expect(countAfter - countBefore).toBe(1);
   });
 });

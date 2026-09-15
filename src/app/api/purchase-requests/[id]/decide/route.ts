@@ -28,6 +28,9 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/purchas
   if (!parsed.success) return NextResponse.json({ error: 'Invalid request.' }, { status: 422 });
 
   const result = await decideStep(id, auth.role, parsed.data.decision, auth.userId, auth.userName, parsed.data.comment);
-  if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
+  if (!result.ok) {
+    const status = result.error.code === 'CONFLICT' ? 409 : 422;
+    return NextResponse.json({ error: result.error.message }, { status });
+  }
   return NextResponse.json(result.data);
 }

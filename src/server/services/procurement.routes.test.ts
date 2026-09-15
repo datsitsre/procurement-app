@@ -239,6 +239,13 @@ describe('POST /api/rfqs/[rfqId]/quotes (submit + accept)', () => {
     const accepted = await accept.json();
     expect(accepted.rfq.status).toBe('ACCEPTED');
     expect(accepted.rfq.acceptedQuoteId).toBe(quote.id);
+
+    // A second accept attempt on an already-accepted RFQ (a double-click, a retried request) is
+    // a 409 conflict, not a second purchase order (section 6/25 - concurrency).
+    const secondAccept = await acceptQuoteRoute(requestFor(`/api/rfqs/${RFQ_ID}/quotes/${quote.id}/accept`, buyerSessionToken, { method: 'POST' }), {
+      params: Promise.resolve({ rfqId: RFQ_ID, quoteId: quote.id }),
+    });
+    expect(secondAccept.status).toBe(409);
   });
 });
 

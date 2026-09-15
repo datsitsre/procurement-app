@@ -221,27 +221,43 @@ export async function sendNegotiationMessage(
  *  win to the exact quote, not just "the RFQ is ACCEPTED"), then builds the resulting
  *  PurchaseOrder in the same request (Phase 14, Stage 7 - previously a follow-up client-side
  *  mock call; see purchase-order.service.ts's own comment on why this boundary moved). */
+/** Accepting a quote is not idempotent by nature - each call would otherwise build a brand new
+ *  PurchaseOrder - so a double-click, a retried request, or two genuinely concurrent requests for
+ *  the same RFQ must never both succeed (section 6/25's concurrency-audit concern, explicitly
+ *  naming "quote" as one of the domains to check). Guarded with an atomic conditional update
+ *  (`updateMany` with the current status in the `where` clause, not a separate read-then-write) -
+ *  the database itself decides which concurrent caller wins, and the loser sees a clean CONFLICT
+ *  rather than silently creating a second purchase order. The RFQ update and the resulting
+ *  PurchaseOrder are created in the same transaction, so a failure partway through can never leave
+ *  the RFQ stuck ACCEPTED with no PO to show for it. */
 export async function acceptQuote(
   rfqId: UUID,
   quoteId: UUID,
   authorizedByName: string,
 ): Promise<ServiceResult<{ rfq: RFQ; quote: Quote; purchaseOrderId: UUID }>> {
-  const rfq = await db.rFQ.findUnique({ where: { id: rfqId } });
   const quote = await db.quote.findUnique({ where: { id: quoteId }, include: QUOTE_INCLUDE });
-  if (!rfq || !quote || quote.rfqId !== rfqId) return fail('NOT_FOUND', 'That RFQ or quote could not be found.');
+  if (!quote || quote.rfqId !== rfqId) return fail('NOT_FOUND', 'That RFQ or quote could not be found.');
 
-  const updated = await db.rFQ.update({
-    where: { id: rfqId },
-    data: { status: 'ACCEPTED', acceptedQuoteId: quoteId },
-    include: RFQ_INCLUDE,
+  const result = await db.$transaction(async (tx) => {
+    const { count } = await tx.rFQ.updateMany({
+      where: { id: rfqId, status: { not: 'ACCEPTED' } },
+      data: { status: 'ACCEPTED', acceptedQuoteId: quoteId },
+    });
+    if (count === 0) return null;
+
+    const updated = await tx.rFQ.findUnique({ where: { id: rfqId }, include: RFQ_INCLUDE });
+    if (!updated) return null;
+
+    const rfqDto = toRfqDto(updated);
+    const quoteDto = toQuoteDto(quote);
+    const { createFromQuote } = await import('./purchase-order.service');
+    const po = await createFromQuote(rfqDto, quoteDto, authorizedByName, tx);
+
+    return { rfq: rfqDto, quote: quoteDto, purchaseOrderId: po.id };
   });
 
-  const rfqDto = toRfqDto(updated);
-  const quoteDto = toQuoteDto(quote);
-  const { createFromQuote } = await import('./purchase-order.service');
-  const po = await createFromQuote(rfqDto, quoteDto, authorizedByName);
-
-  return ok({ rfq: rfqDto, quote: quoteDto, purchaseOrderId: po.id });
+  if (!result) return fail('CONFLICT', 'This RFQ has already been accepted.');
+  return ok(result);
 }
 
 // ---- Purchase requests (Stage 6) ----
@@ -366,6 +382,13 @@ export async function listPendingApprovals(companyId: UUID, role: Role): Promise
  *  approved (Phase 14, Stage 7 - previously a follow-up client-side mock call triggered by the
  *  caller seeing CONVERTED_TO_PO). `authorizedByName` names whoever's approval completed the
  *  request, for the resulting PurchaseOrder's own record of who authorized it. */
+/** Deciding an approval step is not idempotent - reaching the final step's decision also
+ *  converts the request into a real PurchaseOrder - so two concurrent decisions on the same step
+ *  (a double-click, a retried request) must never both proceed, exactly the acceptQuote race
+ *  (section 6/25). Guarded the same way: an atomic conditional `updateMany` requiring the step
+ *  still be PENDING, not a separate read-then-write - the database decides which caller wins,
+ *  the loser gets a clean CONFLICT instead of silently creating a second purchase order or
+ *  clobbering the first decision's `comment`/`approverUserId`. */
 export async function decideStep(
   purchaseRequestId: UUID,
   callerRole: Role,
@@ -388,11 +411,14 @@ export async function decideStep(
     return fail('REASON_REQUIRED', 'Add a reason for rejecting this request so the requester knows what to fix.');
   }
 
+  const { createFromPurchaseRequest } = await import('./purchase-order.service');
+
   const updated = await db.$transaction(async (tx) => {
-    await tx.approvalStep.update({
-      where: { id: step.id },
+    const { count } = await tx.approvalStep.updateMany({
+      where: { id: step.id, status: 'PENDING' },
       data: { status: decision, decidedAt: new Date(), comment, approverUserId },
     });
+    if (count === 0) return null;
 
     const remaining = await tx.approvalStep.findMany({ where: { requestId: purchaseRequestId } });
     let status: 'IN_APPROVAL' | 'REJECTED' | 'CONVERTED_TO_PO' = pr.status as 'IN_APPROVAL';
@@ -402,15 +428,21 @@ export async function decideStep(
       status = 'CONVERTED_TO_PO';
     }
 
-    return tx.purchaseRequest.update({ where: { id: purchaseRequestId }, data: { status }, include: PURCHASE_REQUEST_INCLUDE });
+    const request = await tx.purchaseRequest.update({ where: { id: purchaseRequestId }, data: { status }, include: PURCHASE_REQUEST_INCLUDE });
+
+    // Building the resulting PurchaseOrder(s) in the same transaction as the status flip - a
+    // failure here rolls back the approval decision too, rather than leaving the request stuck
+    // CONVERTED_TO_PO with no (or partial) purchase orders to show for it.
+    if (status === 'CONVERTED_TO_PO') {
+      await createFromPurchaseRequest(toPurchaseRequestDto(request), authorizedByName, tx);
+    }
+
+    return request;
   });
 
-  const updatedDto = toPurchaseRequestDto(updated);
+  if (!updated) return fail('CONFLICT', 'This approval step has already been decided.');
 
-  if (updated.status === 'CONVERTED_TO_PO') {
-    const { createFromPurchaseRequest } = await import('./purchase-order.service');
-    await createFromPurchaseRequest(updatedDto, authorizedByName);
-  }
+  const updatedDto = toPurchaseRequestDto(updated);
 
   const { notifyUser, notifyCompanyRoles } = await import('./notification.service');
   if (updated.status === 'REJECTED' || updated.status === 'CONVERTED_TO_PO') {

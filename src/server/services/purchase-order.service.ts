@@ -4,7 +4,7 @@ import { fail, ok } from '@/services/base';
 import { toPurchaseOrderDto } from '@/server/dto/orders';
 import type { ServiceResult, UUID } from '@/types/common';
 import type { PurchaseOrder, PurchaseRequest, Quote, RFQ } from '@/types/procurement';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 
 /**
  * The real, database-backed counterpart to src/services/purchase-order.service.ts's mock (Phase
@@ -39,13 +39,21 @@ export async function listForPurchaseRequest(purchaseRequestId: UUID): Promise<S
 }
 
 /** Builds and persists a PurchaseOrder from an accepted RFQ quote (section 24) - called by
- *  procurement.service.ts's acceptQuote once it has updated the RFQ/Quote side. */
-export async function createFromQuote(rfq: RFQ, quote: Quote, authorizedByName: string): Promise<PurchaseOrder> {
+ *  procurement.service.ts's acceptQuote once it has updated the RFQ/Quote side, inside the same
+ *  transaction (`client`, defaulting to the plain `db` handle for any other caller) - so a
+ *  failure creating the PO can never leave the RFQ stuck ACCEPTED with no purchase order to show
+ *  for it (section 12/25's transaction-atomicity requirement). */
+export async function createFromQuote(
+  rfq: RFQ,
+  quote: Quote,
+  authorizedByName: string,
+  client: Prisma.TransactionClient | PrismaClient = db,
+): Promise<PurchaseOrder> {
   const { FLAT_DELIVERY_FEE, calculateTax } = await import('@/utils/pricing');
   const subtotal = quote.totalPrice;
   const tax = calculateTax(subtotal);
 
-  const po = await db.purchaseOrder.create({
+  const po = await client.purchaseOrder.create({
     data: {
       reference: poReference(),
       companyId: rfq.companyId,
@@ -71,11 +79,18 @@ export async function createFromQuote(rfq: RFQ, quote: Quote, authorizedByName: 
 
 /** Builds one PurchaseOrder per distinct supplier represented in a fully-approved purchase
  *  request's items (section 64: "Approved -> Create PO") - called by procurement.service.ts's
- *  decideStep once every approval step is APPROVED. */
-export async function createFromPurchaseRequest(pr: PurchaseRequest, authorizedByName: string): Promise<PurchaseOrder[]> {
+ *  decideStep once every approval step is APPROVED, inside the same transaction (`client`,
+ *  defaulting to the plain `db` handle for any other caller) - so a failure partway through
+ *  creating these can never leave the request stuck CONVERTED_TO_PO with fewer POs than
+ *  suppliers represented in it (section 12/25's transaction-atomicity requirement). */
+export async function createFromPurchaseRequest(
+  pr: PurchaseRequest,
+  authorizedByName: string,
+  client: Prisma.TransactionClient | PrismaClient = db,
+): Promise<PurchaseOrder[]> {
   const { FLAT_DELIVERY_FEE, calculateTax } = await import('@/utils/pricing');
 
-  const company = await db.company.findUnique({ where: { id: pr.companyId }, include: { addresses: true } });
+  const company = await client.company.findUnique({ where: { id: pr.companyId }, include: { addresses: true } });
   const paymentTerms = company ? company.creditTerms.replace('_', ' ') : 'Net 30';
   const deliveryLocation = company?.addresses.find((a) => a.isDefault)?.line1 ?? 'Company warehouse';
 
@@ -88,7 +103,7 @@ export async function createFromPurchaseRequest(pr: PurchaseRequest, authorizedB
   for (const [supplierId, items] of bySupplier) {
     const subtotal = items.reduce((sum, i) => sum + i.unitPrice * i.quantity, 0);
     const tax = calculateTax(subtotal);
-    const po = await db.purchaseOrder.create({
+    const po = await client.purchaseOrder.create({
       data: {
         reference: poReference(),
         companyId: pr.companyId,
