@@ -136,6 +136,39 @@ correctly; it was only my own ad hoc manual test-server invocations that skipped
 remembering for any future manual standalone-server check that needs to load an actual page, not
 just hit an API route directly.
 
+## Addendum: catalog localStorage bridge (Implementation order step 9)
+
+Inspected `src/services/catalog.service.ts` in full, per the brief's own "identify which read
+paths still depend on it, don't just delete" instruction.
+
+**Finding: already resolved, no `localStorage` reference remains in the file.** The bridge the
+original audit (and `PROJECT_SCOPE.md`) described was accurate *at the time it was written*, but
+this session had already patched it twice before reaching this step (see the earlier "cold-cache
+blank-page regression" fixes) by replacing the localStorage-backed cache with an in-memory `Map`
+warmed synchronously from the session payload itself (`primeSupplierCache`, called by
+`useAuth.tsx`'s `AuthProvider` the moment a session loads) - every read now goes through the real
+`/api/*` backend, and the in-memory cache exists only to serve the ~16 call sites that need a
+*synchronous* supplier lookup (`getSupplierById`/`getSupplierByCompanyId`), never as a substitute
+for a real fetch. No code change needed here; `PROJECT_SCOPE.md`'s stale claim about this file
+(written before the fix, never updated) has been corrected in place.
+
+**A separate, more significant finding surfaced while verifying this**: `budgets.service.ts`,
+`templates.service.ts`, and `recurring.service.ts` (backing the live `/budgets` and
+`/purchase-requests/recurring` pages, plus `TemplatesPanel.tsx`) are still **entirely** client-side
+`localStorage`-only mocks - no Prisma model, no API route, no server-side tenant isolation or
+authorization at all, despite sitting in the same "Procurement" UI area as the real,
+Postgres-backed purchase requests/approvals/purchase orders. `PROJECT_SCOPE.md` previously (and
+incorrectly) listed these as real, Postgres-backed features in its domain-coverage table - that
+claim predates this investigation and has been corrected there too.
+
+This is real, disclosed technical debt, not a security vulnerability (nothing server-side trusts
+this client-only data for authorization), but it's a materially different and larger finding than
+"a runtime cache bridge" - building real backing for these three features would mean new Prisma
+models, services, routes, validation, and tests, which is new-feature scope, not hardening. Left
+deliberately out of scope for this pass per the brief's own "do not rebuild" / "prioritize
+security first" principles; documented here and in `PROJECT_SCOPE.md` so it's visible rather than
+silently inherited.
+
 ## Priority order for implementation (per the brief's own Section 56)
 
 1. **Security** — of the gaps found, the concrete, low-risk, high-value items are: security headers (this turn), extending rate limiting beyond login, and a session-rotation-on-role-change follow-up.

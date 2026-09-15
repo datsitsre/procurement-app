@@ -23,10 +23,10 @@ Originally scaffolded as a consumer food-ordering app, then pivoted and rebuilt 
 | Auth | bcrypt password hashing + opaque, httpOnly-cookie sessions (no JWT, no third-party auth provider) |
 | Validation | Zod, one schema file per domain under `src/server/validation/` |
 | Styling | Tailwind CSS v4 |
-| Testing | Vitest — **32 test files, 220 tests**, run against a real dev Postgres instance (not mocked) |
+| Testing | Vitest — **37 test files, 272 tests** (updated after a later hardening pass), run against a real dev Postgres instance (not mocked) |
 | Icons | lucide-react |
 
-No ORM-agnostic abstraction, no GraphQL layer, no separate backend service — Next.js's own API routes (`src/app/api/**/route.ts`) are the entire backend, **83 route files** as of this writing.
+No ORM-agnostic abstraction, no GraphQL layer, no separate backend service — Next.js's own API routes (`src/app/api/**/route.ts`) are the entire backend, **84 route files** as of this writing (updated after a later hardening pass - see git history).
 
 ## 3. Architecture
 
@@ -67,7 +67,7 @@ All of the following are real, Postgres-backed, and covered by at least route-bo
 |---|---|---|---|
 | Catalog | Browse/search/filter products & suppliers, product detail, compare | Manage own products & inventory, moderation queue visibility | Moderate listings, verify/suspend suppliers |
 | RFQ & negotiation | Create RFQ, invite suppliers, compare quotes, **two-way negotiation thread**, accept a quote | Respond to RFQ invites, submit quote, **reply in the same negotiation thread** | — |
-| Procurement | Purchase requests, configurable multi-step approval rules (admin-defined, by spend band/role), purchase orders, spending limits, budgets, purchase templates, recurring/scheduled purchases | — | — |
+| Procurement | Purchase requests, configurable multi-step approval rules (admin-defined, by spend band/role), purchase orders, spending limits | — | — |
 | Orders | Checkout (real payment charge before order creation), order timeline, disputes | Fulfillment (processing → dispatch → delivered), shipment tracking | Cross-tenant order/dispute oversight |
 | Invoices & payments | Pay via a provider abstraction (card/mobile money/bank transfer/wallet/credit terms), invoice aging | Receive payments, invoice history | Cross-tenant payment oversight |
 | Notifications | Real, DB-backed, polled (not just seeded) — RFQ/quote/negotiation/approval/payment/shipment/invoice-due/low-stock events | Same | — |
@@ -86,6 +86,7 @@ All of the following are real, Postgres-backed, and covered by at least route-bo
 - **A formal balance sheet / general ledger**: no cash accounts, no owner's equity, no chart of accounts anywhere in the schema — the "Balance sheet" page is scoped to what's real (AP/AR aging + inventory value) and says so on the page itself.
 - **True multi-tab, multi-account sessions**: sessions are httpOnly cookies (deliberate, for XSS resistance) and therefore scoped to the browser, not the tab — this is standard cookie behavior, not a bug, and wasn't "fixed" by downgrading the storage mechanism.
 - **Docker**: a multi-stage `Dockerfile` + `output: 'standalone'` exist and were reviewed against the standard Next.js pattern, but **never actually run** — `docker` isn't installed in the development environment this was built in.
+- **Budgets, purchase templates, and recurring/scheduled purchases**: found during a later hardening pass (see the git history for the "backend production hardening" commits, step 9) to still be entirely client-side, `localStorage`-backed mocks (`src/services/budgets.service.ts`, `templates.service.ts`, `recurring.service.ts`) with no Prisma model, no API route, and no server-side tenant-isolation or authorization at all - despite living in the same "Procurement" area of the UI as the real, Postgres-backed purchase requests/approvals/purchase orders. **This document previously listed them as real, Postgres-backed features in section 4's table - that was inaccurate and has been corrected.** They persist only in one browser's local storage, are lost on a cleared cache, and aren't enforced server-side the way every other mutation in this app is - worth flagging clearly to an external reviewer rather than leaving mixed in with the genuinely-migrated features.
 
 ## 6. Security posture (what's been specifically checked, not just assumed)
 
@@ -101,7 +102,7 @@ All of the following are real, Postgres-backed, and covered by at least route-bo
 
 ## 8. Known rough edges worth an outside eye on
 
-- The client-side `catalog.service.ts` still carries a legacy "mirror the server response into a localStorage-backed runtime cache" bridge for a few not-yet-fully-migrated read paths (documented in-file); it's been patched twice this session for real bugs it caused (a cold-cache blank-page regression on 8 pages, fixed by embedding data directly on the session instead of relying on the cache being warm).
+- ~~The client-side `catalog.service.ts` still carries a legacy localStorage-backed runtime cache bridge~~ - **resolved**: `catalog.service.ts` now calls the real API for every read/write and keeps only an in-memory `Map` (not `localStorage`) as a synchronous lookup cache for the ~16 call sites that need `getSupplierById`/`getSupplierByCompanyId` synchronously; the cache is warmed from the session payload itself (`primeSupplierCache`, called by `useAuth.tsx`'s `AuthProvider`) so it's never cold on first render. Verified by direct inspection - no `localStorage` reference remains anywhere in the file.
 - `CompanyMembership.department` is a free-text string, not a foreign key to the real `Department` table — the Team page's department picker now surfaces real department names as options, but nothing enforces they stay in sync if a department is later renamed or removed.
 - No soft-delete/undo on most destructive actions (removing a department/cost center/branch is immediate).
 - The invoice-pay UI has no client-generated idempotency key of its own (the *server* now refuses a second charge attempt while one is already pending for the same invoice, closing the practical double-charge risk, but the defense is server-side only).
