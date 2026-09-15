@@ -3,8 +3,16 @@ import crypto from 'node:crypto';
 import { NextResponse, type NextRequest } from 'next/server';
 import { ownsRecord } from '@/services/base';
 import { hasPermission, type Permission } from '@/config/rbac';
+import { logger } from '@/server/observability/logger';
 import { getAuthContext, unauthorized, forbidden, type AuthContext } from './context';
 import { isSameOrigin } from './csrf';
+
+/** Every route calling through requireAuthAndPermission already has a request id waiting on the
+ *  request - proxy.ts (section 11) attaches one to every /api/* request before any route handler
+ *  runs, so this never has to generate its own. */
+function requestId(request: NextRequest): string | undefined {
+  return request.headers.get('x-request-id') ?? undefined;
+}
 
 export type RequireResult = { ok: true; auth: AuthContext } | { ok: false; response: NextResponse };
 
@@ -27,17 +35,34 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  * each route file needing to remember to call it.
  */
 async function requireAuthAndPermission(request: NextRequest, permission?: Permission): Promise<RequireResult> {
-  if (!SAFE_METHODS.has(request.method) && !isSameOrigin(request)) {
+  const route = request.nextUrl.pathname;
+  const method = request.method;
+  const reqId = requestId(request);
+
+  if (!SAFE_METHODS.has(method) && !isSameOrigin(request)) {
+    logger.warn('rejected request: invalid origin', { requestId: reqId, route, method });
     return { ok: false, response: NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 }) };
   }
 
   const auth = await getAuthContext(request);
-  if (!auth) return { ok: false, response: unauthorized() };
+  if (!auth) {
+    logger.warn('rejected request: no valid session', { requestId: reqId, route, method });
+    return { ok: false, response: unauthorized() };
+  }
 
   if (permission && (!auth.role || !hasPermission(auth.role, permission))) {
+    logger.warn('rejected request: missing permission', {
+      requestId: reqId,
+      route,
+      method,
+      userId: auth.userId,
+      role: auth.role,
+      permission,
+    });
     return { ok: false, response: forbidden() };
   }
 
+  logger.info('request authorized', { requestId: reqId, route, method, userId: auth.userId, role: auth.role });
   return { ok: true, auth };
 }
 
@@ -50,8 +75,17 @@ export async function requireCompanyAccess(
   if (!result.ok) return result;
 
   // Deliberately the same generic 404 an IDOR probe would get for a nonexistent id - never a
-  // distinct "forbidden" that would confirm the company exists but isn't theirs.
+  // distinct "forbidden" that would confirm the company exists but isn't theirs. The server log
+  // (never the response) is where this is allowed to be specific - a repeated pattern here is
+  // exactly what an IDOR-probing attempt looks like.
   if (!ownsRecord(result.auth.tenant, companyId)) {
+    logger.warn('rejected request: tenant mismatch (company)', {
+      requestId: requestId(request),
+      route: request.nextUrl.pathname,
+      method: request.method,
+      userId: result.auth.userId,
+      requestedCompanyId: companyId,
+    });
     return { ok: false, response: NextResponse.json({ error: 'That company could not be found.' }, { status: 404 }) };
   }
 
@@ -70,6 +104,13 @@ export async function requireSupplierAccess(
   if (!result.ok) return result;
 
   if (!ownsRecord(result.auth.tenant, undefined, supplierId)) {
+    logger.warn('rejected request: tenant mismatch (supplier)', {
+      requestId: requestId(request),
+      route: request.nextUrl.pathname,
+      method: request.method,
+      userId: result.auth.userId,
+      requestedSupplierId: supplierId,
+    });
     return { ok: false, response: NextResponse.json({ error: 'That product could not be found.' }, { status: 404 }) };
   }
 
