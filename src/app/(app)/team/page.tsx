@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Check, Copy, Plus, Users } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Check, Copy, Pencil, Plus, Users } from 'lucide-react';
 import { useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
 import { companyService, type TeamMember } from '@/services/company.service';
 import { useAsyncData } from '@/hooks/useAsyncData';
@@ -14,6 +14,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { SkeletonText } from '@/components/ui/Skeleton';
 import { BUYER_ROLES, RoleLabels, SUPPLIER_ROLES, type Role } from '@/config/rbac';
+import { resizeImageToDataUrl } from '@/utils/image';
 
 export default function TeamPage() {
   const company = useActiveCompany();
@@ -39,6 +40,7 @@ function TeamMemberSection({ companyId, callerRole }: { companyId: string; calle
   const { data: members, error: loadError, reload } = useAsyncData<TeamMember[]>(companyId, () =>
     companyService.listTeamMembers(companyId, callerRole),
   );
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
 
   if (loadError) {
     return (
@@ -62,21 +64,44 @@ function TeamMemberSection({ companyId, callerRole }: { companyId: string; calle
           <EmptyState icon={Users} title="No team members" description="Invite colleagues to this company." className="border-0" />
         ) : (
           <ul className="divide-y divide-border">
-            {members.map(({ membership, user }) => (
-              <li key={membership.id} className="flex items-center justify-between gap-4 px-5 py-3">
-                <div className="flex items-center gap-3">
-                  <Avatar name={user.name} imageUrl={user.avatarUrl} />
-                  <div>
-                    <p className="text-sm font-medium">{user.name}</p>
-                    <p className="text-caption">{user.email}</p>
+            {members.map(({ membership, user }) =>
+              editingUserId === user.id ? (
+                <li key={membership.id} className="px-5 py-4">
+                  <EditTeamMemberForm
+                    companyId={companyId}
+                    callerRole={callerRole}
+                    member={{ membership, user }}
+                    onDone={() => {
+                      setEditingUserId(null);
+                      reload();
+                    }}
+                    onCancel={() => setEditingUserId(null)}
+                  />
+                </li>
+              ) : (
+                <li key={membership.id} className="flex items-center justify-between gap-4 px-5 py-3">
+                  <div className="flex items-center gap-3">
+                    <Avatar name={user.name} imageUrl={user.avatarUrl} />
+                    <div>
+                      <p className="text-sm font-medium">{user.name}</p>
+                      <p className="text-caption">{user.email}</p>
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  {membership.department && <span className="text-caption">{membership.department}</span>}
-                  <Badge tone="info">{RoleLabels[membership.role]}</Badge>
-                </div>
-              </li>
-            ))}
+                  <div className="flex items-center gap-3">
+                    {membership.department && <span className="text-caption">{membership.department}</span>}
+                    <Badge tone="info">{RoleLabels[membership.role]}</Badge>
+                    <button
+                      type="button"
+                      onClick={() => setEditingUserId(user.id)}
+                      aria-label={`Edit ${user.name}`}
+                      className="text-text-tertiary hover:text-text-primary"
+                    >
+                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
+                </li>
+              ),
+            )}
           </ul>
         )}
       </Card>
@@ -219,5 +244,121 @@ function AddTeamMemberForm({ companyId, callerRole, onAdded }: { companyId: stri
         </CardContent>
       )}
     </Card>
+  );
+}
+
+function EditTeamMemberForm({
+  companyId,
+  callerRole,
+  member,
+  onDone,
+  onCancel,
+}: {
+  companyId: string;
+  callerRole: Role;
+  member: TeamMember;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const workspace = useWorkspace();
+  const assignableRoles = workspace === 'supplier' ? SUPPLIER_ROLES : BUYER_ROLES;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [name, setName] = useState(member.user.name);
+  const [role, setRole] = useState<Role>(member.membership.role);
+  const [department, setDepartment] = useState(member.membership.department ?? '');
+  const [pendingAvatar, setPendingAvatar] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setError(null);
+    if (!file.type.startsWith('image/')) {
+      setError('Choose an image file.');
+      return;
+    }
+    try {
+      setPendingAvatar(await resizeImageToDataUrl(file));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not process that image.');
+    }
+  }
+
+  async function submit() {
+    setSubmitting(true);
+    setError(null);
+    const result = await companyService.updateTeamMember(
+      companyId,
+      member.user.id,
+      {
+        name: name.trim(),
+        role,
+        department: department.trim(),
+        ...(pendingAvatar !== null ? { avatarUrl: pendingAvatar } : {}),
+      },
+      callerRole,
+    );
+    setSubmitting(false);
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    onDone();
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <div className="relative">
+          <Avatar name={name || member.user.name} imageUrl={pendingAvatar ?? member.user.avatarUrl} size="lg" />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            aria-label={`Change ${member.user.name}'s photo`}
+            className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface text-text-secondary hover:text-text-primary"
+          >
+            <Pencil className="h-3 w-3" aria-hidden="true" />
+          </button>
+          <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} className="hidden" />
+        </div>
+        <p className="text-caption">{member.user.email}</p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
+        <div>
+          <label htmlFor={`edit-role-${member.user.id}`} className="mb-1 block text-sm font-medium text-text-primary">
+            Role
+          </label>
+          <select
+            id={`edit-role-${member.user.id}`}
+            value={role}
+            onChange={(e) => setRole(e.target.value as Role)}
+            className="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            {assignableRoles.map((r) => (
+              <option key={r} value={r}>
+                {RoleLabels[r]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <Input label="Department" placeholder="e.g. Sales" value={department} onChange={(e) => setDepartment(e.target.value)} />
+      </div>
+
+      {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={onCancel} disabled={submitting}>
+          Cancel
+        </Button>
+        <Button onClick={submit} loading={submitting} disabled={!name.trim()}>
+          Save changes
+        </Button>
+      </div>
+    </div>
   );
 }

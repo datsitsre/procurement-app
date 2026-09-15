@@ -120,6 +120,57 @@ export async function addTeamMember(companyId: UUID, input: NewTeamMemberInput):
   return ok({ membership: toMembershipDto(membership), user: toUserDto(user), temporaryPassword });
 }
 
+export interface TeamMemberPatch {
+  role?: Role;
+  department?: string;
+  /** Edits the person's own account fields, not just their membership here - useful for an
+   *  admin correcting a name typo or setting a photo for someone who hasn't logged in yet to
+   *  set one themselves. Empty string clears department/avatar; `undefined` leaves it as-is. */
+  name?: string;
+  avatarUrl?: string;
+}
+
+/** An admin editing an existing member's role/department, and optionally the underlying
+ *  account's own name/avatar - the Team page's "Edit" action (company.service.ts's
+ *  addTeamMember is "Add a team member"; this is the counterpart for someone already on the
+ *  list). `userId` + `companyId` together are what's checked, exactly like every other
+ *  company-scoped mutation in this file - never just a membership id, which on its own says
+ *  nothing about which company it belongs to. */
+export async function updateTeamMember(companyId: UUID, userId: UUID, patch: TeamMemberPatch): Promise<ServiceResult<TeamMember>> {
+  const membership = await db.companyMembership.findUnique({ where: { companyId_userId: { companyId, userId } }, include: { user: true } });
+  if (!membership) return fail('NOT_FOUND', 'That team member could not be found.');
+
+  if (patch.role) {
+    const company = await db.company.findUnique({ where: { id: companyId } });
+    const allowedRoles = company?.isSupplier ? SUPPLIER_ROLES : BUYER_ROLES;
+    if (!allowedRoles.includes(patch.role)) {
+      return fail('INVALID_ROLE', `${patch.role} is not a role this company can grant.`);
+    }
+  }
+  if (patch.name !== undefined && !patch.name.trim()) {
+    return fail('EMPTY_NAME', "Enter this person's name.");
+  }
+  const { validateAvatarUrl } = await import('./user.service');
+  const avatarError = validateAvatarUrl(patch.avatarUrl);
+  if (avatarError) return avatarError;
+
+  const [updatedMembership, updatedUser] = await db.$transaction([
+    db.companyMembership.update({
+      where: { id: membership.id },
+      data: { role: patch.role, department: patch.department !== undefined ? patch.department.trim() || null : undefined },
+    }),
+    db.user.update({
+      where: { id: userId },
+      data: {
+        name: patch.name?.trim(),
+        avatarUrl: patch.avatarUrl !== undefined ? patch.avatarUrl.trim() || null : undefined,
+      },
+    }),
+  ]);
+
+  return ok({ membership: toMembershipDto(updatedMembership), user: toUserDto(updatedUser) });
+}
+
 export async function listDepartments(companyId: UUID): Promise<ServiceResult<Department[]>> {
   const departments = await db.department.findMany({ where: { companyId } });
   return ok(departments.map(toDepartmentDto));

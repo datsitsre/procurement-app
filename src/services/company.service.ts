@@ -24,6 +24,15 @@ export interface NewTeamMemberInput {
   department?: string;
 }
 
+export interface TeamMemberPatch {
+  role?: Role;
+  department?: string;
+  name?: string;
+  /** A data: URI, or '' to remove the current photo. `undefined` leaves it untouched - see
+   *  server/services/user.service.ts's own comment on why a data URI, not a real upload. */
+  avatarUrl?: string;
+}
+
 export interface NewBranchInput {
   companyId: UUID;
   name: string;
@@ -49,6 +58,9 @@ export interface CompanyProfilePatch {
 export interface CompanyService {
   listTeamMembers(companyId: UUID, callerRole: Role): Promise<ServiceResult<TeamMember[]>>;
   addTeamMember(companyId: UUID, input: NewTeamMemberInput, callerRole: Role): Promise<ServiceResult<AddedTeamMember>>;
+  /** Edits an existing member's role/department, and optionally their own account's name/avatar -
+   *  the Team page's "Edit" action, for someone already on the list. */
+  updateTeamMember(companyId: UUID, userId: UUID, patch: TeamMemberPatch, callerRole: Role): Promise<ServiceResult<TeamMember>>;
 
   /** Company profile fields (section 10) - name, registration/tax numbers, industry, contact
    *  details. Requires SETTINGS_MANAGE and that `caller` actually belongs to this company. */
@@ -96,6 +108,10 @@ class ApiCompanyService implements CompanyService {
 
   async addTeamMember(companyId: UUID, input: NewTeamMemberInput): Promise<ServiceResult<AddedTeamMember>> {
     return apiRequest<AddedTeamMember>(`/api/companies/${companyId}/team`, { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async updateTeamMember(companyId: UUID, userId: UUID, patch: TeamMemberPatch): Promise<ServiceResult<TeamMember>> {
+    return apiRequest<TeamMember>(`/api/companies/${companyId}/team/${userId}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
 
   async updateCompanyProfile(companyId: UUID, patch: CompanyProfilePatch): Promise<ServiceResult<Company>> {

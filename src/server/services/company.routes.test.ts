@@ -7,6 +7,7 @@ import { GET as getCompanyRoute } from '@/app/api/companies/[companyId]/route';
 import { GET as listDepartmentsRoute, POST as createDepartmentRoute } from '@/app/api/companies/[companyId]/departments/route';
 import { DELETE as deleteDepartmentRoute } from '@/app/api/companies/[companyId]/departments/[departmentId]/route';
 import { GET as listTeamRoute, POST as addTeamMemberRoute } from '@/app/api/companies/[companyId]/team/route';
+import { PATCH as updateTeamMemberRoute } from '@/app/api/companies/[companyId]/team/[userId]/route';
 
 /**
  * Phase 14, Stage 3 - regression suite at the real API boundary: authentication, permission,
@@ -158,5 +159,42 @@ describe('POST /api/companies/[companyId]/team (add a team member through the re
     const listResponse = await listTeamRoute(listRequest, { params: Promise.resolve({ companyId: TEST_COMPANY_ID }) });
     const list = await listResponse.json();
     expect(list.some((m: { user: { email: string } }) => m.user.email === NEW_TEAM_MEMBER_EMAIL)).toBe(true);
+  });
+});
+
+describe('PATCH /api/companies/[companyId]/team/[userId] (edit an existing team member through the real route stack)', () => {
+  it("refuses editing a member of a company the caller isn't a member of", async () => {
+    const request = requestFor(`/api/companies/company-not-mine/team/${OWNER_USER_ID}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role: 'EMPLOYEE' }),
+    });
+    const response = await updateTeamMemberRoute(request, { params: Promise.resolve({ companyId: 'company-not-mine', userId: OWNER_USER_ID }) });
+    expect(response.status).toBe(404);
+  });
+
+  it('refuses a role this company cannot grant, then edits the real member (added earlier in this file) end-to-end', async () => {
+    // Reuses the account the "adds a brand-new team member" test above created - a real EMPLOYEE
+    // member of TEST_COMPANY_ID by this point in the file.
+    const target = await db.user.findUniqueOrThrow({ where: { email: NEW_TEAM_MEMBER_EMAIL } });
+
+    const wrongRole = requestFor(`/api/companies/${TEST_COMPANY_ID}/team/${target.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role: 'SUPPLIER_ADMIN' }),
+    });
+    const wrongRoleResponse = await updateTeamMemberRoute(wrongRole, { params: Promise.resolve({ companyId: TEST_COMPANY_ID, userId: target.id }) });
+    expect(wrongRoleResponse.status).toBe(422);
+
+    const avatar = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const editRequest = requestFor(`/api/companies/${TEST_COMPANY_ID}/team/${target.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role: 'BUYER', department: 'Procurement', name: 'Routes Edited Name', avatarUrl: avatar }),
+    });
+    const editResponse = await updateTeamMemberRoute(editRequest, { params: Promise.resolve({ companyId: TEST_COMPANY_ID, userId: target.id }) });
+    expect(editResponse.status).toBe(200);
+    const updated = await editResponse.json();
+    expect(updated.membership.role).toBe('BUYER');
+    expect(updated.membership.department).toBe('Procurement');
+    expect(updated.user.name).toBe('Routes Edited Name');
+    expect(updated.user.avatarUrl).toBe(avatar);
   });
 });

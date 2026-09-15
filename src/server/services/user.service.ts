@@ -2,7 +2,7 @@ import 'server-only';
 import { db } from '@/server/db';
 import { fail, ok } from '@/services/base';
 import { toUserDto } from '@/server/dto/company';
-import type { ServiceResult, UUID } from '@/types/common';
+import type { ServiceError, ServiceResult, UUID } from '@/types/common';
 import type { User } from '@/types/company';
 
 /**
@@ -28,16 +28,29 @@ export interface UserProfilePatch {
 // avatar should be allowed to consume.
 const MAX_AVATAR_DATA_URL_LENGTH = 500_000;
 
+/** Shared by updateUserProfile (self-service) and company.service.ts's updateTeamMember (an
+ *  admin setting a photo for someone else, e.g. before they've ever logged in) - same column,
+ *  same constraints, whichever caller is writing it. Returns the failed branch of a
+ *  ServiceResult to return as-is (assignable to ServiceResult<T> for any T - it never carries
+ *  `data`), or null when `avatarUrl` is fine (including undefined/empty - "leave untouched"/
+ *  "clear" are both valid, not validated against the data:image/ shape check). */
+export function validateAvatarUrl(avatarUrl: string | undefined): { ok: false; error: ServiceError } | null {
+  if (!avatarUrl) return null;
+  if (avatarUrl.length > MAX_AVATAR_DATA_URL_LENGTH) {
+    return { ok: false, error: { code: 'AVATAR_TOO_LARGE', message: 'That image is too large - try a smaller photo.' } };
+  }
+  if (!avatarUrl.startsWith('data:image/')) {
+    return { ok: false, error: { code: 'INVALID_AVATAR', message: 'That does not look like an image.' } };
+  }
+  return null;
+}
+
 export async function updateUserProfile(userId: UUID, patch: UserProfilePatch): Promise<ServiceResult<User>> {
   if (patch.name !== undefined && !patch.name.trim()) {
     return fail('EMPTY_NAME', 'Enter your name.');
   }
-  if (patch.avatarUrl && patch.avatarUrl.length > MAX_AVATAR_DATA_URL_LENGTH) {
-    return fail('AVATAR_TOO_LARGE', 'That image is too large - try a smaller photo.');
-  }
-  if (patch.avatarUrl && !patch.avatarUrl.startsWith('data:image/')) {
-    return fail('INVALID_AVATAR', 'That does not look like an image.');
-  }
+  const avatarError = validateAvatarUrl(patch.avatarUrl);
+  if (avatarError) return avatarError;
 
   const user = await db.user.update({
     where: { id: userId },

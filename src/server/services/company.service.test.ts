@@ -16,6 +16,7 @@ import {
   removeDepartment,
   setSpendingLimit,
   updateCompanyProfile,
+  updateTeamMember,
 } from './company.service';
 
 /**
@@ -227,5 +228,44 @@ describe('addTeamMember', () => {
     const list = await listTeamMembers(TEST_COMPANY_ID);
     expect(list.ok).toBe(true);
     if (list.ok) expect(list.data.some((m) => m.user.email === NEW_USER_EMAIL)).toBe(true);
+  });
+});
+
+describe('updateTeamMember', () => {
+  it("edits an existing member's role/department and their own name/avatar together", async () => {
+    const avatar = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    const user = await db.user.findUniqueOrThrow({ where: { email: NEW_USER_EMAIL } });
+    const result = await updateTeamMember(TEST_COMPANY_ID, user.id, {
+      role: 'FINANCE_MANAGER',
+      department: 'Finance',
+      name: 'Edited Name',
+      avatarUrl: avatar,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.membership.role).toBe('FINANCE_MANAGER');
+    expect(result.data.membership.department).toBe('Finance');
+    expect(result.data.user.name).toBe('Edited Name');
+    expect(result.data.user.avatarUrl).toBe(avatar);
+  });
+
+  it('returns NOT_FOUND for a userId not actually a member of this company', async () => {
+    const result = await updateTeamMember(TEST_COMPANY_ID, 'user-does-not-exist', { role: 'EMPLOYEE' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('NOT_FOUND');
+  });
+
+  it("refuses moving a member to a role outside this company's own workspace", async () => {
+    const user = await db.user.findUniqueOrThrow({ where: { email: NEW_USER_EMAIL } });
+    const result = await updateTeamMember(TEST_COMPANY_ID, user.id, { role: 'SUPPLIER_ADMIN' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('INVALID_ROLE');
+  });
+
+  it('rejects clearing the name to empty', async () => {
+    const user = await db.user.findUniqueOrThrow({ where: { email: NEW_USER_EMAIL } });
+    const result = await updateTeamMember(TEST_COMPANY_ID, user.id, { name: '   ' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('EMPTY_NAME');
   });
 });

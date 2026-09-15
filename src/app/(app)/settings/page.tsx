@@ -10,38 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Permission, RoleLabels } from '@/config/rbac';
 import { formatMoney } from '@/utils/format';
-
-// Resized/compressed here, not on the server - this app has no file storage (see
-// server/services/user.service.ts's own comment), so the image itself becomes the value stored
-// in User.avatarUrl. 256px is plenty for an avatar shown at most at a few dozen px across, and
-// keeps the resulting data: URI well under the server's own sanity cap on that column.
-const MAX_AVATAR_DIMENSION = 256;
-
-function resizeImageToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Could not read that file.'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('That does not look like an image.'));
-      img.onload = () => {
-        const scale = Math.min(1, MAX_AVATAR_DIMENSION / Math.max(img.width, img.height));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Could not process that image.'));
-          return;
-        }
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
-      };
-      img.src = reader.result as string;
-    };
-    reader.readAsDataURL(file);
-  });
-}
+import { resizeImageToDataUrl } from '@/utils/image';
 
 export default function SettingsPage() {
   const workspace = useWorkspace();

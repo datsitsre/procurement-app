@@ -56,3 +56,10 @@ export const NewTeamMemberSchema = z.object({
   role: z.nativeEnum(Role),
   department: z.string().trim().max(200).optional(),
 });
+
+export const UpdateTeamMemberSchema = z.object({
+  role: z.nativeEnum(Role).optional(),
+  department: z.string().trim().max(200).optional(),
+  name: z.string().trim().max(200).optional(),
+  avatarUrl: z.string().max(500_000, 'That image is too large - try a smaller photo.').optional(),
+});
