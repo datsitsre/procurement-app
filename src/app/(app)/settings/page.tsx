@@ -1,11 +1,47 @@
 'use client';
 
+import { useRef, useState } from 'react';
 import Link from 'next/link';
+import { Camera } from 'lucide-react';
 import { useAuth, useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 import { Permission, RoleLabels } from '@/config/rbac';
 import { formatMoney } from '@/utils/format';
+
+// Resized/compressed here, not on the server - this app has no file storage (see
+// server/services/user.service.ts's own comment), so the image itself becomes the value stored
+// in User.avatarUrl. 256px is plenty for an avatar shown at most at a few dozen px across, and
+// keeps the resulting data: URI well under the server's own sanity cap on that column.
+const MAX_AVATAR_DIMENSION = 256;
+
+function resizeImageToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read that file.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('That does not look like an image.'));
+      img.onload = () => {
+        const scale = Math.min(1, MAX_AVATAR_DIMENSION / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Could not process that image.'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function SettingsPage() {
   const workspace = useWorkspace();
@@ -16,6 +52,8 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-h1">Settings</h1>
+
+      <ProfileCard />
 
       <Card>
         <CardHeader>
@@ -57,6 +95,100 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function ProfileCard() {
+  const { session, updateProfile } = useAuth();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [name, setName] = useState(session?.user.name ?? '');
+  const [phone, setPhone] = useState(session?.user.phone ?? '');
+  const [pendingAvatar, setPendingAvatar] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  if (!session) return null;
+
+  const displayAvatar = pendingAvatar ?? session.user.avatarUrl;
+  const dirty = name.trim() !== session.user.name || phone.trim() !== (session.user.phone ?? '') || pendingAvatar !== null;
+
+  async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // let the same file be re-picked later if they cancel out
+    if (!file) return;
+    setError(null);
+    setSaved(false);
+    if (!file.type.startsWith('image/')) {
+      setError('Choose an image file.');
+      return;
+    }
+    try {
+      setPendingAvatar(await resizeImageToDataUrl(file));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not process that image.');
+    }
+  }
+
+  async function submit() {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    const err = await updateProfile({
+      name: name.trim(),
+      phone: phone.trim(),
+      ...(pendingAvatar !== null ? { avatarUrl: pendingAvatar } : {}),
+    });
+    setSaving(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setPendingAvatar(null);
+    setSaved(true);
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Your profile</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center gap-4">
+          <div className="relative">
+            <Avatar name={session.user.name} imageUrl={displayAvatar} size="lg" />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Change photo"
+              className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-surface text-text-secondary hover:text-text-primary"
+            >
+              <Camera className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} className="hidden" />
+          </div>
+          <div>
+            <p className="text-sm font-medium">{session.user.email}</p>
+            <button type="button" onClick={() => fileInputRef.current?.click()} className="text-sm font-medium text-accent hover:underline">
+              Change photo
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input label="Phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </div>
+
+        {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
+        {saved && !dirty && <p className="text-sm text-success">Saved.</p>}
+
+        <Button className="w-fit" onClick={submit} loading={saving} disabled={!dirty || !name.trim()}>
+          Save changes
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

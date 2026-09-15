@@ -1,4 +1,4 @@
-import { fail, ok } from './base';
+import { apiRequest, fail, ok } from './base';
 import { primeSupplierCache } from './catalog.service';
 import { demoCompanies, demoCompanyUsers, demoUsers } from '@/lib/demo-data/companies';
 import type { ServiceResult, UUID, CountryCode, CurrencyCode } from '@/types/common';
@@ -24,12 +24,23 @@ export interface RegisterInput {
   password: string;
 }
 
+export interface UserProfilePatch {
+  name?: string;
+  phone?: string;
+  /** A data: URI, or '' to remove the current avatar. `undefined` leaves it untouched - see
+   *  server/services/user.service.ts's own comment on why a data URI, not a real upload. */
+  avatarUrl?: string;
+}
+
 export interface AuthService {
   login(email: string, password: string): Promise<ServiceResult<Session>>;
   register(input: RegisterInput): Promise<ServiceResult<Session>>;
   logout(): Promise<void>;
   getSession(): Promise<ServiceResult<Session>>;
   switchCompany(companyId: UUID): Promise<ServiceResult<Session>>;
+  /** Edits the caller's own account - name/phone/avatar. Never another user's, since the server
+   *  resolves whose account this is from the session cookie, not any id this call could send. */
+  updateProfile(patch: UserProfilePatch): Promise<ServiceResult<User>>;
 }
 
 /** Companies/users/memberships the real `/api/auth/*` backend (Phase 14) knows about but that
@@ -224,6 +235,19 @@ class ApiAuthService implements AuthService {
     const session = mirrorIntoRuntimeCache(result.data);
     if (!session) return fail('FORBIDDEN', 'You are not a member of that company.');
     return ok(session);
+  }
+
+  async updateProfile(patch: UserProfilePatch): Promise<ServiceResult<User>> {
+    const result = await apiRequest<User>('/api/users/me', { method: 'PATCH', body: JSON.stringify(patch) });
+    if (result.ok) {
+      // Mirror the confirmed user back into the runtime cache other still-mock services read
+      // (allUsers()) - the same "mirror what the server just confirmed" pattern
+      // mirrorIntoRuntimeCache uses for login/session/switchCompany, just for a single user
+      // instead of a whole session.
+      const runtime = readRuntimeData();
+      writeRuntimeData({ ...runtime, users: upsertById(runtime.users, [result.data]) });
+    }
+    return result;
   }
 }
 

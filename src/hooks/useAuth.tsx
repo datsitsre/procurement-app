@@ -9,6 +9,7 @@ import {
   activeWorkspaceOf,
   type RegisterInput,
   type Session,
+  type UserProfilePatch,
 } from '@/services/auth.service';
 import { hasPermission, type Permission } from '@/config/rbac';
 import type { ServiceError, TenantContext } from '@/types/common';
@@ -20,6 +21,7 @@ interface AuthContextValue {
   register: (input: RegisterInput) => Promise<ServiceError | null>;
   logout: () => Promise<void>;
   switchCompany: (companyId: string) => Promise<ServiceError | null>;
+  updateProfile: (patch: UserProfilePatch) => Promise<ServiceError | null>;
   can: (permission: Permission) => boolean;
 }
 
@@ -73,6 +75,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return result.error;
   }, []);
 
+  const updateProfile = useCallback(async (patch: UserProfilePatch) => {
+    const result = await authService.updateProfile(patch);
+    if (result.ok) {
+      setSession((current) => (current ? { ...current, user: result.data } : current));
+      return null;
+    }
+    return result.error;
+  }, []);
+
   const can = useCallback(
     (permission: Permission) => {
       if (!session) return false;
@@ -83,8 +94,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<AuthContextValue>(
-    () => ({ session, loading, login, register, logout, switchCompany, can }),
-    [session, loading, login, register, logout, switchCompany, can],
+    () => ({ session, loading, login, register, logout, switchCompany, updateProfile, can }),
+    [session, loading, login, register, logout, switchCompany, updateProfile, can],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
