@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '@/server/db';
-import { charge } from './payment.service';
+import { charge, listAllPayments } from './payment.service';
 
 /**
  * Phase 14, Stage 8 - real, database-backed regression suite for payment.service.ts's charge():
@@ -82,5 +82,27 @@ describe('charge', () => {
 
     const payments = await db.payment.findMany({ where: { companyId: TEST_COMPANY_ID, idempotencyKey: key } });
     expect(payments).toHaveLength(1);
+  });
+});
+
+describe('listAllPayments (section 14 - pagination)', () => {
+  it('honors pageSize and reports the real total count, not just the current page length', async () => {
+    // At least 2 payments already exist from the `charge` suite above in this same file.
+    const realTotal = await db.payment.count();
+    const result = await listAllPayments({ page: 1, pageSize: 1, skip: 0, take: 1 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.items).toHaveLength(1);
+    expect(result.data.total).toBe(realTotal);
+    expect(result.data.page).toBe(1);
+    expect(result.data.pageSize).toBe(1);
+  });
+
+  it('page 1 and page 2 (pageSize 1) return different payments, never the same row twice', async () => {
+    const page1 = await listAllPayments({ page: 1, pageSize: 1, skip: 0, take: 1 });
+    const page2 = await listAllPayments({ page: 2, pageSize: 1, skip: 1, take: 1 });
+    expect(page1.ok && page2.ok).toBe(true);
+    if (!page1.ok || !page2.ok) return;
+    expect(page1.data.items[0].id).not.toBe(page2.data.items[0].id);
   });
 });

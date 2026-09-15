@@ -1,5 +1,5 @@
 import { apiRequest } from './base';
-import type { ServiceResult, UUID } from '@/types/common';
+import type { Page, ServiceResult, UUID } from '@/types/common';
 import type { Payment, PaymentMethod } from '@/types/orders';
 
 export interface ChargeInput {
@@ -15,8 +15,8 @@ export interface ChargeInput {
 
 export interface PaymentService {
   listPayments(companyId: UUID): Promise<ServiceResult<Payment[]>>;
-  /** Every payment across every company - the platform admin overview (section 46). */
-  listAllPayments(): Promise<ServiceResult<Payment[]>>;
+  /** Every payment across every company - the platform admin overview (section 46), paginated. */
+  listAllPayments(page?: number, pageSize?: number): Promise<ServiceResult<Page<Payment>>>;
   /** Payments a supplier has received (section 44) - the supplier-workspace counterpart to
    *  `listPayments`, which is keyed by the *buyer's* company id instead. */
   listPaymentsForSupplier(supplierId: UUID): Promise<ServiceResult<Payment[]>>;
@@ -35,8 +35,8 @@ class ApiPaymentService implements PaymentService {
     return apiRequest<Payment[]>(`/api/companies/${companyId}/payments`);
   }
 
-  async listAllPayments(): Promise<ServiceResult<Payment[]>> {
-    return apiRequest<Payment[]>('/api/payments');
+  async listAllPayments(page = 1, pageSize = 25): Promise<ServiceResult<Page<Payment>>> {
+    return apiRequest<Page<Payment>>(`/api/payments?page=${page}&pageSize=${pageSize}`);
   }
 
   async listPaymentsForSupplier(supplierId: UUID): Promise<ServiceResult<Payment[]>> {

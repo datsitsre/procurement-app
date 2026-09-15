@@ -2,8 +2,9 @@ import 'server-only';
 import { db } from '@/server/db';
 import { fail, ok } from '@/services/base';
 import { toPaymentDto } from '@/server/dto/invoices';
+import { toPage, type PaginationParams } from '@/server/pagination';
 import { paymentProviders } from './payment/providers';
-import type { ServiceResult, UUID } from '@/types/common';
+import type { Page, ServiceResult, UUID } from '@/types/common';
 import type { Payment, PaymentMethod } from '@/types/orders';
 
 /**
@@ -37,10 +38,18 @@ export async function listPaymentsForSupplier(supplierId: UUID): Promise<Service
   return ok(payments.map(toPaymentDto));
 }
 
-/** Every payment across every company - the platform admin overview (section 46). */
-export async function listAllPayments(): Promise<ServiceResult<Payment[]>> {
-  const payments = await db.payment.findMany({ orderBy: { createdAt: 'desc' } });
-  return ok(payments.map(toPaymentDto));
+/** Every payment across every company - the platform admin overview (section 46). Paginated
+ *  (section 14) - the single most unbounded-by-construction list in the app, since it has no
+ *  tenant scope at all to naturally bound it. `skip`/`take` and the `count` both run inside the
+ *  database query, after nothing needs filtering out first (there's no tenant scope to apply
+ *  here - PLATFORM_MANAGE itself is the whole authorization story, same as the route's own
+ *  permission check), never by loading everything and slicing in application code. */
+export async function listAllPayments(pagination: PaginationParams): Promise<ServiceResult<Page<Payment>>> {
+  const [payments, total] = await Promise.all([
+    db.payment.findMany({ orderBy: { createdAt: 'desc' }, skip: pagination.skip, take: pagination.take }),
+    db.payment.count(),
+  ]);
+  return ok(toPage(payments.map(toPaymentDto), total, pagination));
 }
 
 export async function charge(input: ChargeInput): Promise<ServiceResult<Payment>> {

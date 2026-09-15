@@ -105,6 +105,37 @@ for the same reference. Documented here rather than changed, since redesigning t
 would be scope creep beyond "add replay protection" and there is no real scenario in this
 codebase that hits it.
 
+## Addendum: pagination (Implementation order step 7)
+
+Added a shared, reusable pagination utility (`src/server/pagination.ts`: `parsePagination` for
+`?page=&pageSize=` query-param validation with a default of 25 and a hard max of 100, `toPage`
+building the `Page<T>` envelope already declared - but unused - in `types/common.ts`) and applied
+it end-to-end (service, route, client service, and UI) to exactly one endpoint: `GET /api/payments`,
+the platform-wide "every payment across every company" admin view. Chosen deliberately as the
+single most unbounded-by-construction list in the app - it has no tenant scope at all to bound it
+naturally, unlike a company's own orders/invoices/products.
+
+Per the brief's own explicit instruction not to blindly paginate every route in one pass, the
+other 44 unbounded `findMany` calls found during the original audit (orders, invoices, products,
+notifications, RFQs, quotes, negotiations, disputes, purchase requests/orders, team members, ...)
+are left as-is, cataloged here as real follow-up work using the same shared utility, not fixed in
+this pass. None of them were flagged as an active problem at current data volume; this establishes
+the pattern and closes the one genuinely unbounded case.
+
+Live-verified against a real standalone production server, including through an actual rendered
+browser session (not just curl): `?pageSize=1000000` is clamped to 100, different pages return
+non-overlapping real rows, `total` matches the real row count, and the admin Payments page
+correctly renders the paginated envelope with a Previous/Next pager that only appears once there's
+more than one page.
+
+**Methodology note surfaced by this verification pass**: earlier increments' "live verification"
+this session used `curl` against JSON API endpoints only, which never exercises static asset
+serving - confirmed here that the standalone server needs `.next/static` and `public/` copied into
+`.next/standalone/` to serve a working frontend at all (the *real* `Dockerfile` already does this
+correctly; it was only my own ad hoc manual test-server invocations that skipped it). Worth
+remembering for any future manual standalone-server check that needs to load an actual page, not
+just hit an API route directly.
+
 ## Priority order for implementation (per the brief's own Section 56)
 
 1. **Security** — of the gaps found, the concrete, low-risk, high-value items are: security headers (this turn), extending rate limiting beyond login, and a session-rotation-on-role-change follow-up.
