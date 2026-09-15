@@ -33,6 +33,7 @@ const TEST_SUPPLIER_ID = `test-supplier-procurement-${Date.now()}`;
 const TEST_CATEGORY_ID = `test-category-procurement-${Date.now()}`;
 const TEST_PRODUCT_ID = `test-product-procurement-${Date.now()}`;
 const TEST_USER_ID = 'user-john-doe'; // seeded buyer at company-acme-gh, reused here as the RFQ creator
+const TEST_SUPPLIER_USER_ID = 'user-adwoa-mensah'; // seeded SUPPLIER_ADMIN at supplier-company-abc, reused as a real negotiation reply sender
 
 // Notifications (Phase 14, Stage 9) land on this real seeded user's row, shared across several
 // test files - track exactly which entity ids this file's own notifications reference so
@@ -239,7 +240,7 @@ describe('submitQuote', () => {
 });
 
 describe('negotiation and acceptance', () => {
-  it('records a buyer message plus a canned supplier reply, then accepts the quote', async () => {
+  it('records real messages from both sides, notifies whichever side did not just send one, then accepts the quote', async () => {
     const rfq = await createRfq({
       companyId: TEST_COMPANY_ID,
       createdByUserId: TEST_USER_ID,
@@ -250,6 +251,7 @@ describe('negotiation and acceptance', () => {
     });
     expect(rfq.ok).toBe(true);
     if (!rfq.ok) return;
+    notifiedEntityIds.push(rfq.data.id);
 
     const quote = await submitQuote({
       rfqId: rfq.data.id,
@@ -261,13 +263,27 @@ describe('negotiation and acceptance', () => {
     expect(quote.ok).toBe(true);
     if (!quote.ok) return;
 
-    const sent = await sendNegotiationMessage(rfq.data.id, quote.data.id, 'Can you do 90 per unit?', TEST_USER_ID, 90, 10);
-    expect(sent.ok).toBe(true);
-    if (sent.ok) {
-      expect(sent.data).toHaveLength(2);
-      expect(sent.data[0].senderRole).toBe('BUYER');
-      expect(sent.data[1].senderRole).toBe('SUPPLIER');
+    const buyerMessage = await sendNegotiationMessage(rfq.data.id, quote.data.id, 'Can you do 90 per unit?', TEST_USER_ID, 'BUYER', 90, 10);
+    expect(buyerMessage.ok).toBe(true);
+    if (buyerMessage.ok) {
+      expect(buyerMessage.data).toHaveLength(1);
+      expect(buyerMessage.data[0].senderRole).toBe('BUYER');
     }
+
+    // A real reply from a real supplier user, not a canned acknowledgement.
+    const supplierMessage = await sendNegotiationMessage(rfq.data.id, quote.data.id, 'We can do 92.', TEST_SUPPLIER_USER_ID, 'SUPPLIER');
+    expect(supplierMessage.ok).toBe(true);
+    if (supplierMessage.ok) {
+      expect(supplierMessage.data).toHaveLength(2);
+      expect(supplierMessage.data[1].senderRole).toBe('SUPPLIER');
+      expect(supplierMessage.data[1].senderName).toBe('Adwoa Mensah');
+    }
+
+    // The supplier's reply notified the RFQ's creator - never the sender notifying themselves.
+    const notification = await db.notification.findFirst({
+      where: { userId: TEST_USER_ID, type: 'NEGOTIATION_MESSAGE', entityId: rfq.data.id },
+    });
+    expect(notification).not.toBeNull();
 
     const thread = await listNegotiationMessages(rfq.data.id, quote.data.id);
     expect(thread.ok).toBe(true);

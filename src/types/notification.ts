@@ -4,6 +4,7 @@ export type NotificationType =
   | 'RFQ_NEW'
   | 'QUOTE_RECEIVED'
   | 'QUOTE_ACCEPTED'
+  | 'NEGOTIATION_MESSAGE'
   | 'APPROVAL_REQUESTED'
   | 'APPROVAL_DECIDED'
   | 'PAYMENT_RECEIVED'

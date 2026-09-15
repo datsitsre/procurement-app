@@ -18,8 +18,11 @@ export interface NegotiationThreadProps {
 /**
  * Structured negotiation history (section 20) - append-only: there is no edit/delete action
  * anywhere in this component or the service behind it, "Accepted" and other past messages
- * can never be altered after the fact. Supplier replies are a mock stand-in (see
- * procurement.service.ts's sendNegotiationMessage) since there's no supplier portal yet.
+ * can never be altered after the fact. Mounted on both sides of the conversation - the buyer's
+ * RFQ detail page (rfqs/[id]/page.tsx) and the supplier's own submitted-quote view
+ * (SupplierRfqResponse.tsx) - so a reply from either one lands in the same thread; which side is
+ * actually allowed to post is enforced server-side (see the negotiations route), never by which
+ * page happens to render this component.
  */
 export function NegotiationThread({ rfqId, quoteId }: NegotiationThreadProps) {
   const membership = useActiveMembership();

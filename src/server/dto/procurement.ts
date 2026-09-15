@@ -96,10 +96,9 @@ export function toNegotiationMessageDto(m: NegotiationWithRelations): Negotiatio
     rfqId: m.rfqId,
     quoteId: m.quoteId,
     senderRole: m.senderRole,
-    // A BUYER message's sender is a real user; a SUPPLIER message may be the canned
-    // "acknowledgement" reply this build stands in with (see server/services/procurement.
-    // service.ts's sendNegotiationMessage) which has no real senderUserId - falls back to the
-    // supplier's own name, exactly like the mock this replaces.
+    // Both sides now always have a real senderUserId (see sendNegotiationMessage) - the
+    // supplier's company name is kept only as a defensive fallback for a message that somehow
+    // has none, never the expected path.
     senderName: m.sender?.name ?? m.quote.supplier.name,
     message: m.message,
     proposedPrice: m.proposedPrice ? Number(m.proposedPrice) : undefined,

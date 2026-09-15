@@ -161,37 +161,58 @@ export async function listNegotiationMessages(rfqId: UUID, quoteId: UUID): Promi
   return ok(messages.map(toNegotiationMessageDto));
 }
 
-/** Negotiation is one-directional in this build - see the mock's own comment, ported here
- *  unchanged: there's no real supplier-side reply UI yet, so a canned acknowledgement stands in
- *  for a live counterpart, clearly attributed to the supplier's company name rather than a real
- *  person. */
+/** Real two-directional negotiation - both the buyer and the invited supplier can post into the
+ *  same thread. `senderRole` is passed in by the route, not inferred here, because the route is
+ *  the layer that already resolved which side the authenticated caller actually is (RFQ owner vs
+ *  the quote's own supplier) - this function just records the message that side sent. Previously
+ *  a supplier "reply" was a canned acknowledgement auto-appended after every buyer message (a
+ *  stand-in ported from the client mock, from before there was a real supplier portal to reply
+ *  from) - that's gone now that a real supplier user can open this thread and type one.
+ *
+ *  Notifies whichever side didn't just send the message - a BUYER message notifies the quote's
+ *  own supplier company (the same SUPPLIER_ADMIN/SUPPLIER_STAFF audience other supplier-facing
+ *  events already use), a SUPPLIER message notifies the RFQ's creator, mirroring submitQuote's
+ *  own QUOTE_RECEIVED notification above. Fire-and-forget, same as every other notification in
+ *  this codebase - a notification failure must never fail the message send itself. */
 export async function sendNegotiationMessage(
   rfqId: UUID,
   quoteId: UUID,
   message: string,
   senderUserId: UUID,
+  senderRole: 'BUYER' | 'SUPPLIER',
   proposedPrice?: number,
   proposedQuantity?: number,
 ): Promise<ServiceResult<NegotiationMessage[]>> {
   if (!message.trim()) return fail('EMPTY', 'Write a message before sending.');
 
-  const quote = await db.quote.findUnique({ where: { id: quoteId } });
+  const quote = await db.quote.findUnique({ where: { id: quoteId }, include: QUOTE_INCLUDE });
   if (!quote || quote.rfqId !== rfqId) return fail('NOT_FOUND', 'That quote could not be found.');
 
+  const rfq = await db.rFQ.findUnique({ where: { id: rfqId } });
+  if (!rfq) return fail('NOT_FOUND', 'That RFQ could not be found.');
+
   await db.negotiationMessage.create({
-    data: { rfqId, quoteId, senderRole: 'BUYER', senderUserId, message, proposedPrice, proposedQuantity },
+    data: { rfqId, quoteId, senderRole, senderUserId, message, proposedPrice, proposedQuantity },
   });
-  await db.negotiationMessage.create({
-    data: {
-      rfqId,
-      quoteId,
-      senderRole: 'SUPPLIER',
-      message: proposedPrice
-        ? `Thanks for the note - we'll review ₵${proposedPrice} and get back to you shortly.`
-        : "Thanks for the note - we'll review this and get back to you shortly.",
-      sentAt: new Date(Date.now() + 1000),
-    },
-  });
+
+  const { notifyUser, notifyCompanyRoles } = await import('./notification.service');
+  if (senderRole === 'BUYER') {
+    await notifyCompanyRoles(quote.supplier.companyId, ['SUPPLIER_ADMIN', 'SUPPLIER_STAFF'], {
+      type: 'NEGOTIATION_MESSAGE',
+      title: `New message on ${rfq.reference}`,
+      body: 'The buyer sent a message about your quote.',
+      entityId: rfqId,
+      entityHref: `/rfqs/${rfqId}`,
+    });
+  } else {
+    await notifyUser(rfq.createdByUserId, {
+      type: 'NEGOTIATION_MESSAGE',
+      title: `New message on ${rfq.reference}`,
+      body: `${quote.supplier.name} sent a message about their quote.`,
+      entityId: rfqId,
+      entityHref: `/rfqs/${rfqId}`,
+    });
+  }
 
   return listNegotiationMessages(rfqId, quoteId);
 }

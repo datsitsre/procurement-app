@@ -6,6 +6,7 @@ import { createSession } from '@/server/auth/session';
 import { GET as getRfqRoute } from '@/app/api/rfqs/[rfqId]/route';
 import { GET as listQuotesRoute, POST as submitQuoteRoute } from '@/app/api/rfqs/[rfqId]/quotes/route';
 import { POST as acceptQuoteRoute } from '@/app/api/rfqs/[rfqId]/quotes/[quoteId]/accept/route';
+import { POST as sendNegotiationMessageRoute } from '@/app/api/rfqs/[rfqId]/quotes/[quoteId]/negotiations/route';
 import { GET as getPurchaseRequestRoute } from '@/app/api/purchase-requests/[id]/route';
 import { POST as decideStepRoute } from '@/app/api/purchase-requests/[id]/decide/route';
 
@@ -238,6 +239,105 @@ describe('POST /api/rfqs/[rfqId]/quotes (submit + accept)', () => {
     const accepted = await accept.json();
     expect(accepted.rfq.status).toBe('ACCEPTED');
     expect(accepted.rfq.acceptedQuoteId).toBe(quote.id);
+  });
+});
+
+describe('POST /api/rfqs/[rfqId]/quotes/[quoteId]/negotiations (both sides can post, only these two)', () => {
+  const NEGOTIATION_RFQ_ID = `test-rfq-negotiation-routes-${Date.now()}`;
+  let negotiationQuoteId: string;
+
+  beforeAll(async () => {
+    await db.rFQ.create({
+      data: {
+        id: NEGOTIATION_RFQ_ID,
+        reference: `RFQ-NEGOTIATION-ROUTES-${Date.now()}`,
+        companyId: BUYER_COMPANY_ID,
+        createdByUserId: BUYER_USER_ID,
+        requiredDeliveryDate: new Date(),
+        deliveryLocation: 'Accra',
+        status: 'SENT',
+        items: { create: [{ productId: PRODUCT_ID, productName: 'Routes Test Widget', quantity: 10 }] },
+        suppliers: { create: [{ supplierId: OWNER_SUPPLIER_ID, status: 'INVITED' }] },
+      },
+    });
+    const quote = await db.quote.create({
+      data: {
+        rfqId: NEGOTIATION_RFQ_ID,
+        supplierId: OWNER_SUPPLIER_ID,
+        totalPrice: 950,
+        deliveryDays: 3,
+        warrantyMonths: 12,
+        items: { create: [{ productId: PRODUCT_ID, quantity: 10, unitPrice: 95 }] },
+      },
+    });
+    negotiationQuoteId = quote.id;
+  });
+
+  afterAll(async () => {
+    await db.notification.deleteMany({ where: { entityId: NEGOTIATION_RFQ_ID } });
+    await db.negotiationMessage.deleteMany({ where: { rfqId: NEGOTIATION_RFQ_ID } });
+    await db.quoteItem.deleteMany({ where: { quote: { rfqId: NEGOTIATION_RFQ_ID } } });
+    await db.quote.deleteMany({ where: { rfqId: NEGOTIATION_RFQ_ID } });
+    await db.rFQSupplier.deleteMany({ where: { rfqId: NEGOTIATION_RFQ_ID } });
+    await db.rFQItem.deleteMany({ where: { rfqId: NEGOTIATION_RFQ_ID } });
+    await db.rFQ.delete({ where: { id: NEGOTIATION_RFQ_ID } }).catch(() => undefined);
+  });
+
+  it('rejects a supplier who was never invited to this RFQ', async () => {
+    const response = await sendNegotiationMessageRoute(
+      requestFor(`/api/rfqs/${NEGOTIATION_RFQ_ID}/quotes/${negotiationQuoteId}/negotiations`, uninvitedSupplierSessionToken, {
+        method: 'POST',
+        body: JSON.stringify({ message: 'Can we get a better price?' }),
+      }),
+      { params: Promise.resolve({ rfqId: NEGOTIATION_RFQ_ID, quoteId: negotiationQuoteId }) },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it("rejects an unrelated buyer company reading/posting into another company's RFQ", async () => {
+    const response = await sendNegotiationMessageRoute(
+      requestFor(`/api/rfqs/${NEGOTIATION_RFQ_ID}/quotes/${negotiationQuoteId}/negotiations`, otherBuyerSessionToken, {
+        method: 'POST',
+        body: JSON.stringify({ message: 'Trying to negotiate someone else\'s RFQ' }),
+      }),
+      { params: Promise.resolve({ rfqId: NEGOTIATION_RFQ_ID, quoteId: negotiationQuoteId }) },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('allows the owning buyer to post, attributed as BUYER, and notifies the quote-owning supplier', async () => {
+    const response = await sendNegotiationMessageRoute(
+      requestFor(`/api/rfqs/${NEGOTIATION_RFQ_ID}/quotes/${negotiationQuoteId}/negotiations`, buyerSessionToken, {
+        method: 'POST',
+        body: JSON.stringify({ message: 'Can you do 90 per unit?', proposedPrice: 90 }),
+      }),
+      { params: Promise.resolve({ rfqId: NEGOTIATION_RFQ_ID, quoteId: negotiationQuoteId }) },
+    );
+    expect(response.status).toBe(200);
+    const messages = await response.json();
+    expect(messages).toHaveLength(1);
+    expect(messages[0].senderRole).toBe('BUYER');
+
+    const notification = await db.notification.findFirst({ where: { userId: OWNER_SUPPLIER_USER_ID, type: 'NEGOTIATION_MESSAGE', entityId: NEGOTIATION_RFQ_ID } });
+    expect(notification).not.toBeNull();
+  });
+
+  it('allows the quote-owning supplier to reply, attributed as SUPPLIER (a real user, not a canned message), and notifies the RFQ creator', async () => {
+    const response = await sendNegotiationMessageRoute(
+      requestFor(`/api/rfqs/${NEGOTIATION_RFQ_ID}/quotes/${negotiationQuoteId}/negotiations`, ownerSupplierSessionToken, {
+        method: 'POST',
+        body: JSON.stringify({ message: 'We can do 92.' }),
+      }),
+      { params: Promise.resolve({ rfqId: NEGOTIATION_RFQ_ID, quoteId: negotiationQuoteId }) },
+    );
+    expect(response.status).toBe(200);
+    const messages = await response.json();
+    expect(messages).toHaveLength(2);
+    expect(messages[1].senderRole).toBe('SUPPLIER');
+    expect(messages[1].senderName).toBe('Adwoa Mensah');
+
+    const notification = await db.notification.findFirst({ where: { userId: BUYER_USER_ID, type: 'NEGOTIATION_MESSAGE', entityId: NEGOTIATION_RFQ_ID } });
+    expect(notification).not.toBeNull();
   });
 });
 

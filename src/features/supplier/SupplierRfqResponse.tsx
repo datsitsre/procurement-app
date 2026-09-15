@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, MessageSquare } from 'lucide-react';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { procurementService } from '@/services/procurement.service';
+import { NegotiationThread } from '@/features/rfq/NegotiationThread';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -24,13 +25,18 @@ export function SupplierRfqResponse({ rfq, supplier, callerRole }: { rfq: RFQ; s
 
   const myQuote = quotes.find((q) => q.supplierId === supplier.id);
   if (myQuote) {
-    return <SubmittedQuote quote={myQuote} />;
+    return <SubmittedQuote rfqId={rfq.id} quote={myQuote} />;
   }
 
   return <QuoteForm rfq={rfq} supplier={supplier} callerRole={callerRole} onSubmitted={reload} onBack={() => router.push('/rfqs')} />;
 }
 
-function SubmittedQuote({ quote }: { quote: Quote }) {
+/** Once submitted, this is the supplier's own side of the negotiation on their quote - the
+ *  buyer's equivalent view (rfqs/[id]/page.tsx) opens the same thread behind a "Negotiate"
+ *  button; here it's always visible, since a supplier only ever has the one quote to negotiate. */
+function SubmittedQuote({ rfqId, quote }: { rfqId: string; quote: Quote }) {
+  const [threadOpen, setThreadOpen] = useState(false);
+
   return (
     <div className="rounded-lg border border-border bg-surface p-5">
       <div className="mb-4 flex items-center gap-2 text-success">
@@ -47,6 +53,12 @@ function SubmittedQuote({ quote }: { quote: Quote }) {
         <dd>{quote.warrantyMonths} months</dd>
       </dl>
       {quote.notes && <p className="mt-3 text-caption">{quote.notes}</p>}
+
+      <Button size="sm" variant="outline" className="mt-4" onClick={() => setThreadOpen((open) => !open)}>
+        <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+        Negotiation messages
+      </Button>
+      {threadOpen && <NegotiationThread rfqId={rfqId} quoteId={quote.id} />}
     </div>
   );
 }
