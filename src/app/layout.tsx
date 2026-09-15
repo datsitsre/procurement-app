@@ -27,6 +27,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      // A browser extension (seen locally: "crxlauncher") can inject attributes like
+      // crxlauncher-bridged/crxlauncher onto <html> before React hydrates, which React then
+      // reports as a hydration mismatch even though nothing in this app's own render differs
+      // between server and client. suppressHydrationWarning on this one element is the
+      // documented fix for exactly this case - https://react.dev/link/hydration-mismatch.
+      suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background text-text-primary">
         <AuthProvider>{children}</AuthProvider>
