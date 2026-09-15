@@ -4,10 +4,27 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
-import { workspaceForRole, type Workspace } from '@/config/rbac';
+import { companiesOf, type Session } from '@/services/auth.service';
+import { RoleLabels, workspaceForRole, type Workspace } from '@/config/rbac';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { cn } from '@/utils/cn';
+
+/** One membership matching the selected workspace, paired with its company's display name -
+ *  what the picker below actually needs, resolved once the account and its memberships are
+ *  known rather than re-deriving it inline in JSX. */
+interface WorkspaceMatch {
+  companyId: string;
+  companyName: string;
+  role: string;
+}
+
+function matchingMemberships(session: Session, workspace: 'buyer' | 'supplier'): WorkspaceMatch[] {
+  const companies = companiesOf(session);
+  return session.memberships
+    .filter((m) => workspaceForRole(m.role) === (workspace as Workspace))
+    .map((m) => ({ companyId: m.companyId, companyName: companies.find((c) => c.id === m.companyId)?.name ?? 'Unknown company', role: RoleLabels[m.role] }));
+}
 
 const DEMO_ACCOUNTS: Record<'buyer' | 'supplier', { email: string; label: string }> = {
   buyer: { email: 'john.doe@acmetech.example', label: 'company user' },
@@ -33,6 +50,12 @@ export default function LoginPage() {
   // workspace kind that was selected. Shown with a "Continue" the visitor acts on, rather than
   // auto-navigating past a message they'd have no chance to actually read.
   const [noWorkspaceNotice, setNoWorkspaceNotice] = useState<string | null>(null);
+  // Set only when the account has more than one membership matching the selected workspace (e.g.
+  // an owner/manager across several buyer companies) - there's no way to infer which one was
+  // meant from email + password alone, so this makes the visitor pick rather than silently
+  // landing in whichever one the backend happened to return first.
+  const [companyChoices, setCompanyChoices] = useState<WorkspaceMatch[] | null>(null);
+  const [choosingCompany, setChoosingCompany] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // `login()` only reports success/failure, not the resulting session (useAuth's `session`
   // updates on its own render cycle, not synchronously after `await login(...)`) - so the
@@ -50,24 +73,35 @@ export default function LoginPage() {
     // callback function when external state changes", not synchronously while handling the
     // change itself.
     Promise.resolve().then(async () => {
-      const match = session.memberships.find((m) => workspaceForRole(m.role) === (workspace as Workspace));
-      if (!match) {
+      const matches = matchingMemberships(session, workspace);
+      if (matches.length === 0) {
         setNoWorkspaceNotice(`This account has no ${workspace} workspace - it's signed in with what it does have instead.`);
         return;
       }
-      if (match.companyId !== session.activeCompanyId) {
-        await switchCompany(match.companyId);
+      if (matches.length > 1) {
+        setCompanyChoices(matches);
+        return;
+      }
+      if (matches[0].companyId !== session.activeCompanyId) {
+        await switchCompany(matches[0].companyId);
       }
       router.push('/dashboard');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once per login attempt, keyed on session changing; `workspace` is read at trigger time via the ref guard, not meant to re-run if it changes afterward
   }, [session]);
 
+  async function chooseCompany(companyId: string) {
+    setChoosingCompany(companyId);
+    await switchCompany(companyId);
+    router.push('/dashboard');
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     setNoWorkspaceNotice(null);
+    setCompanyChoices(null);
     awaitingWorkspaceMatch.current = true;
     const err = await login(email, password);
     setSubmitting(false);
@@ -126,34 +160,59 @@ export default function LoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
-            <Input
-              label="Work email"
-              type="email"
-              autoComplete="email"
-              placeholder="you@company.example"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <Input
-              label="Password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <Button type="submit" loading={submitting} className="mt-1 w-full">
-              Sign in
-            </Button>
-          </form>
+          {companyChoices ? (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm text-text-secondary">
+                This account has more than one {workspace} company - which one do you want to sign into?
+              </p>
+              <ul className="flex flex-col gap-2">
+                {companyChoices.map((choice) => (
+                  <li key={choice.companyId}>
+                    <button
+                      type="button"
+                      onClick={() => chooseCompany(choice.companyId)}
+                      disabled={choosingCompany !== null}
+                      className="flex w-full items-center justify-between gap-2 rounded-md border border-border px-3 py-2.5 text-left text-sm hover:bg-neutral-bg disabled:opacity-60"
+                    >
+                      <span className="font-medium">{choice.companyName}</span>
+                      <span className="text-caption">{choosingCompany === choice.companyId ? 'Signing in…' : choice.role}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <>
+              <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
+                <Input
+                  label="Work email"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="you@company.example"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+                <Input
+                  label="Password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <Button type="submit" loading={submitting} className="mt-1 w-full">
+                  Sign in
+                </Button>
+              </form>
 
-          <p className="mt-4 text-caption">
-            Demo {DEMO_ACCOUNTS[workspace].label} account:{' '}
-            <code className="rounded bg-neutral-bg px-1 py-0.5">{DEMO_ACCOUNTS[workspace].email}</code> / password{' '}
-            <code className="rounded bg-neutral-bg px-1 py-0.5">password123</code>
-          </p>
+              <p className="mt-4 text-caption">
+                Demo {DEMO_ACCOUNTS[workspace].label} account:{' '}
+                <code className="rounded bg-neutral-bg px-1 py-0.5">{DEMO_ACCOUNTS[workspace].email}</code> / password{' '}
+                <code className="rounded bg-neutral-bg px-1 py-0.5">password123</code>
+              </p>
+            </>
+          )}
         </div>
 
         <p className="mt-6 text-center text-caption">
