@@ -71,6 +71,12 @@ export async function runPendingPaymentSweep(scope?: { companyId?: string }): Pr
     const result = await processPaymentWebhook({
       providerReference: payment.reference,
       event: status === 'SUCCESSFUL' ? 'payment.captured' : 'payment.failed',
+      // The gateway's status-poll response carries no event-level id of its own (unlike a real
+      // webhook) - synthesized deterministically from the same reference + resolved status, so
+      // an overlapping sweep run that polls the same payment twice before it leaves PENDING in
+      // this process's own view is itself caught by processPaymentWebhook's eventId dedup, not
+      // just by the status-equality check.
+      eventId: `reconcile:${payment.reference}:${status}`,
     });
     if (result.ok && result.data.changed) resolved += 1;
   }

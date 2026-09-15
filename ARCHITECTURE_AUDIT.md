@@ -53,6 +53,58 @@ Numbers below were checked against the repo, not recalled: 83 API route files, 2
 - `services/catalog.service.ts` (client) still carries a "mirror the server session into a localStorage-backed runtime cache" bridge for a handful of read paths — documented in-file, already patched twice this session for real bugs it caused. Not a security issue (server never trusts it), but real complexity.
 - `CompanyMembership.department` is a free-text string, not a foreign key to `Department` — the Team page now surfaces real department names as picker options, but nothing enforces they stay in sync if renamed/removed.
 
+## Addendum: session rotation (Implementation order step 3)
+
+Inspected before implementing anything, per the brief's own "inspect, don't blindly implement"
+rule.
+
+**Finding: there is no stale-permission window to close.** `resolveTenant` (`server/auth/context.ts`)
+re-derives the caller's role and tenant from `CompanyMembership` **live, from the database, on
+every single request** - nothing about a user's role or permissions is cached in the session row
+or the cookie. A role change made via `updateTeamMember` therefore already takes effect on that
+user's very next request; there is no window in which a downgraded user retains their old,
+higher-privilege permission set. This is architecturally equivalent to what session rotation
+exists to guarantee in a cached-claims system (e.g. a JWT with roles baked into it) - it's just
+achieved here by never caching the claim in the first place.
+
+Also checked the other events the brief calls out:
+- **Membership suspension/removal**: `MembershipStatus.SUSPENDED` is declared in the schema but
+  no code path in the app ever sets it - there is no "remove/deactivate a team member" feature to
+  begin with (`updateTeamMember` only edits role/department/name/photo). Nothing to rotate against
+  yet.
+- **Password change**: no route exists (`PasswordResetToken` is schema-only, confirmed earlier in
+  this document and in `PROJECT_SCOPE.md`). `revokeAllSessions(userId)` already exists in
+  `session.ts` as a ready primitive - wiring it in is one line whenever a real password-change
+  flow is built, not before.
+- **MFA enrollment/removal**: not implemented (expected - never built).
+
+**Decision: no code change here.** Forcing a session-revocation call on every role edit today
+would add user friction (an unexpected forced logout) without closing any actual vulnerability,
+since the live-resolution model already prevents a downgraded user from retaining old
+permissions. Per the brief's own final principle ("every new component must solve a real
+problem"), this is left as-is; `revokeAllSessions` is documented here as the primitive to call
+from a future password-change or membership-removal route once either exists.
+
+## Addendum: webhook replay protection (Implementation order step 4)
+
+Added an event-level idempotency key (`PaymentTransaction.providerEventId`, required on every
+inbound webhook payload as `eventId`) checked *before* the existing status-equality short-circuit,
+so a captured event replayed after the payment's status has since moved on for an unrelated
+reason (e.g. a refund) is still recognized as already-processed instead of being reprocessed.
+Previously the only defense was "does the current status already equal the event's target
+status," which stops the ordinary case (a gateway retrying until it gets a 2xx) but not a
+captured-and-replayed event arriving after the state has genuinely changed since.
+
+**Pre-existing constraint found while adding this, out of scope to change here:**
+`PaymentTransaction` already had `@@unique([provider, providerReference])`, which means at most
+one `PaymentTransaction` row can ever exist for a given `(provider, providerReference)` pair,
+full stop - not per event, per reference. In practice this has never mattered because this app's
+only two webhook events (`payment.captured` / `payment.failed`) are mutually exclusive terminal
+outcomes for a single payment attempt, so no real code path ever sends a second, distinct event
+for the same reference. Documented here rather than changed, since redesigning that constraint
+would be scope creep beyond "add replay protection" and there is no real scenario in this
+codebase that hits it.
+
 ## Priority order for implementation (per the brief's own Section 56)
 
 1. **Security** — of the gaps found, the concrete, low-risk, high-value items are: security headers (this turn), extending rate limiting beyond login, and a session-rotation-on-role-change follow-up.

@@ -35,15 +35,28 @@ export interface PaymentWebhookPayload {
    *  own `charge()` for which). */
   providerReference: string;
   event: 'payment.captured' | 'payment.failed';
+  /** The provider's own event-level identifier - see PaymentTransaction.providerEventId. */
+  eventId: string;
 }
 
-/** Idempotent - a replayed webhook for a payment already in the target status is a no-op
- *  (returns ok with `changed: false`), never a duplicate side effect. Real gateways retry
- *  webhook delivery until they get a 2xx, so this has to be safe to call more than once for the
- *  same event. */
+/** Idempotent two ways over: a replayed webhook for a payment already in the target status is a
+ *  no-op (returns ok with `changed: false`, the ordinary "gateway retries until it gets a 2xx"
+ *  case), and separately, an event whose `eventId` has already been recorded is also a no-op
+ *  *regardless of the payment's current status* - closing the gap where a captured webhook,
+ *  replayed after the payment's status had since moved on for an unrelated reason (e.g. a
+ *  refund), could reprocess and flip state back (section 9's "replay outside the idempotency
+ *  window" concern). `provider` (the same value already used for the `providerReference` unique
+ *  constraint below - `payment.method`, resolved from the payment itself, never from anything
+ *  the payload asserts) is looked up before the eventId check for exactly that reason: both
+ *  checks need to agree on what "provider" means for the same PaymentTransaction row. */
 export async function processPaymentWebhook(payload: PaymentWebhookPayload): Promise<ServiceResult<{ changed: boolean }>> {
   const payment = await db.payment.findUnique({ where: { reference: payload.providerReference } });
   if (!payment) return fail('NOT_FOUND', 'No payment matches this reference.');
+
+  const alreadyProcessed = await db.paymentTransaction.findUnique({
+    where: { provider_providerEventId: { provider: payment.method, providerEventId: payload.eventId } },
+  });
+  if (alreadyProcessed) return ok({ changed: false });
 
   const newStatus = payload.event === 'payment.captured' ? 'PAID' : 'FAILED';
   if (payment.status === newStatus) return ok({ changed: false });
@@ -55,6 +68,7 @@ export async function processPaymentWebhook(payload: PaymentWebhookPayload): Pro
         paymentId: payment.id,
         provider: payment.method,
         providerReference: payload.providerReference,
+        providerEventId: payload.eventId,
         event: 'WEBHOOK_RECEIVED',
         amount: payment.amount,
         rawPayload: payload as never,

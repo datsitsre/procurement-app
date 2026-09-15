@@ -1117,14 +1117,24 @@ model PaymentTransaction {
   paymentId         String
   provider          String
   providerReference String?
-  event             String
-  amount            Decimal  @db.Decimal(14, 2)
-  rawPayload        Json?
-  createdAt         DateTime @default(now())
+  /// The provider's own event-level identifier (distinct from `providerReference`, which
+  /// identifies the *payment*, not the *event* - the same payment can in principle receive more
+  /// than one webhook over its lifetime). Only inbound webhooks set this; a charge()-initiated
+  /// row leaves it null - Postgres allows any number of nulls in a unique index, so those never
+  /// collide with each other or with a real eventId. Existing to close a replay gap: without an
+  /// event-level identity, a captured webhook replayed after the payment's status had already
+  /// moved on for an unrelated reason could reprocess and flip state back, since the payment's
+  /// current status is no longer a reliable "have I seen this exact event before" check.
+  providerEventId String?
+  event           String
+  amount          Decimal  @db.Decimal(14, 2)
+  rawPayload      Json?
+  createdAt       DateTime @default(now())
 
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerReference])
+  @@unique([provider, providerEventId])
   @@index([paymentId])
 }
 

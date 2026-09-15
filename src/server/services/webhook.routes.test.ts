@@ -43,26 +43,32 @@ afterAll(async () => {
 
 describe('POST /api/webhooks/payments/[provider]', () => {
   it('rejects a request with no signature header', async () => {
-    const body = JSON.stringify({ providerReference: paymentReference, event: 'payment.captured' });
+    const body = JSON.stringify({ providerReference: paymentReference, event: 'payment.captured', eventId: crypto.randomUUID() });
     const response = await webhookRoute(requestFor(body, null), { params: Promise.resolve({ provider: 'mtn_momo' }) });
     expect(response.status).toBe(401);
   });
 
   it('rejects a request with a wrong signature', async () => {
-    const body = JSON.stringify({ providerReference: paymentReference, event: 'payment.captured' });
+    const body = JSON.stringify({ providerReference: paymentReference, event: 'payment.captured', eventId: crypto.randomUUID() });
     const wrongSignature = crypto.createHmac('sha256', 'wrong-secret').update(body).digest('hex');
     const response = await webhookRoute(requestFor(body, wrongSignature), { params: Promise.resolve({ provider: 'mtn_momo' }) });
     expect(response.status).toBe(401);
   });
 
   it('rejects a correctly signed but malformed payload', async () => {
-    const body = JSON.stringify({ providerReference: paymentReference, event: 'not-a-real-event' });
+    const body = JSON.stringify({ providerReference: paymentReference, event: 'not-a-real-event', eventId: crypto.randomUUID() });
+    const response = await webhookRoute(requestFor(body, sign(body)), { params: Promise.resolve({ provider: 'mtn_momo' }) });
+    expect(response.status).toBe(422);
+  });
+
+  it('rejects a correctly signed payload missing the required eventId', async () => {
+    const body = JSON.stringify({ providerReference: paymentReference, event: 'payment.captured' });
     const response = await webhookRoute(requestFor(body, sign(body)), { params: Promise.resolve({ provider: 'mtn_momo' }) });
     expect(response.status).toBe(422);
   });
 
   it('accepts a correctly signed, valid payload and settles the payment', async () => {
-    const body = JSON.stringify({ providerReference: paymentReference, event: 'payment.captured' });
+    const body = JSON.stringify({ providerReference: paymentReference, event: 'payment.captured', eventId: crypto.randomUUID() });
     const response = await webhookRoute(requestFor(body, sign(body)), { params: Promise.resolve({ provider: 'mtn_momo' }) });
     expect(response.status).toBe(200);
     const json = await response.json();
@@ -73,7 +79,7 @@ describe('POST /api/webhooks/payments/[provider]', () => {
   });
 
   it('still returns 200 for a reference it does not recognize - never a distinct error a retrying gateway would fail loudly on', async () => {
-    const body = JSON.stringify({ providerReference: 'unknown-reference', event: 'payment.captured' });
+    const body = JSON.stringify({ providerReference: 'unknown-reference', event: 'payment.captured', eventId: crypto.randomUUID() });
     const response = await webhookRoute(requestFor(body, sign(body)), { params: Promise.resolve({ provider: 'mtn_momo' }) });
     expect(response.status).toBe(200);
   });

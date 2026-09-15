@@ -147,13 +147,13 @@ describe('verifyWebhookSignature', () => {
 
 describe('processPaymentWebhook', () => {
   it('returns NOT_FOUND for a reference this app never created', async () => {
-    const result = await processPaymentWebhook({ providerReference: 'does-not-exist', event: 'payment.captured' });
+    const result = await processPaymentWebhook({ providerReference: 'does-not-exist', event: 'payment.captured', eventId: crypto.randomUUID() });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('NOT_FOUND');
   });
 
   it('marks the payment PAID, settles the linked invoice, and records a WEBHOOK_RECEIVED transaction', async () => {
-    const result = await processPaymentWebhook({ providerReference: pendingPaymentReference, event: 'payment.captured' });
+    const result = await processPaymentWebhook({ providerReference: pendingPaymentReference, event: 'payment.captured', eventId: crypto.randomUUID() });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.changed).toBe(true);
 
@@ -169,12 +169,13 @@ describe('processPaymentWebhook', () => {
     expect(Number(invoice?.amountPaid)).toBe(1125);
   });
 
-  it('is idempotent - replaying the same event is a no-op the second time', async () => {
-    const first = await processPaymentWebhook({ providerReference: pendingPaymentReference, event: 'payment.captured' });
+  it('is idempotent - replaying the same event (same eventId) is a no-op the second time', async () => {
+    const eventId = crypto.randomUUID();
+    const first = await processPaymentWebhook({ providerReference: pendingPaymentReference, event: 'payment.captured', eventId });
     expect(first.ok).toBe(true);
     if (first.ok) expect(first.data.changed).toBe(true);
 
-    const second = await processPaymentWebhook({ providerReference: pendingPaymentReference, event: 'payment.captured' });
+    const second = await processPaymentWebhook({ providerReference: pendingPaymentReference, event: 'payment.captured', eventId });
     expect(second.ok).toBe(true);
     if (second.ok) expect(second.data.changed).toBe(false);
 
@@ -183,8 +184,30 @@ describe('processPaymentWebhook', () => {
     expect(transactions).toHaveLength(1);
   });
 
+  it('rejects a replay of an already-processed eventId even after the payment status has since moved on (section 9 - replay outside the idempotency window)', async () => {
+    const eventId = crypto.randomUUID();
+    const first = await processPaymentWebhook({ providerReference: pendingPaymentReference, event: 'payment.captured', eventId });
+    expect(first.ok).toBe(true);
+    if (first.ok) expect(first.data.changed).toBe(true);
+
+    // Something unrelated moves the payment away from PAID (e.g. a refund flow, not modeled
+    // here - the point is only that the status is no longer PAID when the old event replays).
+    await db.payment.update({ where: { id: pendingPaymentId }, data: { status: 'REFUNDED' } });
+
+    // A captured attacker/operator replay of the *exact same event* must not flip it back to
+    // PAID just because the current status no longer happens to equal the event's target status.
+    const replay = await processPaymentWebhook({ providerReference: pendingPaymentReference, event: 'payment.captured', eventId });
+    expect(replay.ok).toBe(true);
+    if (replay.ok) expect(replay.data.changed).toBe(false);
+
+    const payment = await db.payment.findUnique({ where: { id: pendingPaymentId } });
+    expect(payment?.status).toBe('REFUNDED');
+
+    await db.payment.update({ where: { id: pendingPaymentId }, data: { status: 'PAID' } });
+  });
+
   it('marks the payment FAILED without touching the invoice', async () => {
-    const result = await processPaymentWebhook({ providerReference: pendingPaymentReference, event: 'payment.failed' });
+    const result = await processPaymentWebhook({ providerReference: pendingPaymentReference, event: 'payment.failed', eventId: crypto.randomUUID() });
     expect(result.ok).toBe(true);
 
     const payment = await db.payment.findUnique({ where: { id: pendingPaymentId } });
@@ -195,7 +218,7 @@ describe('processPaymentWebhook', () => {
   });
 
   it("also settles a checkout payment's linked Order.paymentStatus - not just an invoice payment's linked invoice - and adds a PAYMENT_CONFIRMED timeline event", async () => {
-    const result = await processPaymentWebhook({ providerReference: orderPaymentReference, event: 'payment.captured' });
+    const result = await processPaymentWebhook({ providerReference: orderPaymentReference, event: 'payment.captured', eventId: crypto.randomUUID() });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.changed).toBe(true);
 
