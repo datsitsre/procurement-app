@@ -169,6 +169,36 @@ deliberately out of scope for this pass per the brief's own "do not rebuild" / "
 security first" principles; documented here and in `PROJECT_SCOPE.md` so it's visible rather than
 silently inherited.
 
+## Addendum: CompanyMembership.department relationship (Implementation order step 10)
+
+Inspected the actual data before deciding, per the brief's own "determine whether it is safe to
+migrate" instruction - not assumed either way.
+
+**Finding: migrating to a hard foreign key now would be lossy.** Queried every
+`CompanyMembership` row with a non-null `department` value (9 rows across the real seeded/test
+data) and checked each against the company's own real `Department` table for a matching name.
+**All 9 have no matching `Department` row at all** - a 100% mismatch rate. The Team page's
+`DepartmentSelect` (added earlier this session) only started sourcing options from the real
+`Department` table recently; every existing `department` string predates that and was typed
+freely, with no `Department` entities ever created to back most of them.
+
+Converting `department: String?` to a real `departmentId` foreign key today would force one of
+two outcomes for all 9 existing values: silently drop them (set `departmentId` null, losing the
+text with no way to know what it said), or auto-create a new `Department` row from each orphaned
+string during the migration - which is itself a real, unreviewed data-creation decision (some of
+that text could be a stale/renamed/typo'd value nobody actually wants preserved as a permanent
+department going forward). Neither is safe to do unattended, exactly the risk the brief's own
+Section 20 describes.
+
+**Decision: documented as technical debt, not migrated.** The current design (a picker sourced
+from real departments for *new* edits, coexisting with legacy free text on old memberships) is a
+reasonable interim state - it doesn't corrupt data, and every membership's department still
+displays correctly as whatever text it holds. Revisit this once/if a real product decision is
+made about what should happen to each of the 9 mismatched values (migrate as new departments?
+clear them? ask each company to re-pick?) - that's a product question, not one this hardening pass
+should decide unilaterally by picking a migration strategy that happens to be technically
+convenient.
+
 ## Priority order for implementation (per the brief's own Section 56)
 
 1. **Security** — of the gaps found, the concrete, low-risk, high-value items are: security headers (this turn), extending rate limiting beyond login, and a session-rotation-on-role-change follow-up.
