@@ -28,14 +28,43 @@ export interface ChargeInput {
   idempotencyKey?: string;
 }
 
-export async function listPayments(companyId: UUID): Promise<ServiceResult<Payment[]>> {
-  const payments = await db.payment.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' } });
-  return ok(payments.map(toPaymentDto));
+/** Paginated (Phase 19, section 1) - a buyer's payment history grows with every invoice paid and
+ *  has no natural upper bound over a multi-year account, the same shape as `listOrders`. Tenant
+ *  filtering happens inside the same query as pagination, never after. */
+export async function listPayments(companyId: UUID, pagination: PaginationParams): Promise<ServiceResult<Page<Payment>>> {
+  const [payments, total] = await Promise.all([
+    db.payment.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' }, skip: pagination.skip, take: pagination.take }),
+    db.payment.count({ where: { companyId } }),
+  ]);
+  return ok(toPage(payments.map(toPaymentDto), total, pagination));
 }
 
-export async function listPaymentsForSupplier(supplierId: UUID): Promise<ServiceResult<Payment[]>> {
-  const payments = await db.payment.findMany({ where: { supplierId }, orderBy: { createdAt: 'desc' } });
-  return ok(payments.map(toPaymentDto));
+export async function listPaymentsForSupplier(supplierId: UUID, pagination: PaginationParams): Promise<ServiceResult<Page<Payment>>> {
+  const [payments, total] = await Promise.all([
+    db.payment.findMany({ where: { supplierId }, orderBy: { createdAt: 'desc' }, skip: pagination.skip, take: pagination.take }),
+    db.payment.count({ where: { supplierId } }),
+  ]);
+  return ok(toPage(payments.map(toPaymentDto), total, pagination));
+}
+
+/** Real database aggregation, never a client-side `.filter().reduce()` over the *entire* payment
+ *  history (Phase 19) - the finance/supplier dashboards' own "paid this month" stat needs a sum
+ *  across the current calendar month specifically, which could span more than one page of the
+ *  now-paginated list. */
+export async function getPaidThisMonthTotal(companyId: UUID): Promise<ServiceResult<number>> {
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const agg = await db.payment.aggregate({ where: { companyId, status: 'PAID', createdAt: { gte: monthStart } }, _sum: { amount: true } });
+  return ok(Number(agg._sum.amount ?? 0));
+}
+
+export async function getPaidThisMonthTotalForSupplier(supplierId: UUID): Promise<ServiceResult<number>> {
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const agg = await db.payment.aggregate({ where: { supplierId, status: 'PAID', createdAt: { gte: monthStart } }, _sum: { amount: true } });
+  return ok(Number(agg._sum.amount ?? 0));
 }
 
 /** Every payment across every company - the platform admin overview (section 46). Paginated

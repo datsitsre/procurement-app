@@ -8,6 +8,8 @@ import { POST as processingRoute } from '@/app/api/orders/[id]/processing/route'
 import { GET as getPurchaseOrderRoute } from '@/app/api/purchase-orders/[id]/route';
 import { POST as checkoutRoute } from '@/app/api/purchase-orders/[id]/checkout/route';
 import { POST as createDisputeRoute } from '@/app/api/disputes/route';
+import { GET as listCompanyOrdersRoute } from '@/app/api/companies/[companyId]/orders/route';
+import { GET as listSupplierOrdersRoute } from '@/app/api/suppliers/[supplierId]/orders/route';
 
 /**
  * Phase 14, Stage 7 - regression suite at the real API boundary for order/purchase-order tenant
@@ -221,6 +223,55 @@ describe('GET /api/purchase-orders/[id] and POST .../checkout', () => {
     await db.orderTimelineEvent.deleteMany({ where: { orderId: order.id } });
     await db.shipment.deleteMany({ where: { orderId: order.id } });
     await db.order.delete({ where: { id: order.id } }).catch(() => undefined);
+  });
+});
+
+describe('GET /api/companies/[companyId]/orders and /api/suppliers/[supplierId]/orders (pagination security, Phase 16)', () => {
+  it("refuses a different company from listing this company's orders, regardless of page/pageSize query params", async () => {
+    const response = await listCompanyOrdersRoute(
+      requestFor(`/api/companies/${BUYER_COMPANY_ID}/orders?page=1&pageSize=25`, otherBuyerSessionToken),
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("refuses an unrelated supplier from listing this supplier's orders", async () => {
+    const response = await listSupplierOrdersRoute(
+      requestFor(`/api/suppliers/${SUPPLIER_ID}/orders`, uninvolvedSupplierSessionToken),
+      { params: Promise.resolve({ supplierId: SUPPLIER_ID }) },
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it('returns a real Page envelope, scoped to the owning company, for the owning caller', async () => {
+    const response = await listCompanyOrdersRoute(requestFor(`/api/companies/${BUYER_COMPANY_ID}/orders`, buyerSessionToken), {
+      params: Promise.resolve({ companyId: BUYER_COMPANY_ID }),
+    });
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.items.every((o: { companyId: string }) => o.companyId === BUYER_COMPANY_ID)).toBe(true);
+    expect(page.page).toBe(1);
+    expect(page.pageSize).toBe(25);
+  });
+
+  it('clamps an excessive pageSize to the configured maximum instead of returning unbounded rows', async () => {
+    const response = await listCompanyOrdersRoute(
+      requestFor(`/api/companies/${BUYER_COMPANY_ID}/orders?pageSize=999999`, buyerSessionToken),
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.pageSize).toBeLessThanOrEqual(100);
+  });
+
+  it('falls back to page 1 for a manipulated/invalid page number rather than erroring or leaking another range', async () => {
+    const response = await listCompanyOrdersRoute(
+      requestFor(`/api/companies/${BUYER_COMPANY_ID}/orders?page=-5`, buyerSessionToken),
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.page).toBe(1);
   });
 });
 

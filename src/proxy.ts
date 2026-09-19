@@ -2,15 +2,25 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { logger } from '@/server/observability/logger';
 
 /**
- * Request correlation (section 11) - every API request gets a request ID, generated here (before
- * any route handler runs) rather than in each of the 83 route files individually, so coverage is
- * automatic and can't be forgotten by a new route. Also the one natural place to log "a request
- * arrived" for every API call without threading a logging call through every handler.
+ * Request correlation (section 11, Phase 14) + per-request CSP nonce (Phase 17, section 4).
  *
  * Renamed from `middleware.ts` to `proxy.ts` in Next.js 16 (see
  * node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md) - same
  * mechanism, Node.js runtime by default, which is what makes the plain `crypto.randomUUID()` call
  * below safe to use (no edge-runtime restriction here).
+ *
+ * Two independent concerns live in one file because Next.js supports only one proxy per app:
+ *  - API requests (`/api/*`): tagged with a request id, as before Phase 17. No CSP - a JSON
+ *    response has no scripts/styles for a CSP to govern.
+ *  - Page requests (everything else, matching Next's own documented CSP matcher pattern -
+ *    excluding _next/static, _next/image, favicon.ico, and prefetch requests): get a fresh
+ *    nonce every request, threaded through both the `Content-Security-Policy` response header
+ *    and an `x-nonce` request header the root layout reads via `headers()` (see
+ *    src/app/layout.tsx) - forcing every page into dynamic rendering, since a nonce baked into a
+ *    build-time-static HTML shell would be reused across every visitor and defeat its own
+ *    purpose. See PHASE17_AUDIT.md finding 2 for the full trade-off this implies (every
+ *    previously-static page becomes server-rendered per request) and PHASE17_FINAL_REPORT.md's
+ *    CSP section for the live-verified outcome.
  */
 
 const REQUEST_ID_HEADER = 'x-request-id';
@@ -28,7 +38,7 @@ function resolveRequestId(request: NextRequest): string {
   return crypto.randomUUID();
 }
 
-export function proxy(request: NextRequest) {
+function apiProxy(request: NextRequest): NextResponse {
   const requestId = resolveRequestId(request);
 
   logger.info('request received', {
@@ -49,9 +59,66 @@ export function proxy(request: NextRequest) {
   return response;
 }
 
+/** Enforced by default (Phase 17) - the nonce plumbing below has been live-verified end to end
+ *  across every workspace (buyer/supplier/platform-admin) and every major page with zero CSP
+ *  violations in both Report-Only and enforced mode; see PHASE17_FINAL_REPORT.md's CSP section
+ *  for the full evidence. Set `CSP_ENFORCED=false` as an emergency rollback to Report-Only
+ *  without a redeploy, if real production traffic surfaces an inline script this session's
+ *  manual verification didn't happen to exercise. Kept as a single flag rather than two
+ *  near-duplicate code paths so Report-Only and enforced modes can never drift apart in the set
+ *  of directives they apply - only whether violations are reported or actually blocked. */
+const CSP_ENFORCED = process.env.CSP_ENFORCED !== 'false';
+
+function pageProxy(request: NextRequest): NextResponse {
+  // Matches Next's own documented nonce pattern exactly (content-security-policy.md, "Adding a
+  // nonce with Proxy") - a fresh, unguessable value every request.
+  const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
+  const isDev = process.env.NODE_ENV === 'development';
+
+  const cspHeader = [
+    "default-src 'self'",
+    // 'strict-dynamic' lets a nonce'd script load further scripts (Next's own chunk-loading
+    // behavior) without needing to nonce every single one individually; 'self' remains as a
+    // fallback for browsers that don't support strict-dynamic. No 'unsafe-inline' - an inline
+    // script without the matching nonce is blocked (enforced mode) or reported (Report-Only).
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ''}`,
+    // Inline style PROPS (style={{...}}) render as a DOM `style=""` attribute, not a `<style>`
+    // element - a nonce only applies to `<style>`/`<script>` tags, never to the style attribute,
+    // so 'unsafe-inline' remains genuinely necessary here (not a leftover default) for as long
+    // as this app uses inline style props anywhere - confirmed unchanged since Phase 16's audit.
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    'report-uri /api/csp-report',
+  ].join('; ');
+
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-nonce', nonce);
+
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set(CSP_ENFORCED ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only', cspHeader);
+  return response;
+}
+
+export function proxy(request: NextRequest) {
+  return request.nextUrl.pathname.startsWith('/api') ? apiProxy(request) : pageProxy(request);
+}
+
 export const config = {
-  // Scoped to the API surface - the primary place this app's own consumers (its own frontend
-  // today, a future integration partner eventually) need request correlation. Page
-  // navigation/static assets don't need a log line per request the way API calls do.
-  matcher: '/api/:path*',
+  matcher: [
+    '/api/:path*',
+    // Next's own documented negative-match pattern for CSP-relevant page requests - excludes
+    // static assets/prefetches, which don't need a fresh per-request nonce.
+    {
+      source: '/((?!api|_next/static|_next/image|favicon.ico).*)',
+      missing: [
+        { type: 'header', key: 'next-router-prefetch' },
+        { type: 'header', key: 'purpose', value: 'prefetch' },
+      ],
+    },
+  ],
 };

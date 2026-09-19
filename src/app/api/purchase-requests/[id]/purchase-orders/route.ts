@@ -3,8 +3,9 @@ import { getAuthContext, unauthorized } from '@/server/auth/context';
 import { getPurchaseRequest } from '@/server/services/procurement.service';
 import { listForPurchaseRequest } from '@/server/services/purchase-order.service';
 import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
 
-export async function GET(request: NextRequest, ctx: RouteContext<'/api/purchase-requests/[id]/purchase-orders'>) {
+export const GET = withErrorHandling("/api/purchase-requests/[id]/purchase-orders", async (request: NextRequest, ctx: RouteContext<'/api/purchase-requests/[id]/purchase-orders'>) => {
   const auth = await getAuthContext(request);
   if (!auth) return unauthorized();
 
@@ -16,4 +17,4 @@ export async function GET(request: NextRequest, ctx: RouteContext<'/api/purchase
 
   const result = await listForPurchaseRequest(id);
   return NextResponse.json(result.ok ? result.data : []);
-}
+});

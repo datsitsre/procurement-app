@@ -1,13 +1,16 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { ClipboardList } from 'lucide-react';
-import { useAsyncData } from '@/hooks/useAsyncData';
 import { AdminGuard } from '@/features/admin/AdminGuard';
 import { auditLogService } from '@/services/audit-log.service';
+import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { formatDateTime } from '@/utils/format';
 import type { AuditEntry } from '@/types/common';
+
+const PAGE_SIZE = 25;
 
 export default function AdminAuditPage() {
   return (
@@ -18,7 +21,32 @@ export default function AdminAuditPage() {
 }
 
 function AuditLog() {
-  const { data: entries } = useAsyncData<AuditEntry[]>('admin-audit-list', () => auditLogService.listEntries());
+  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasNext, setHasNext] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  useEffect(() => {
+    auditLogService.listEntries(null, PAGE_SIZE).then((result) => {
+      if (result.ok) {
+        setEntries(result.data.items);
+        setNextCursor(result.data.nextCursor);
+        setHasNext(result.data.hasNext);
+      }
+    });
+  }, []);
+
+  async function loadMore() {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    const result = await auditLogService.listEntries(nextCursor, PAGE_SIZE);
+    if (result.ok) {
+      setEntries((prev) => [...(prev ?? []), ...result.data.items]);
+      setNextCursor(result.data.nextCursor);
+      setHasNext(result.data.hasNext);
+    }
+    setLoadingMore(false);
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -82,6 +110,14 @@ function AuditLog() {
               <p className="text-caption">{formatDateTime(e.timestamp)}</p>
             </div>
           ))}
+        </div>
+      )}
+
+      {hasNext && (
+        <div className="flex justify-center">
+          <Button variant="outline" size="sm" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? 'Loading...' : 'Load more'}
+          </Button>
         </div>
       )}
     </div>

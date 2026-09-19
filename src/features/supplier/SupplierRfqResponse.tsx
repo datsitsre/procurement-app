@@ -10,6 +10,7 @@ import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { SkeletonText } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 import { formatDate } from '@/utils/format';
 import type { Quote, RFQ } from '@/types/procurement';
 import type { SupplierProfile } from '@/types/catalog';
@@ -81,14 +82,13 @@ function QuoteForm({
   const [warrantyMonths, setWarrantyMonths] = useState('12');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   const total = rfq.items.reduce((sum, item) => sum + (Number(unitPrices[item.productId]) || 0) * item.quantity, 0);
   const allPriced = rfq.items.every((item) => Number(unitPrices[item.productId]) > 0);
 
   async function submit() {
     setSubmitting(true);
-    setError(null);
     const result = await procurementService.submitQuote(
       {
         rfqId: rfq.id,
@@ -102,9 +102,10 @@ function QuoteForm({
     );
     setSubmitting(false);
     if (!result.ok) {
-      setError(result.error.message);
+      toast.show(result.error.message, 'error');
       return;
     }
+    toast.show('Quote submitted.', 'success');
     onSubmitted();
   }
 
@@ -149,8 +150,6 @@ function QuoteForm({
         <Input label="Warranty (months)" type="number" value={warrantyMonths} onChange={(e) => setWarrantyMonths(e.target.value)} />
       </div>
       <Input label="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} />
-
-      {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
 
       <div className="flex justify-between">
         <Button variant="outline" onClick={onBack} disabled={submitting}>

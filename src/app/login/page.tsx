@@ -135,15 +135,28 @@ export default function LoginPage() {
           </p>
 
           <div role="radiogroup" aria-label="Sign in as" className="mb-5 grid grid-cols-3 gap-1 rounded-md bg-neutral-bg p-1">
-            {WORKSPACE_OPTIONS.map((option) => (
+            {WORKSPACE_OPTIONS.map((option, index) => (
               <button
                 key={option.value}
                 type="button"
                 role="radio"
                 aria-checked={workspace === option.value}
+                // Roving tabindex (Phase 19 accessibility audit) - only the checked option is a
+                // Tab stop, matching how a native radio group behaves; the other options are
+                // reached with arrow keys, not additional Tab presses.
+                tabIndex={workspace === option.value ? 0 : -1}
                 onClick={() => setWorkspace(option.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+                  e.preventDefault();
+                  const delta = e.key === 'ArrowRight' ? 1 : -1;
+                  const next = WORKSPACE_OPTIONS[(index + delta + WORKSPACE_OPTIONS.length) % WORKSPACE_OPTIONS.length];
+                  setWorkspace(next.value);
+                  (e.currentTarget.parentElement?.children[(index + delta + WORKSPACE_OPTIONS.length) % WORKSPACE_OPTIONS.length] as HTMLElement | undefined)?.focus();
+                }}
                 className={cn(
                   'rounded-md py-1.5 text-sm font-medium transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
                   workspace === option.value ? 'bg-surface text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary',
                 )}
               >

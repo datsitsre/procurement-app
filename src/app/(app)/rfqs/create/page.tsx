@@ -11,6 +11,7 @@ import { catalogService } from '@/services/catalog.service';
 import { demoCategories } from '@/lib/demo-data/catalog';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import type { Page } from '@/types/common';
 import type { Product, SupplierProfile } from '@/types/catalog';
 
 export default function CreateRfqPage() {
@@ -22,8 +23,14 @@ export default function CreateRfqPage() {
 
   // Only published products and verified suppliers can go into an RFQ (section 46) - never the
   // static, unfiltered seed arrays, since a supplier awaiting verification or a product awaiting
-  // moderation must not be reachable this way.
-  const { data: products } = useAsyncData<Product[]>('rfq-create-products', () => catalogService.listProducts());
+  // moderation must not be reachable this way. This picker needs the whole catalog to choose
+  // from (a single-select, not a paged table), so it requests the API's max pageSize (500 -
+  // GET /api/products's own documented cap, higher than every other endpoint's 100 specifically
+  // for this use case - Phase 17, section 11). A tenant with more than 500 published products
+  // would not see the rest here - a real, documented limitation, not a silent one; a searchable
+  // async product picker would be the real fix, out of this phase's scope.
+  const { data: productsPage } = useAsyncData<Page<Product>>('rfq-create-products', () => catalogService.listProducts(undefined, 1, 500));
+  const products = productsPage?.items ?? null;
   const { data: suppliers } = useAsyncData<SupplierProfile[]>('rfq-create-suppliers', () => catalogService.listSuppliers());
 
   const preselectedProductId = searchParams.get('product');

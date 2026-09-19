@@ -5,8 +5,9 @@ import { isSameOrigin } from '@/server/auth/csrf';
 import { dispatchOrder, getOrder } from '@/server/services/orders.service';
 import { DispatchOrderSchema } from '@/server/validation/orders';
 import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
 
-export async function POST(request: NextRequest, ctx: RouteContext<'/api/orders/[id]/dispatch'>) {
+export const POST = withErrorHandling("/api/orders/[id]/dispatch", async (request: NextRequest, ctx: RouteContext<'/api/orders/[id]/dispatch'>) => {
   if (!isSameOrigin(request)) return NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 });
 
   const auth = await getAuthContext(request);
@@ -26,4 +27,4 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/orders/
   const result = await dispatchOrder(id, parsed.data.driverName ?? '');
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
   return NextResponse.json(result.data);
-}
+});

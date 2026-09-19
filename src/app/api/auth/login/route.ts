@@ -2,11 +2,12 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { db } from '@/server/db';
 import { verifyPassword } from '@/server/auth/password';
 import { createSession, setSessionCookie } from '@/server/auth/session';
-import { checkRateLimit, recordAttempt, clearAttempts } from '@/server/auth/rate-limit';
+import { checkRateLimit, recordAttempt, clearAttempts, getRetryAfterSeconds } from '@/server/auth/rate-limit';
 import { isSameOrigin } from '@/server/auth/csrf';
 import { buildSessionPayload } from '@/server/dto/session';
 import { logger } from '@/server/observability/logger';
 import { LoginSchema } from '@/server/validation/auth';
+import { withErrorHandling } from '@/server/errors';
 
 /** A single, generic message for every kind of login failure - never distinguish "no such
  *  email" from "wrong password" in the response, so an attacker can't enumerate which emails
@@ -16,7 +17,7 @@ const INVALID_CREDENTIALS = { error: 'That email or password is incorrect.' };
 /** High-risk domain (section 12) - logs the outcome of every attempt with status/duration/
  *  errorCode, but deliberately never the email or password themselves (only `userId` once one is
  *  known, never the credential that resolved it). */
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandling("/api/auth/login", async (request: NextRequest) => {
   const startedAt = Date.now();
   const requestId = request.headers.get('x-request-id') ?? undefined;
   const route = '/api/auth/login';
@@ -41,7 +42,9 @@ export async function POST(request: NextRequest) {
   const rateLimitKey = `${ip}:${email.toLowerCase()}`;
   if (!checkRateLimit('auth', rateLimitKey)) {
     complete(429, 'RATE_LIMITED');
-    return NextResponse.json({ error: 'Too many attempts. Try again later.' }, { status: 429 });
+    const response = NextResponse.json({ error: 'Too many attempts. Try again later.' }, { status: 429 });
+    response.headers.set('Retry-After', String(getRetryAfterSeconds('auth', rateLimitKey)));
+    return response;
   }
 
   const user = await db.user.findUnique({ where: { email: email.toLowerCase() } });
@@ -71,4 +74,4 @@ export async function POST(request: NextRequest) {
   setSessionCookie(response, token, expiresAt);
   complete(200, undefined, user.id);
   return response;
-}
+});

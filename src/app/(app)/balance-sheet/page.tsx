@@ -4,12 +4,12 @@ import { useMemo } from 'react';
 import { Info } from 'lucide-react';
 import { useActiveCompany, useTenantContext, useWorkspace } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
-import { invoicesService } from '@/services/invoices.service';
+import { invoicesService, type InvoiceAgingSummary } from '@/services/invoices.service';
 import { catalogService } from '@/services/catalog.service';
 import { StatCard } from '@/components/ui/StatCard';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { formatMoney } from '@/utils/format';
-import type { Invoice } from '@/types/orders';
 import type { Product } from '@/types/catalog';
 import type { CurrencyCode } from '@/types/common';
 
@@ -51,38 +51,7 @@ export default function BalanceSheetPage() {
   );
 }
 
-interface AgingBuckets {
-  current: number;
-  overdue1to30: number;
-  overdue31to60: number;
-  overdue61to90: number;
-  overdue90plus: number;
-  total: number;
-}
-
-/** Ages the still-owed portion of every non-paid, non-void invoice by days past `dueDate` - the
- *  same bucketing any AR/AP aging report uses. */
-function ageInvoices(invoices: Invoice[]): AgingBuckets {
-  const now = Date.now();
-  const buckets: AgingBuckets = { current: 0, overdue1to30: 0, overdue31to60: 0, overdue61to90: 0, overdue90plus: 0, total: 0 };
-
-  for (const invoice of invoices) {
-    if (invoice.status === 'PAID' || invoice.status === 'VOID' || invoice.status === 'DRAFT') continue;
-    const owed = invoice.total - invoice.amountPaid;
-    if (owed <= 0) continue;
-
-    const daysOverdue = Math.floor((now - new Date(invoice.dueDate).getTime()) / (24 * 60 * 60 * 1000));
-    if (daysOverdue <= 0) buckets.current += owed;
-    else if (daysOverdue <= 30) buckets.overdue1to30 += owed;
-    else if (daysOverdue <= 60) buckets.overdue31to60 += owed;
-    else if (daysOverdue <= 90) buckets.overdue61to90 += owed;
-    else buckets.overdue90plus += owed;
-    buckets.total += owed;
-  }
-  return buckets;
-}
-
-function AgingTable({ buckets, currency }: { buckets: AgingBuckets; currency: CurrencyCode }) {
+function AgingTable({ buckets, currency }: { buckets: InvoiceAgingSummary; currency: CurrencyCode }) {
   const rows: { label: string; amount: number; tone?: 'danger' }[] = [
     { label: 'Current (not yet due)', amount: buckets.current },
     { label: '1-30 days overdue', amount: buckets.overdue1to30 },
@@ -125,9 +94,12 @@ function BuyerBalanceSheet({
   creditLimit?: number;
   creditAvailable?: number;
 }) {
-  const { data: invoices } = useAsyncData<Invoice[]>(companyId ?? null, () => invoicesService.listInvoices(companyId!));
-  const payable = useMemo(() => (invoices ? ageInvoices(invoices) : null), [invoices]);
+  const { data: payable, error, reload } = useAsyncData(companyId ?? null, () => invoicesService.getInvoiceAgingSummary(companyId!));
   const creditUsed = creditLimit !== undefined ? creditLimit - (creditAvailable ?? creditLimit) : null;
+
+  if (error) {
+    return <ErrorState title="Couldn't load the balance sheet" description={error} secondaryAction={{ label: 'Try again', onClick: reload }} />;
+  }
 
   if (!payable) {
     return (
@@ -152,14 +124,23 @@ function BuyerBalanceSheet({
 }
 
 function SupplierBalanceSheet({ supplierId, currency }: { supplierId?: string; currency: CurrencyCode }) {
-  const { data: invoices } = useAsyncData<Invoice[]>(supplierId ?? null, () => invoicesService.listInvoicesForSupplier(supplierId!));
-  const { data: products } = useAsyncData<Product[]>(supplierId ?? null, () => catalogService.listProductsForSupplier(supplierId!));
+  const { data: receivable, error: invoicesError, reload: reloadInvoices } = useAsyncData(supplierId ?? null, () => invoicesService.getInvoiceAgingSummaryForSupplier(supplierId!));
+  const { data: products, error: productsError, reload: reloadProducts } = useAsyncData<Product[]>(supplierId ?? null, () => catalogService.listProductsForSupplier(supplierId!));
 
-  const receivable = useMemo(() => (invoices ? ageInvoices(invoices) : null), [invoices]);
   const inventoryValue = useMemo(
     () => products?.reduce((sum, p) => sum + p.inventory.reduce((s, i) => s + i.stock, 0) * p.basePrice, 0) ?? null,
     [products],
   );
+
+  const error = invoicesError ?? productsError ?? null;
+  function retry() {
+    if (invoicesError) reloadInvoices();
+    if (productsError) reloadProducts();
+  }
+
+  if (error) {
+    return <ErrorState title="Couldn't load the balance sheet" description={error} secondaryAction={{ label: 'Try again', onClick: retry }} />;
+  }
 
   if (!receivable || inventoryValue === null) {
     return (

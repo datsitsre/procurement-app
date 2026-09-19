@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/Input';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
+import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { PaymentMethodConfigs, CreditTermLabels } from '@/config/payment-methods';
 import { cn } from '@/utils/cn';
 import { formatDate } from '@/utils/format';
@@ -115,6 +116,14 @@ export default function CheckoutPage() {
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         Back to purchase order
       </Link>
+
+      <Breadcrumb
+        items={[
+          { label: 'Purchase orders', href: '/purchase-orders' },
+          { label: po.reference, href: `/purchase-orders/${po.id}` },
+          { label: 'Checkout' },
+        ]}
+      />
 
       <div>
         <h1 className="text-h1">Checkout</h1>

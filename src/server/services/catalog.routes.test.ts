@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NextRequest } from 'next/server';
 import { db } from '@/server/db';
 import { createSession } from '@/server/auth/session';
-import { POST as createProductRoute } from '@/app/api/products/route';
+import { GET as listProductsRoute, POST as createProductRoute } from '@/app/api/products/route';
 import { PATCH as updateProductRoute } from '@/app/api/products/[productId]/route';
 import { PATCH as updateInventoryRoute } from '@/app/api/products/[productId]/inventory/route';
 import { GET as listSuppliersRoute } from '@/app/api/suppliers/route';
@@ -202,5 +202,71 @@ describe('Suppliers API (real API boundary)', () => {
       }),
       { params: Promise.resolve({ supplierId: OWNER_SUPPLIER_ID }) },
     );
+  });
+});
+
+describe('GET /api/products (pagination, Phase 17)', () => {
+  const PAGINATION_PRODUCT_IDS = [`${OWNER_SUPPLIER_ID}-pub-1`, `${OWNER_SUPPLIER_ID}-pub-2`, `${OWNER_SUPPLIER_ID}-pub-3`];
+
+  beforeAll(async () => {
+    for (const id of PAGINATION_PRODUCT_IDS) {
+      await db.product.create({
+        data: {
+          id,
+          supplierId: OWNER_SUPPLIER_ID,
+          categoryId,
+          name: `Pagination Test ${id}`,
+          slug: id,
+          brand: 'x',
+          sku: id,
+          description: 'x',
+          currency: 'GHS',
+          basePrice: 100,
+          moq: 1,
+          moderationStatus: 'PUBLISHED',
+        },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    await db.product.deleteMany({ where: { id: { in: PAGINATION_PRODUCT_IDS } } });
+  });
+
+  it('returns a real Page envelope with only published products for this supplier', async () => {
+    const response = await listProductsRoute(new NextRequest(`http://localhost/api/products?supplierId=${OWNER_SUPPLIER_ID}&pageSize=2&page=1`));
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.items).toHaveLength(2);
+    expect(page.total).toBeGreaterThanOrEqual(3);
+    expect(page.page).toBe(1);
+    expect(page.pageSize).toBe(2);
+    expect(page.items.every((p: { supplierId: string }) => p.supplierId === OWNER_SUPPLIER_ID)).toBe(true);
+  });
+
+  it('pages advance without overlap across two consecutive pages', async () => {
+    const page1 = await (
+      await listProductsRoute(new NextRequest(`http://localhost/api/products?supplierId=${OWNER_SUPPLIER_ID}&pageSize=2&page=1`))
+    ).json();
+    const page2 = await (
+      await listProductsRoute(new NextRequest(`http://localhost/api/products?supplierId=${OWNER_SUPPLIER_ID}&pageSize=2&page=2`))
+    ).json();
+    const page1Ids = page1.items.map((p: { id: string }) => p.id);
+    const page2Ids = page2.items.map((p: { id: string }) => p.id);
+    expect(page1Ids.some((id: string) => page2Ids.includes(id))).toBe(false);
+  });
+
+  it('clamps an excessive pageSize to the documented maximum (500) instead of returning unbounded rows', async () => {
+    const response = await listProductsRoute(new NextRequest('http://localhost/api/products?pageSize=999999'));
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.pageSize).toBeLessThanOrEqual(500);
+  });
+
+  it('falls back to page 1 for a manipulated/invalid page number rather than erroring', async () => {
+    const response = await listProductsRoute(new NextRequest(`http://localhost/api/products?supplierId=${OWNER_SUPPLIER_ID}&page=-3`));
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.page).toBe(1);
   });
 });

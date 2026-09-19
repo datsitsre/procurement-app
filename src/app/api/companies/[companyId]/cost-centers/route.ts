@@ -3,17 +3,18 @@ import { Permission } from '@/config/rbac';
 import { requireCompanyAccess } from '@/server/auth/require';
 import { createCostCenter, listCostCenters } from '@/server/services/company.service';
 import { NewCostCenterSchema } from '@/server/validation/company';
+import { withErrorHandling } from '@/server/errors';
 
-export async function GET(request: NextRequest, ctx: RouteContext<'/api/companies/[companyId]/cost-centers'>) {
+export const GET = withErrorHandling("/api/companies/[companyId]/cost-centers", async (request: NextRequest, ctx: RouteContext<'/api/companies/[companyId]/cost-centers'>) => {
   const { companyId } = await ctx.params;
   const access = await requireCompanyAccess(request, companyId);
   if (!access.ok) return access.response;
 
   const result = await listCostCenters(companyId);
   return NextResponse.json(result.ok ? result.data : []);
-}
+});
 
-export async function POST(request: NextRequest, ctx: RouteContext<'/api/companies/[companyId]/cost-centers'>) {
+export const POST = withErrorHandling("/api/companies/[companyId]/cost-centers", async (request: NextRequest, ctx: RouteContext<'/api/companies/[companyId]/cost-centers'>) => {
   const { companyId } = await ctx.params;
   const access = await requireCompanyAccess(request, companyId, Permission.SETTINGS_MANAGE);
   if (!access.ok) return access.response;
@@ -25,4 +26,4 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/compani
   const result = await createCostCenter(companyId, parsed.data.code, parsed.data.name, parsed.data.departmentId);
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
   return NextResponse.json(result.data);
-}
+});

@@ -78,7 +78,7 @@ function BudgetsView({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-h1">Procurement budgets</h1>
           <p className="text-body text-text-secondary">Spend against each budget, computed live from paid orders.</p>

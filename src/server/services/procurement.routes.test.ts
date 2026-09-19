@@ -9,6 +9,10 @@ import { POST as acceptQuoteRoute } from '@/app/api/rfqs/[rfqId]/quotes/[quoteId
 import { POST as sendNegotiationMessageRoute } from '@/app/api/rfqs/[rfqId]/quotes/[quoteId]/negotiations/route';
 import { GET as getPurchaseRequestRoute } from '@/app/api/purchase-requests/[id]/route';
 import { POST as decideStepRoute } from '@/app/api/purchase-requests/[id]/decide/route';
+import { GET as listPurchaseRequestsRoute } from '@/app/api/companies/[companyId]/purchase-requests/route';
+import { GET as listRfqsRoute } from '@/app/api/rfqs/route';
+import { GET as listRfqsForSupplierRoute } from '@/app/api/suppliers/[supplierId]/rfqs/route';
+import { GET as rfqPendingCountRoute } from '@/app/api/rfqs/pending-count/route';
 
 /**
  * Phase 14, Stage 5 - regression suite at the real API boundary for RFQ/quote tenant isolation:
@@ -121,6 +125,25 @@ beforeAll(async () => {
     },
   });
 
+  // 29 more RFQs (30 total with RFQ_ID) - enough to exercise a second, non-final page at the
+  // default pageSize of 25 (Phase 19, section 1/6).
+  for (let i = 0; i < 29; i++) {
+    await db.rFQ.create({
+      data: {
+        id: `${RFQ_ID}-page-${i}`,
+        reference: `RFQ-ROUTES-PAGE-${Date.now()}-${i}`,
+        companyId: BUYER_COMPANY_ID,
+        createdByUserId: BUYER_USER_ID,
+        requiredDeliveryDate: new Date(),
+        deliveryLocation: 'Accra',
+        status: 'SENT',
+        createdAt: new Date(Date.now() - i * 60_000),
+        items: { create: [{ productId: PRODUCT_ID, productName: 'Routes Test Widget', quantity: 1 }] },
+        suppliers: { create: [{ supplierId: OWNER_SUPPLIER_ID, status: 'INVITED' }] },
+      },
+    });
+  }
+
   buyerSessionToken = (await createSession({ userId: BUYER_USER_ID, activeCompanyId: BUYER_COMPANY_ID })).token;
   ownerSupplierSessionToken = (await createSession({ userId: OWNER_SUPPLIER_USER_ID, activeCompanyId: OWNER_SUPPLIER_COMPANY_ID })).token;
   employeeSessionToken = (await createSession({ userId: EMPLOYEE_USER_ID, activeCompanyId: BUYER_COMPANY_ID })).token;
@@ -136,11 +159,11 @@ afterAll(async () => {
   // acceptQuote/decideStep (Stage 7) build real PurchaseOrders inline - clean those up first.
   await db.purchaseOrderItem.deleteMany({ where: { purchaseOrder: { companyId: BUYER_COMPANY_ID } } });
   await db.purchaseOrder.deleteMany({ where: { companyId: BUYER_COMPANY_ID } });
-  await db.quoteItem.deleteMany({ where: { quote: { rfqId: RFQ_ID } } });
-  await db.quote.deleteMany({ where: { rfqId: RFQ_ID } });
-  await db.rFQSupplier.deleteMany({ where: { rfqId: RFQ_ID } });
-  await db.rFQItem.deleteMany({ where: { rfqId: RFQ_ID } });
-  await db.rFQ.delete({ where: { id: RFQ_ID } }).catch(() => undefined);
+  await db.quoteItem.deleteMany({ where: { quote: { rfq: { companyId: BUYER_COMPANY_ID } } } });
+  await db.quote.deleteMany({ where: { rfq: { companyId: BUYER_COMPANY_ID } } });
+  await db.rFQSupplier.deleteMany({ where: { rfq: { companyId: BUYER_COMPANY_ID } } });
+  await db.rFQItem.deleteMany({ where: { rfq: { companyId: BUYER_COMPANY_ID } } });
+  await db.rFQ.deleteMany({ where: { companyId: BUYER_COMPANY_ID } });
   await db.approvalStep.deleteMany({ where: { requestId: PURCHASE_REQUEST_ID } });
   await db.purchaseRequestItem.deleteMany({ where: { requestId: PURCHASE_REQUEST_ID } });
   await db.purchaseRequest.delete({ where: { id: PURCHASE_REQUEST_ID } }).catch(() => undefined);
@@ -348,6 +371,37 @@ describe('POST /api/rfqs/[rfqId]/quotes/[quoteId]/negotiations (both sides can p
   });
 });
 
+describe('GET /api/companies/[companyId]/purchase-requests (pagination security, Phase 16)', () => {
+  it("refuses a different company from listing this company's purchase requests, regardless of page/pageSize query params", async () => {
+    const response = await listPurchaseRequestsRoute(
+      requestFor(`/api/companies/${BUYER_COMPANY_ID}/purchase-requests?page=1&pageSize=25`, otherBuyerSessionToken),
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it('returns a real Page envelope, scoped to the owning company, for the owning caller', async () => {
+    const response = await listPurchaseRequestsRoute(requestFor(`/api/companies/${BUYER_COMPANY_ID}/purchase-requests`, buyerSessionToken), {
+      params: Promise.resolve({ companyId: BUYER_COMPANY_ID }),
+    });
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.items.some((pr: { id: string }) => pr.id === PURCHASE_REQUEST_ID)).toBe(true);
+    expect(page.page).toBe(1);
+    expect(page.pageSize).toBe(25);
+  });
+
+  it('clamps an excessive pageSize to the configured maximum instead of returning unbounded rows', async () => {
+    const response = await listPurchaseRequestsRoute(
+      requestFor(`/api/companies/${BUYER_COMPANY_ID}/purchase-requests?pageSize=999999`, buyerSessionToken),
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.pageSize).toBeLessThanOrEqual(100);
+  });
+});
+
 describe('GET /api/purchase-requests/[id] and POST .../decide (tenant + role isolation)', () => {
   it("refuses an unrelated company reading this purchase request", async () => {
     const response = await getPurchaseRequestRoute(requestFor(`/api/purchase-requests/${PURCHASE_REQUEST_ID}`, otherBuyerSessionToken), {
@@ -393,5 +447,82 @@ describe('GET /api/purchase-requests/[id] and POST .../decide (tenant + role iso
     expect(response.status).toBe(200);
     const decided = await response.json();
     expect(decided.status).toBe('CONVERTED_TO_PO');
+  });
+});
+
+describe('GET /api/rfqs (pagination, Phase 19)', () => {
+  it('returns a real Page envelope, scoped to the owning company', async () => {
+    const response = await listRfqsRoute(requestFor(`/api/rfqs?companyId=${BUYER_COMPANY_ID}`, buyerSessionToken));
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.total).toBe(30);
+    expect(page.items).toHaveLength(25);
+    expect(page.items.every((r: { companyId: string }) => r.companyId === BUYER_COMPANY_ID)).toBe(true);
+  });
+
+  it('page 2 returns the remaining 5 rows, with no overlap and no gaps', async () => {
+    const page1 = await (await listRfqsRoute(requestFor(`/api/rfqs?companyId=${BUYER_COMPANY_ID}&page=1`, buyerSessionToken))).json();
+    const page2 = await (await listRfqsRoute(requestFor(`/api/rfqs?companyId=${BUYER_COMPANY_ID}&page=2`, buyerSessionToken))).json();
+    expect(page2.items).toHaveLength(5);
+    const ids1 = page1.items.map((r: { id: string }) => r.id);
+    const ids2 = page2.items.map((r: { id: string }) => r.id);
+    expect(ids1.some((id: string) => ids2.includes(id))).toBe(false);
+    expect(new Set([...ids1, ...ids2]).size).toBe(30);
+  });
+
+  it('clamps an excessive pageSize to the configured maximum', async () => {
+    const response = await listRfqsRoute(requestFor(`/api/rfqs?companyId=${BUYER_COMPANY_ID}&pageSize=999999`, buyerSessionToken));
+    const page = await response.json();
+    expect(page.pageSize).toBeLessThanOrEqual(100);
+  });
+
+  it('falls back to page 1 for an invalid page number', async () => {
+    const response = await listRfqsRoute(requestFor(`/api/rfqs?companyId=${BUYER_COMPANY_ID}&page=-1`, buyerSessionToken));
+    const page = await response.json();
+    expect(page.page).toBe(1);
+  });
+
+  it("refuses a different company from listing this company's RFQs", async () => {
+    const response = await listRfqsRoute(requestFor(`/api/rfqs?companyId=${BUYER_COMPANY_ID}`, otherBuyerSessionToken));
+    expect(response.status).toBe(404);
+  });
+
+  it('refuses an unauthenticated request', async () => {
+    const response = await listRfqsRoute(new NextRequest(`http://localhost/api/rfqs?companyId=${BUYER_COMPANY_ID}`));
+    expect(response.status).toBe(401);
+  });
+});
+
+describe('GET /api/suppliers/[supplierId]/rfqs (pagination + tenant isolation, Phase 19)', () => {
+  it('returns a real Page envelope for the invited supplier', async () => {
+    const response = await listRfqsForSupplierRoute(requestFor(`/api/suppliers/${OWNER_SUPPLIER_ID}/rfqs`, ownerSupplierSessionToken), {
+      params: Promise.resolve({ supplierId: OWNER_SUPPLIER_ID }),
+    });
+    expect(response.status).toBe(200);
+    const page = await response.json();
+    expect(page.total).toBe(30);
+  });
+
+  it("refuses an uninvited supplier from listing another supplier's RFQ inbox", async () => {
+    const response = await listRfqsForSupplierRoute(requestFor(`/api/suppliers/${OWNER_SUPPLIER_ID}/rfqs`, uninvitedSupplierSessionToken), {
+      params: Promise.resolve({ supplierId: OWNER_SUPPLIER_ID }),
+    });
+    expect(response.status).toBe(404);
+  });
+});
+
+describe('GET /api/rfqs/pending-count (Phase 19)', () => {
+  it('counts real pending RFQs across the entire company history, not just one page', async () => {
+    const response = await rfqPendingCountRoute(requestFor(`/api/rfqs/pending-count?companyId=${BUYER_COMPANY_ID}`, buyerSessionToken));
+    expect(response.status).toBe(200);
+    const { count } = await response.json();
+    // 29 of the 30 fixture RFQs remain SENT (pending); RFQ_ID itself was accepted by an earlier
+    // test in this file (its own quote-acceptance flow), so it correctly no longer counts.
+    expect(count).toBe(29);
+  });
+
+  it("refuses a different company's pending-RFQ count", async () => {
+    const response = await rfqPendingCountRoute(requestFor(`/api/rfqs/pending-count?companyId=${BUYER_COMPANY_ID}`, otherBuyerSessionToken));
+    expect(response.status).toBe(404);
   });
 });

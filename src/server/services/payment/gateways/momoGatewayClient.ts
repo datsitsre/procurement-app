@@ -29,6 +29,12 @@ export type RequestToPayStatus = 'PENDING' | 'SUCCESSFUL' | 'FAILED';
  * real subscriptionKey/apiUser/apiKey, which nothing in this repo ships (see
  * mobileMoneyProvider.ts's fallback for what runs instead when they're absent).
  */
+/** Every real HTTP call this client makes has a hard deadline (Phase 21 - the audit found none
+ *  before this: a hung gateway connection would have hung the caller indefinitely, blocking a
+ *  checkout or webhook request on a third party with no bound). 10s comfortably covers a normal
+ *  gateway round trip without leaving a request hanging for minutes on a dead connection. */
+const GATEWAY_TIMEOUT_MS = 10_000;
+
 export class MomoGatewayClient {
   constructor(private readonly config: MomoGatewayConfig) {}
 
@@ -40,6 +46,7 @@ export class MomoGatewayClient {
         Authorization: `Basic ${basicAuth}`,
         'Ocp-Apim-Subscription-Key': this.config.subscriptionKey,
       },
+      signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`Mobile money gateway token request failed (HTTP ${response.status}).`);
     const body = (await response.json()) as { access_token?: string };
@@ -75,6 +82,7 @@ export class MomoGatewayClient {
         payerMessage: input.payerMessage,
         payeeNote: input.payeeNote,
       }),
+      signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
     });
 
     if (response.status === 202) return { outcome: 'ACCEPTED', referenceId };
@@ -97,6 +105,7 @@ export class MomoGatewayClient {
         'X-Target-Environment': this.config.targetEnvironment,
         'Ocp-Apim-Subscription-Key': this.config.subscriptionKey,
       },
+      signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
     });
     if (!response.ok) return 'PENDING';
 

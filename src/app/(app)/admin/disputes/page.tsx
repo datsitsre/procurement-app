@@ -12,6 +12,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 import { formatDate } from '@/utils/format';
 import type { Dispute } from '@/types/orders';
 
@@ -27,14 +28,17 @@ function DisputesQueue() {
   const { session } = useAuth();
   const membership = useActiveMembership();
   const { data: disputes, reload } = useAsyncData<Dispute[]>('admin-disputes-list', () => disputesService.listAllDisputes());
+  // Primes the client-side supplier-name cache (see catalog.service.ts's own note on why this
+  // exists) - a real request, needed because a direct visit to this page (not routed through
+  // /admin, which already lists suppliers) would otherwise show every supplier name blank.
+  useAsyncData('admin-supplier-cache', () => catalogService.listAllSuppliers());
+  const toast = useToast();
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function resolve(disputeId: string, decision: 'RESOLVED_REFUND' | 'RESOLVED_REJECTED') {
     if (!session || !membership) return;
-    setError(null);
     setSubmitting(true);
     const result = await disputesService.resolveDispute(disputeId, decision, note, membership.role, {
       id: session.user.id,
@@ -42,11 +46,12 @@ function DisputesQueue() {
     });
     setSubmitting(false);
     if (!result.ok) {
-      setError(result.error.message);
+      toast.show(result.error.message, 'error');
       return;
     }
     setResolvingId(null);
     setNote('');
+    toast.show(decision === 'RESOLVED_REFUND' ? 'Refund approved.' : 'Claim rejected.', 'success');
     reload();
   }
 
@@ -59,8 +64,6 @@ function DisputesQueue() {
         <h1 className="text-h1">Disputes</h1>
         <p className="text-body text-text-secondary">Issues buyers have reported against their orders.</p>
       </div>
-
-      {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
 
       {disputes === null ? (
         <SkeletonTable rows={3} columns={4} />

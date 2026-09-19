@@ -1,6 +1,6 @@
 import { apiRequest } from './base';
 import type { Role } from '@/config/rbac';
-import type { ServiceResult, TenantContext, UUID } from '@/types/common';
+import type { Page, ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { Category, Product, SupplierProfile, Warehouse } from '@/types/catalog';
 
 /** Who performed a mutating action - threaded through from the caller's session so the audit
@@ -80,7 +80,7 @@ export interface SupplierFilters {
 
 export interface CatalogService {
   listCategories(): Promise<ServiceResult<Category[]>>;
-  listProducts(filters?: ProductFilters): Promise<ServiceResult<Product[]>>;
+  listProducts(filters?: ProductFilters, page?: number, pageSize?: number): Promise<ServiceResult<Page<Product>>>;
   getProductBySlug(slug: string): Promise<ServiceResult<Product>>;
   getProductById(id: UUID): Promise<ServiceResult<Product>>;
   listSuppliers(filters?: SupplierFilters): Promise<ServiceResult<SupplierProfile[]>>;
@@ -144,16 +144,15 @@ class ApiCatalogService implements CatalogService {
     return apiRequest<Category[]>('/api/categories');
   }
 
-  async listProducts(filters: ProductFilters = {}): Promise<ServiceResult<Product[]>> {
-    const params = new URLSearchParams();
+  async listProducts(filters: ProductFilters = {}, page = 1, pageSize = 25): Promise<ServiceResult<Page<Product>>> {
+    const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (filters.categorySlug) params.set('categorySlug', filters.categorySlug);
     if (filters.supplierId) params.set('supplierId', filters.supplierId);
     if (filters.search) params.set('search', filters.search);
     if (filters.minPrice !== undefined) params.set('minPrice', String(filters.minPrice));
     if (filters.maxPrice !== undefined) params.set('maxPrice', String(filters.maxPrice));
     if (filters.sortBy) params.set('sortBy', filters.sortBy);
-    const query = params.toString();
-    return apiRequest<Product[]>(`/api/products${query ? `?${query}` : ''}`);
+    return apiRequest<Page<Product>>(`/api/products?${params.toString()}`);
   }
 
   async getProductBySlug(slug: string): Promise<ServiceResult<Product>> {

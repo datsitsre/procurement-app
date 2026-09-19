@@ -11,6 +11,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { Button } from '@/components/ui/Button';
 import { PaymentMethodConfigs } from '@/config/payment-methods';
 import { formatDateTime } from '@/utils/format';
@@ -29,7 +30,11 @@ export default function AdminPaymentsPage() {
 
 function PaymentsOverview() {
   const [page, setPage] = useState(1);
-  const { data: result } = useAsyncData<Page<Payment>>(`admin-payments-list-${page}`, () => paymentService.listAllPayments(page, PAGE_SIZE));
+  const { data: result, error, reload } = useAsyncData<Page<Payment>>(`admin-payments-list-${page}`, () => paymentService.listAllPayments(page, PAGE_SIZE));
+  // Primes the client-side supplier-name cache (see catalog.service.ts's own note on why this
+  // exists) - a real request, needed because a direct visit to this page (not routed through
+  // /admin, which already lists suppliers) would otherwise show every supplier name blank.
+  useAsyncData('admin-supplier-cache', () => catalogService.listAllSuppliers());
   const payments = result?.items ?? null;
   const totalPages = result ? Math.max(1, Math.ceil(result.total / result.pageSize)) : 1;
 
@@ -40,7 +45,9 @@ function PaymentsOverview() {
         <p className="text-body text-text-secondary">Every payment processed across the platform.</p>
       </div>
 
-      {payments === null ? (
+      {error ? (
+        <ErrorState title="Couldn't load payments" description={error} secondaryAction={{ label: 'Try again', onClick: reload }} />
+      ) : payments === null ? (
         <SkeletonTable rows={5} columns={5} />
       ) : payments.length === 0 ? (
         <EmptyState icon={Wallet} title="No payments yet" description="Payments made across the platform will appear here." />
@@ -75,6 +82,25 @@ function PaymentsOverview() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Mobile: cards (section 43 - tables become cards rather than horizontal scroll) */}
+          <div className="flex flex-col gap-3 sm:hidden">
+            {payments.map((p) => (
+              <div key={p.id} className="rounded-lg border border-border bg-surface p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold">{allCompanies().find((c) => c.id === p.companyId)?.name ?? '—'}</span>
+                  <PriceDisplay amount={p.amount} size="sm" />
+                </div>
+                <p className="text-caption mt-1">
+                  {p.supplierId ? catalogService.getSupplierById(p.supplierId)?.name ?? '—' : '—'} · {PaymentMethodConfigs[p.method].label}
+                </p>
+                <p className="text-metadata">{formatDateTime(p.createdAt)}</p>
+                <div className="mt-2">
+                  <StatusBadge domain="payment" status={p.status} />
+                </div>
+              </div>
+            ))}
           </div>
 
           {totalPages > 1 && (

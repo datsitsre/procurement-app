@@ -1,5 +1,5 @@
 import { apiRequest } from './base';
-import type { ServiceResult, TenantContext, UUID } from '@/types/common';
+import type { Page, ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { ApprovalRule, NegotiationMessage, PurchaseRequest, PurchaseRequestItem, Quote, RFQ, RFQItem } from '@/types/procurement';
 import type { Role } from '@/config/rbac';
 
@@ -42,10 +42,17 @@ export interface SubmitQuoteInput {
 }
 
 export interface ProcurementService {
-  listRfqs(companyId: UUID): Promise<ServiceResult<RFQ[]>>;
+  /** Paginated (Phase 19, section 1) - `?page=&pageSize=`, default 25, max 100, matching every
+   *  other tenant-scoped list endpoint (`Page<RFQ>`, not a bare array). */
+  listRfqs(companyId: UUID, page?: number, pageSize?: number): Promise<ServiceResult<Page<RFQ>>>;
   /** RFQs a supplier has been invited to respond to (section 18/44) - the supplier-workspace
-   *  counterpart to `listRfqs`, which is keyed by the *buyer's* company id instead. */
-  listRfqsForSupplier(supplierId: UUID): Promise<ServiceResult<RFQ[]>>;
+   *  counterpart to `listRfqs`, which is keyed by the *buyer's* company id instead. Paginated,
+   *  same shape. */
+  listRfqsForSupplier(supplierId: UUID, page?: number, pageSize?: number): Promise<ServiceResult<Page<RFQ>>>;
+  /** Real database count (Phase 19) - the buyer/supplier dashboards' own "pending RFQs" stat,
+   *  across the company/supplier's *entire* RFQ history, never just whatever page is loaded. */
+  getRfqPendingCount(companyId: UUID): Promise<ServiceResult<number>>;
+  getRfqPendingCountForSupplier(supplierId: UUID): Promise<ServiceResult<number>>;
   /** Fetched by a URL path segment (section 9.2) - `caller` must be the buying company, an
    *  invited supplier, or a platform admin, or this returns NOT_FOUND rather than leaking
    *  another tenant's RFQ (pricing, requirements, negotiation history). */
@@ -76,7 +83,7 @@ export interface ProcurementService {
     caller: TenantContext,
   ): Promise<ServiceResult<{ purchaseOrderId: UUID }>>;
 
-  listPurchaseRequests(companyId: UUID): Promise<ServiceResult<PurchaseRequest[]>>;
+  listPurchaseRequests(companyId: UUID, page?: number, pageSize?: number): Promise<ServiceResult<Page<PurchaseRequest>>>;
   /** Fetched by a URL path segment (section 9.2) - `caller` must belong to the request's own
    *  company or be a platform admin, or this returns NOT_FOUND rather than leaking another
    *  tenant's purchase request. */
@@ -117,12 +124,22 @@ export interface ProcurementService {
 class ApiProcurementService implements ProcurementService {
   // ---- RFQ ----
 
-  async listRfqs(companyId: UUID): Promise<ServiceResult<RFQ[]>> {
-    return apiRequest<RFQ[]>(`/api/rfqs?companyId=${companyId}`);
+  async listRfqs(companyId: UUID, page = 1, pageSize = 25): Promise<ServiceResult<Page<RFQ>>> {
+    return apiRequest<Page<RFQ>>(`/api/rfqs?companyId=${companyId}&page=${page}&pageSize=${pageSize}`);
   }
 
-  async listRfqsForSupplier(supplierId: UUID): Promise<ServiceResult<RFQ[]>> {
-    return apiRequest<RFQ[]>(`/api/suppliers/${supplierId}/rfqs`);
+  async listRfqsForSupplier(supplierId: UUID, page = 1, pageSize = 25): Promise<ServiceResult<Page<RFQ>>> {
+    return apiRequest<Page<RFQ>>(`/api/suppliers/${supplierId}/rfqs?page=${page}&pageSize=${pageSize}`);
+  }
+
+  async getRfqPendingCount(companyId: UUID): Promise<ServiceResult<number>> {
+    const result = await apiRequest<{ count: number }>(`/api/rfqs/pending-count?companyId=${companyId}`);
+    return result.ok ? { ok: true, data: result.data.count } : result;
+  }
+
+  async getRfqPendingCountForSupplier(supplierId: UUID): Promise<ServiceResult<number>> {
+    const result = await apiRequest<{ count: number }>(`/api/suppliers/${supplierId}/rfqs/pending-count`);
+    return result.ok ? { ok: true, data: result.data.count } : result;
   }
 
   async getRfq(id: UUID): Promise<ServiceResult<RFQ>> {
@@ -176,8 +193,8 @@ class ApiProcurementService implements ProcurementService {
 
   // ---- Purchase requests ----
 
-  async listPurchaseRequests(companyId: UUID): Promise<ServiceResult<PurchaseRequest[]>> {
-    return apiRequest<PurchaseRequest[]>(`/api/companies/${companyId}/purchase-requests`);
+  async listPurchaseRequests(companyId: UUID, page = 1, pageSize = 25): Promise<ServiceResult<Page<PurchaseRequest>>> {
+    return apiRequest<Page<PurchaseRequest>>(`/api/companies/${companyId}/purchase-requests?page=${page}&pageSize=${pageSize}`);
   }
 
   async getPurchaseRequest(id: UUID): Promise<ServiceResult<PurchaseRequest>> {

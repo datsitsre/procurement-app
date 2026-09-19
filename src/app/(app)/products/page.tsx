@@ -8,12 +8,14 @@ import { catalogService } from '@/services/catalog.service';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 import { availableStock } from '@/types/catalog';
-import type { Product, SupplierProfile, Warehouse } from '@/types/catalog';
+import type { Category, Product, SupplierProfile, Warehouse } from '@/types/catalog';
 import type { Role } from '@/config/rbac';
 import type { TenantContext } from '@/types/common';
 
@@ -42,13 +44,14 @@ export default function ProductsPage() {
 function ProductsManager({ supplier, callerRole, tenant }: { supplier: SupplierProfile; callerRole: Role; tenant: TenantContext }) {
   const { data: products, reload } = useAsyncData<Product[]>(supplier.id, () => catalogService.listProductsForSupplier(supplier.id));
   const { data: warehouses } = useAsyncData<Warehouse[]>(supplier.id, () => catalogService.listWarehousesForSupplier(supplier.id));
+  const { data: categories } = useAsyncData<Category[]>('product-categories', () => catalogService.listCategories());
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-h1">Products &amp; inventory</h1>
           <p className="text-body text-text-secondary">Manage {supplier.name}&rsquo;s catalog and stock levels.</p>
@@ -59,10 +62,11 @@ function ProductsManager({ supplier, callerRole, tenant }: { supplier: SupplierP
         </Button>
       </div>
 
-      {creating && warehouses && (
+      {creating && warehouses && categories && (
         <NewProductForm
           supplierId={supplier.id}
           warehouses={warehouses}
+          categories={categories}
           callerRole={callerRole}
           tenant={tenant}
           onCreated={() => {
@@ -140,15 +144,14 @@ function ProductEditPanel({
     Object.fromEntries(product.inventory.map((i) => [i.warehouseId, String(i.stock)])),
   );
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   async function save() {
     setSaving(true);
-    setError(null);
 
     const priceResult = await catalogService.updateProduct(product.id, { basePrice: Number(basePrice), moq: Number(moq) }, callerRole, tenant);
     if (!priceResult.ok) {
-      setError(priceResult.error.message);
+      toast.show(priceResult.error.message, 'error');
       setSaving(false);
       return;
     }
@@ -158,7 +161,7 @@ function ProductEditPanel({
       if (nextStock !== record.stock) {
         const invResult = await catalogService.updateInventory(product.id, record.warehouseId, { stock: nextStock }, callerRole, tenant);
         if (!invResult.ok) {
-          setError(invResult.error.message);
+          toast.show(invResult.error.message, 'error');
           setSaving(false);
           return;
         }
@@ -166,6 +169,7 @@ function ProductEditPanel({
     }
 
     setSaving(false);
+    toast.show('Product updated.', 'success');
     onSaved();
   }
 
@@ -192,8 +196,6 @@ function ProductEditPanel({
         ))}
       </div>
 
-      {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
-
       <div>
         <Button size="sm" onClick={save} loading={saving}>
           Save changes
@@ -206,6 +208,7 @@ function ProductEditPanel({
 function NewProductForm({
   supplierId,
   warehouses,
+  categories,
   callerRole,
   tenant,
   onCreated,
@@ -213,34 +216,35 @@ function NewProductForm({
 }: {
   supplierId: string;
   warehouses: Warehouse[];
+  categories: Category[];
   callerRole: Role;
   tenant: TenantContext;
   onCreated: () => void;
   onCancel: () => void;
 }) {
+  const toast = useToast();
   const [name, setName] = useState('');
   const [brand, setBrand] = useState('');
   const [sku, setSku] = useState('');
+  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? '');
   const [basePrice, setBasePrice] = useState('');
   const [moq, setMoq] = useState('1');
   const [stock, setStock] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const defaultWarehouse = warehouses.find((w) => w.isDefault) ?? warehouses[0];
 
   async function submit() {
-    if (!defaultWarehouse) return;
+    if (!defaultWarehouse || !categoryId) return;
     setSaving(true);
-    setError(null);
     const result = await catalogService.createProduct(
       {
         name,
         brand,
         sku,
         supplierId,
-        categoryId: 'cat-networking',
+        categoryId,
         description,
         currency: 'GHS',
         basePrice: Number(basePrice),
@@ -254,9 +258,10 @@ function NewProductForm({
     );
     setSaving(false);
     if (!result.ok) {
-      setError(result.error.message);
+      toast.show(result.error.message, 'error');
       return;
     }
+    toast.show(`${name} submitted for moderation review.`, 'success');
     onCreated();
   }
 
@@ -267,19 +272,24 @@ function NewProductForm({
         <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
         <Input label="Brand" value={brand} onChange={(e) => setBrand(e.target.value)} />
         <Input label="SKU" value={sku} onChange={(e) => setSku(e.target.value)} />
+        <Select label="Category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
         <Input label="Base price" type="number" value={basePrice} onChange={(e) => setBasePrice(e.target.value)} required />
         <Input label="MOQ" type="number" value={moq} onChange={(e) => setMoq(e.target.value)} />
         <Input label="Initial stock" type="number" value={stock} onChange={(e) => setStock(e.target.value)} />
       </div>
       <Input label="Description" value={description} onChange={(e) => setDescription(e.target.value)} />
 
-      {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
-
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onCancel} disabled={saving}>
           Cancel
         </Button>
-        <Button onClick={submit} loading={saving} disabled={!name.trim() || !basePrice}>
+        <Button onClick={submit} loading={saving} disabled={!name.trim() || !basePrice || !categoryId}>
           Create product
         </Button>
       </div>

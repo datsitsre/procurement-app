@@ -2,62 +2,78 @@
 
 import { useMemo } from 'react';
 import Link from 'next/link';
-import { FileText, Package, AlertTriangle, Wallet } from 'lucide-react';
+import { FileText, Package, AlertTriangle, Wallet, Receipt } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { procurementService } from '@/services/procurement.service';
 import { ordersService } from '@/services/orders.service';
 import { catalogService } from '@/services/catalog.service';
 import { paymentService } from '@/services/payment.service';
+import { invoicesService } from '@/services/invoices.service';
 import { StatCard } from '@/components/ui/StatCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { availableStock } from '@/types/catalog';
 import { formatDate, formatMoney } from '@/utils/format';
-import type { RFQ } from '@/types/procurement';
-import type { Order, Payment } from '@/types/orders';
 import type { Product, SupplierProfile } from '@/types/catalog';
 
 export function SupplierDashboard({ supplier }: { supplier: SupplierProfile }) {
   const { session } = useAuth();
   const supplierId = supplier.id;
 
-  const { data: rfqs } = useAsyncData<RFQ[]>(supplierId, () => procurementService.listRfqsForSupplier(supplierId));
-  const { data: orders } = useAsyncData<Order[]>(supplierId, () => ordersService.listOrdersForSupplier(supplierId));
-  const { data: products } = useAsyncData<Product[]>(supplierId, () => catalogService.listProductsForSupplier(supplierId));
-  const { data: payments } = useAsyncData<Payment[]>(supplierId, () => paymentService.listPaymentsForSupplier(supplierId));
+  // Real database counts/aggregations (Phase 19) - never derived from a page of the now-
+  // paginated RFQ/payment/invoice lists, which could each span many pages for a busy supplier.
+  const { data: pendingRfqs, error: rfqsError, reload: reloadRfqs } = useAsyncData(supplierId, () => procurementService.getRfqPendingCountForSupplier(supplierId));
+  // Just the 5 most recent orders for the preview list below - not the full history, and not
+  // used to derive any count (see ordersToFulfill, a real server-side count instead).
+  const {
+    data: recentOrdersPage,
+    error: recentOrdersError,
+    reload: reloadRecentOrders,
+  } = useAsyncData(supplierId, () => ordersService.listOrdersForSupplier(supplierId, 1, 5));
+  const {
+    data: ordersToFulfill,
+    error: ordersToFulfillError,
+    reload: reloadOrdersToFulfill,
+  } = useAsyncData(supplierId, () => ordersService.getSupplierOrdersToFulfillCount(supplierId));
+  const {
+    data: products,
+    error: productsError,
+    reload: reloadProducts,
+  } = useAsyncData<Product[]>(supplierId, () => catalogService.listProductsForSupplier(supplierId));
+  const {
+    data: monthlyRevenue,
+    error: paymentsError,
+    reload: reloadPayments,
+  } = useAsyncData(supplierId, () => paymentService.getPaidThisMonthTotalForSupplier(supplierId));
+  const {
+    data: invoiceAging,
+    error: invoicesError,
+    reload: reloadInvoices,
+  } = useAsyncData(supplierId, () => invoicesService.getInvoiceAgingSummaryForSupplier(supplierId));
 
-  const pendingRfqs = useMemo(
-    () => rfqs?.filter((r) => r.suppliers.find((s) => s.supplierId === supplierId)?.status === 'INVITED').length ?? 0,
-    [rfqs, supplierId],
-  );
-
-  const ordersToFulfill = useMemo(
-    () => orders?.filter((o) => o.status === 'CONFIRMED' || o.status === 'PROCESSING').length ?? 0,
-    [orders],
-  );
+  const error = rfqsError ?? recentOrdersError ?? ordersToFulfillError ?? productsError ?? paymentsError ?? invoicesError ?? null;
+  function retryFailed() {
+    if (rfqsError) reloadRfqs();
+    if (recentOrdersError) reloadRecentOrders();
+    if (ordersToFulfillError) reloadOrdersToFulfill();
+    if (productsError) reloadProducts();
+    if (paymentsError) reloadPayments();
+    if (invoicesError) reloadInvoices();
+  }
 
   const lowStockProducts = useMemo(
     () => products?.filter((p) => p.inventory.some((i) => i.stock - i.reserved <= i.lowStockThreshold)) ?? [],
     [products],
   );
 
-  const now = new Date();
-  const monthlyRevenue = useMemo(
-    () =>
-      payments
-        ?.filter((p) => {
-          const d = new Date(p.createdAt);
-          return p.status === 'PAID' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-        })
-        .reduce((sum, p) => sum + p.amount, 0) ?? 0,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [payments],
-  );
+  const outstandingInvoiceTotal = invoiceAging?.total ?? 0;
 
-  const recentOrders = orders?.slice(0, 5) ?? [];
-  const loading = rfqs === null || orders === null || products === null || payments === null;
+  const recentOrders = recentOrdersPage?.items ?? [];
+  const loading =
+    pendingRfqs === null || recentOrdersPage === null || ordersToFulfill === null || products === null || monthlyRevenue === null || invoiceAging === null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -71,25 +87,27 @@ export function SupplierDashboard({ supplier }: { supplier: SupplierProfile }) {
         </Link>
       </div>
 
-      {loading ? (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
+      {error ? (
+        <ErrorState title="Couldn't load your supplier overview" description={error} secondaryAction={{ label: 'Try again', onClick: retryFailed }} />
+      ) : loading ? (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-24" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
           <StatCard
             label="RFQs to respond to"
-            value={String(pendingRfqs)}
+            value={String(pendingRfqs ?? 0)}
             icon={FileText}
-            tone={pendingRfqs > 0 ? 'warning' : 'neutral'}
+            tone={(pendingRfqs ?? 0) > 0 ? 'warning' : 'neutral'}
           />
           <StatCard
             label="Orders to fulfill"
-            value={String(ordersToFulfill)}
+            value={String(ordersToFulfill ?? 0)}
             icon={Package}
-            tone={ordersToFulfill > 0 ? 'accent' : 'neutral'}
+            tone={(ordersToFulfill ?? 0) > 0 ? 'accent' : 'neutral'}
           />
           <StatCard
             label="Low stock products"
@@ -97,10 +115,17 @@ export function SupplierDashboard({ supplier }: { supplier: SupplierProfile }) {
             icon={AlertTriangle}
             tone={lowStockProducts.length > 0 ? 'danger' : 'neutral'}
           />
-          <StatCard label="Revenue this month" value={formatMoney(monthlyRevenue, 'GHS')} icon={Wallet} tone="accent" />
+          <StatCard label="Revenue this month" value={formatMoney(monthlyRevenue ?? 0, 'GHS')} icon={Wallet} tone="accent" />
+          <StatCard
+            label="Outstanding invoices"
+            value={formatMoney(outstandingInvoiceTotal, 'GHS')}
+            icon={Receipt}
+            tone={outstandingInvoiceTotal > 0 ? 'warning' : 'neutral'}
+          />
         </div>
       )}
 
+      {!error && (
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="rounded-lg border border-border bg-surface lg:col-span-2">
           <div className="flex items-center justify-between border-b border-border px-5 py-4">
@@ -157,6 +182,7 @@ export function SupplierDashboard({ supplier }: { supplier: SupplierProfile }) {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

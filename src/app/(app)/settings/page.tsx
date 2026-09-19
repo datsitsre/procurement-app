@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { useToast } from '@/components/ui/Toast';
 import { Permission, RoleLabels } from '@/config/rbac';
 import { formatMoney } from '@/utils/format';
 import { resizeImageToDataUrl } from '@/utils/image';
@@ -69,14 +70,13 @@ export default function SettingsPage() {
 
 function ProfileCard() {
   const { session, updateProfile } = useAuth();
+  const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState(session?.user.name ?? '');
   const [phone, setPhone] = useState(session?.user.phone ?? '');
   const [pendingAvatar, setPendingAvatar] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
 
   if (!session) return null;
 
@@ -87,23 +87,19 @@ function ProfileCard() {
     const file = e.target.files?.[0];
     e.target.value = ''; // let the same file be re-picked later if they cancel out
     if (!file) return;
-    setError(null);
-    setSaved(false);
     if (!file.type.startsWith('image/')) {
-      setError('Choose an image file.');
+      toast.show('Choose an image file.', 'error');
       return;
     }
     try {
       setPendingAvatar(await resizeImageToDataUrl(file));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not process that image.');
+      toast.show(err instanceof Error ? err.message : 'Could not process that image.', 'error');
     }
   }
 
   async function submit() {
     setSaving(true);
-    setError(null);
-    setSaved(false);
     const err = await updateProfile({
       name: name.trim(),
       phone: phone.trim(),
@@ -111,11 +107,11 @@ function ProfileCard() {
     });
     setSaving(false);
     if (err) {
-      setError(err.message);
+      toast.show(err.message, 'error');
       return;
     }
     setPendingAvatar(null);
-    setSaved(true);
+    toast.show('Profile updated.', 'success');
   }
 
   return (
@@ -149,9 +145,6 @@ function ProfileCard() {
           <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
           <Input label="Phone (optional)" value={phone} onChange={(e) => setPhone(e.target.value)} />
         </div>
-
-        {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
-        {saved && !dirty && <p className="text-sm text-success">Saved.</p>}
 
         <Button className="w-fit" onClick={submit} loading={saving} disabled={!dirty || !name.trim()}>
           Save changes

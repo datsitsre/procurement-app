@@ -5,8 +5,9 @@ import { setActiveCompany } from '@/server/auth/session';
 import { isSameOrigin } from '@/server/auth/csrf';
 import { buildSessionPayload } from '@/server/dto/session';
 import { SwitchCompanySchema } from '@/server/validation/auth';
+import { withErrorHandling } from '@/server/errors';
 
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandling("/api/auth/switch-company", async (request: NextRequest) => {
   if (!isSameOrigin(request)) {
     return NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 });
   }
@@ -33,4 +34,4 @@ export async function POST(request: NextRequest) {
 
   const payload = await buildSessionPayload(auth.userId, parsed.data.companyId);
   return NextResponse.json(payload);
-}
+});

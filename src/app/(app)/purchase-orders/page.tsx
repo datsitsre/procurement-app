@@ -7,6 +7,7 @@ import { useAsyncData } from '@/hooks/useAsyncData';
 import { purchaseOrderService } from '@/services/purchase-order.service';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { formatDate } from '@/utils/format';
 import type { PurchaseOrder } from '@/types/procurement';
@@ -14,7 +15,7 @@ import type { PurchaseOrder } from '@/types/procurement';
 export default function PurchaseOrdersPage() {
   const company = useActiveCompany();
   const companyId = company?.id ?? null;
-  const { data: orders } = useAsyncData<PurchaseOrder[]>(companyId, () => purchaseOrderService.listPurchaseOrders(companyId!));
+  const { data: orders, error, reload } = useAsyncData<PurchaseOrder[]>(companyId, () => purchaseOrderService.listPurchaseOrders(companyId!));
 
   return (
     <div className="flex flex-col gap-6">
@@ -23,7 +24,9 @@ export default function PurchaseOrdersPage() {
         <p className="text-body text-text-secondary">Generated once a quote is accepted or a purchase request is fully approved.</p>
       </div>
 
-      {orders === null ? (
+      {error ? (
+        <ErrorState title="Couldn't load purchase orders" description={error} secondaryAction={{ label: 'Try again', onClick: reload }} />
+      ) : orders === null ? (
         <SkeletonTable rows={3} columns={4} />
       ) : orders.length === 0 ? (
         <EmptyState icon={ClipboardList} title="No purchase orders yet" description="Accept a supplier's quote from an RFQ to generate your first purchase order." />

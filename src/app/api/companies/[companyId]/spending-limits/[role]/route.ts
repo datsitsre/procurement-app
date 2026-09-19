@@ -3,8 +3,9 @@ import { Permission, Role } from '@/config/rbac';
 import { requireCompanyAccess } from '@/server/auth/require';
 import { setSpendingLimit } from '@/server/services/company.service';
 import { SetSpendingLimitSchema } from '@/server/validation/company';
+import { withErrorHandling } from '@/server/errors';
 
-export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/companies/[companyId]/spending-limits/[role]'>) {
+export const PATCH = withErrorHandling("/api/companies/[companyId]/spending-limits/[role]", async (request: NextRequest, ctx: RouteContext<'/api/companies/[companyId]/spending-limits/[role]'>) => {
   const { companyId, role } = await ctx.params;
   const access = await requireCompanyAccess(request, companyId, Permission.SETTINGS_MANAGE);
   if (!access.ok) return access.response;
@@ -20,4 +21,4 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/compan
   const result = await setSpendingLimit(companyId, role as Role, parsed.data.amount);
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
   return NextResponse.json({ ok: true });
-}
+});

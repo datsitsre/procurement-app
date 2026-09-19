@@ -198,3 +198,52 @@ describe('PATCH /api/companies/[companyId]/team/[userId] (edit an existing team 
     expect(updated.user.avatarUrl).toBe(avatar);
   });
 });
+
+describe('GET /api/companies/[companyId] - parentGroup resolution (Phase 19)', () => {
+  it("includes the real group name for a company that belongs to one, resolved server-side rather than from static data", async () => {
+    // company-acme-gh is real seed data, a member of the real "group-acme" CompanyGroup
+    // ("Acme Technologies") - John Doe (this suite's own OWNER_USER_ID) is a real OWNER there,
+    // but tenant checks scope strictly to the session's *active* company (Phase 18's own
+    // finding), so this needs its own session with company-acme-gh actually active.
+    const acmeGhToken = (await createSession({ userId: OWNER_USER_ID, activeCompanyId: 'company-acme-gh' })).token;
+    const response = await getCompanyRoute(
+      new NextRequest('http://localhost/api/companies/company-acme-gh', { headers: new Headers({ cookie: `session_token=${acmeGhToken}`, origin: 'http://localhost' }) }),
+      { params: Promise.resolve({ companyId: 'company-acme-gh' }) },
+    );
+    expect(response.status).toBe(200);
+    const company = await response.json();
+    expect(company.parentGroupId).toBe('group-acme');
+    expect(company.parentGroupName).toBe('Acme Technologies');
+  });
+
+  it('omits parentGroupName for a company with no parent group, rather than leaking an unrelated group', async () => {
+    const response = await getCompanyRoute(requestFor(`/api/companies/${TEST_COMPANY_ID}`), { params: Promise.resolve({ companyId: TEST_COMPANY_ID }) });
+    expect(response.status).toBe(200);
+    const company = await response.json();
+    expect(company.parentGroupId).toBeUndefined();
+    expect(company.parentGroupName).toBeUndefined();
+  });
+});
+
+describe('POST /api/auth/login - session payload parentGroup resolution (Phase 19)', () => {
+  it("a real login response includes parentGroupName for every membership company that has a group, and only those", async () => {
+    const { POST: loginRoute } = await import('@/app/api/auth/login/route');
+    const response = await loginRoute(
+      new NextRequest('http://localhost/api/auth/login', {
+        method: 'POST',
+        headers: new Headers({ 'content-type': 'application/json', origin: 'http://localhost' }),
+        body: JSON.stringify({ email: 'john.doe@acmetech.example', password: 'password123' }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    const acmeGh = payload.companies.find((c: { id: string }) => c.id === 'company-acme-gh');
+    expect(acmeGh.parentGroupId).toBe('group-acme');
+    expect(acmeGh.parentGroupName).toBe('Acme Technologies');
+    // Never trusted/hardcoded client-side - every value here came from this one real response.
+    const ungroupedCompanies = payload.companies.filter((c: { parentGroupId?: string }) => !c.parentGroupId);
+    for (const c of ungroupedCompanies) {
+      expect(c.parentGroupName).toBeUndefined();
+    }
+  });
+});

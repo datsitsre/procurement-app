@@ -21,8 +21,17 @@ export function UserMenu() {
         setOpen(false);
       }
     }
+    // Phase 19 accessibility audit - a keyboard user who opened this menu had no way to close it
+    // without a mouse click outside; Escape is the expected way to dismiss any open menu/popup.
+    function onEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
     document.addEventListener('mousedown', onClickOutside);
-    return () => document.removeEventListener('mousedown', onClickOutside);
+    document.addEventListener('keydown', onEscape);
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside);
+      document.removeEventListener('keydown', onEscape);
+    };
   }, []);
 
   if (!session) return null;

@@ -45,6 +45,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local-disk document storage (Phase 20) - dev/test only, never a real deployment's persistent
+# storage; see src/server/services/storage/localDiskStorage.ts
+/.uploads/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

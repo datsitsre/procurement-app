@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NextRequest } from 'next/server';
 import { db } from '@/server/db';
 import { env } from '@/server/env';
-import { POST as invoiceDueSweepRoute } from './invoice-due-sweep/route';
+import { POST as invoiceDueSweepRoute, GET as invoiceDueSweepGetRoute } from './invoice-due-sweep/route';
 import { POST as lowStockSweepRoute } from './low-stock-sweep/route';
 
 /**
@@ -23,6 +23,13 @@ function requestFor(url: string, secret: string | null) {
   const headers = new Headers();
   if (secret !== null) headers.set('x-cron-secret', secret);
   return new NextRequest(url, { method: 'POST', headers });
+}
+
+/** Vercel Cron's own calling convention (Phase 23) - it sends `Authorization: Bearer
+ *  <CRON_SECRET>`, never a custom header, so this must be accepted too for a Vercel deployment's
+ *  scheduled invocations to ever authenticate. */
+function requestWithBearer(url: string, secret: string) {
+  return new NextRequest(url, { method: 'POST', headers: new Headers({ authorization: `Bearer ${secret}` }) });
 }
 
 beforeAll(async () => {
@@ -88,6 +95,29 @@ describe('POST /api/cron/invoice-due-sweep', () => {
 
     const invoice = await db.invoice.findUnique({ where: { id: overdueInvoiceId } });
     expect(invoice?.status).toBe('OVERDUE');
+  });
+});
+
+describe('POST /api/cron/invoice-due-sweep - Vercel Cron compatibility (Phase 23)', () => {
+  it('rejects an Authorization header with the wrong Bearer token', async () => {
+    const response = await invoiceDueSweepRoute(requestWithBearer('http://localhost/api/cron/invoice-due-sweep', 'wrong-secret'));
+    expect(response.status).toBe(401);
+  });
+
+  it('accepts `Authorization: Bearer <CRON_SECRET>` - the exact header Vercel Cron sends automatically', async () => {
+    const response = await invoiceDueSweepRoute(requestWithBearer('http://localhost/api/cron/invoice-due-sweep', env.CRON_SECRET));
+    expect(response.status).toBe(200);
+  });
+
+  it('responds to GET, not just POST - Vercel Cron invokes the configured path with GET, never POST', async () => {
+    const getRequest = new NextRequest('http://localhost/api/cron/invoice-due-sweep', {
+      method: 'GET',
+      headers: new Headers({ authorization: `Bearer ${env.CRON_SECRET}` }),
+    });
+    const response = await invoiceDueSweepGetRoute(getRequest);
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(typeof json.markedOverdue).toBe('number');
   });
 });
 

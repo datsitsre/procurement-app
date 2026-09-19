@@ -6,6 +6,7 @@ import { isSameOrigin } from '@/server/auth/csrf';
 import { enforceRateLimit } from '@/server/auth/rate-limit';
 import { buildSessionPayload } from '@/server/dto/session';
 import { RegisterSchema } from '@/server/validation/auth';
+import { withErrorHandling } from '@/server/errors';
 
 /**
  * Registers a new buyer company and its first user, who becomes OWNER of it - mirrors
@@ -13,7 +14,7 @@ import { RegisterSchema } from '@/server/validation/auth';
  * transaction (section 12) so a failure partway through (e.g. the membership insert) can never
  * leave an orphaned company or user behind with no way to sign in to it.
  */
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandling("/api/auth/register", async (request: NextRequest) => {
   if (!isSameOrigin(request)) {
     return NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 });
   }
@@ -65,4 +66,4 @@ export async function POST(request: NextRequest) {
   const response = NextResponse.json(payload);
   setSessionCookie(response, token, expiresAt);
   return response;
-}
+});

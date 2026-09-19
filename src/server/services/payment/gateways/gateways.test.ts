@@ -148,4 +148,17 @@ describe('MobileMoneyGatewayProvider', () => {
 
     expect(result.status).toBe('FAILED');
   });
+
+  it('fails closed (FAILED, not a hang) when the gateway never responds - Phase 21: every real fetch call now carries a hard timeout', async () => {
+    // A DOMException named 'TimeoutError' is exactly what AbortSignal.timeout() produces when it
+    // fires - simulating that here is a faithful stand-in for a real hung connection without
+    // this test itself needing to wait 10 real seconds.
+    global.fetch = vi.fn().mockRejectedValueOnce(new DOMException('The operation was aborted.', 'TimeoutError')) as unknown as typeof fetch;
+
+    const provider = new MobileMoneyGatewayProvider('MTN_MOMO', 'MTN', CONFIG);
+    const result = await provider.charge({ amount: 100, currency: 'GHS', reference: 'ref-6', details: { phone: '0244000000' } });
+
+    expect(result.status).toBe('FAILED');
+    expect(result.failureReason).toBe('Could not reach the mobile money gateway. Please try again.');
+  });
 });

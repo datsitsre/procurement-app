@@ -37,14 +37,14 @@ describe('notifyUser + list + markRead + markAllRead', () => {
     await notifyUser(TEST_USER_ID, { type: 'QUOTE_RECEIVED', title: 'Second', body: 'second body' });
     await notifyUser(OTHER_USER_ID, { type: 'QUOTE_RECEIVED', title: 'Not for TEST_USER', body: 'x' });
 
-    const result = await list(TEST_USER_ID);
+    const result = await list(TEST_USER_ID, { cursor: null, take: 100 });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     // TEST_USER_ID is a real seeded user with its own seed notifications (and possibly other
     // test files' unread ones, if run concurrently) - assert only what this test itself created.
-    expect(result.data.every((n) => n.userId === TEST_USER_ID)).toBe(true);
-    expect(result.data[0].title).toBe('Second');
-    const mine = result.data.filter((n) => n.title === 'First' || n.title === 'Second');
+    expect(result.data.items.every((n) => n.userId === TEST_USER_ID)).toBe(true);
+    expect(result.data.items[0].title).toBe('Second');
+    const mine = result.data.items.filter((n) => n.title === 'First' || n.title === 'Second');
     expect(mine).toHaveLength(2);
     expect(mine.every((n) => n.read === false)).toBe(true);
   });

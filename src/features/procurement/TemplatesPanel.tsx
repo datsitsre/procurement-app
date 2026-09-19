@@ -79,7 +79,7 @@ export function TemplatesPanel({ companyId, userId, callerRole, tenant, currentL
 
   return (
     <div className="rounded-lg border border-border bg-surface p-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-sm font-semibold">
           <Bookmark className="h-4 w-4" aria-hidden="true" />
           Purchase templates

@@ -3,11 +3,11 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Star, X, Scale } from 'lucide-react';
-import { demoProducts } from '@/lib/demo-data/catalog';
 import { catalogService } from '@/services/catalog.service';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { buttonVariants } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { availableStock, resolveTierPrice, type Product, type SupplierProfile } from '@/types/catalog';
 import { cn } from '@/utils/cn';
 
@@ -29,10 +29,23 @@ export default function ComparePage() {
   // synchronous setState-in-effect (the SSR pass never touches `window`).
   const [productIds, setProductIds] = useState<string[]>(readCompareIds);
   const [suppliers, setSuppliers] = useState<SupplierProfile[]>([]);
+  const [products, setProducts] = useState<Product[] | null>(null);
 
   useEffect(() => {
     catalogService.listSuppliers().then((r) => r.ok && setSuppliers(r.data));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(productIds.map((id) => catalogService.getProductById(id))).then((results) => {
+      if (cancelled) return;
+      setProducts(results.filter((r): r is { ok: true; data: Product } => r.ok).map((r) => r.data));
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productIds.join(',')]);
 
   function remove(productId: string) {
     const next = productIds.filter((id) => id !== productId);
@@ -40,9 +53,17 @@ export default function ComparePage() {
     window.sessionStorage.setItem(COMPARE_STORAGE_KEY, JSON.stringify(next));
   }
 
-  const products = productIds
-    .map((id) => demoProducts.find((p) => p.id === id))
-    .filter((p): p is Product => !!p);
+  if (products === null) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-h1">Product comparison</h1>
+          <p className="text-body text-text-secondary">Compare price, stock, and delivery side by side.</p>
+        </div>
+        <Skeleton className="h-64" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">

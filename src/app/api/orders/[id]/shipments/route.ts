@@ -2,8 +2,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getAuthContext, unauthorized } from '@/server/auth/context';
 import { getOrder, listShipments } from '@/server/services/orders.service';
 import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
 
-export async function GET(request: NextRequest, ctx: RouteContext<'/api/orders/[id]/shipments'>) {
+export const GET = withErrorHandling("/api/orders/[id]/shipments", async (request: NextRequest, ctx: RouteContext<'/api/orders/[id]/shipments'>) => {
   const auth = await getAuthContext(request);
   if (!auth) return unauthorized();
 
@@ -15,4 +16,4 @@ export async function GET(request: NextRequest, ctx: RouteContext<'/api/orders/[
 
   const result = await listShipments(id);
   return NextResponse.json(result.ok ? result.data : []);
-}
+});

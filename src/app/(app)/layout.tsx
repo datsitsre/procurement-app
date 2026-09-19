@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth, useWorkspace } from '@/hooks/useAuth';
 import { CartProvider } from '@/hooks/useCart';
@@ -21,6 +21,18 @@ const brandByWorkspace = {
   platform: 'Platform admin',
 };
 
+const SIDEBAR_COLLAPSED_KEY = 'procurement.sidebar-collapsed.v1';
+
+/** Purely a per-viewer layout preference (does the sidebar show labels or just icons) - never
+ *  read back by the server and never a source of application data, so localStorage is the right
+ *  tool here (unlike the mocks this app spent several phases migrating away from). Read lazily
+ *  so the very first client render matches whatever the last render actually was, not a flash
+ *  of the default. */
+function readCollapsedPreference(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+}
+
 /**
  * Shell for every authenticated page: sidebar + topbar on desktop, topbar + bottom nav on
  * mobile (section 8). Not authenticated -> redirected to /login; this is a UX convenience,
@@ -31,6 +43,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { session, loading } = useAuth();
   const workspace = useWorkspace();
+  const [collapsed, setCollapsed] = useState(readCollapsedPreference);
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!loading && !session) {
@@ -57,10 +78,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         >
           Skip to main content
         </a>
-        <Sidebar items={navItems} brandLabel={brandByWorkspace[workspace]} />
+        <Sidebar items={navItems} brandLabel={brandByWorkspace[workspace]} collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
         {/* print:pl-0 - the sidebar it's otherwise reserving room for is print:hidden, so without
             this a printed/saved-to-PDF page keeps a blank left gutter the width of the sidebar. */}
-        <div className="flex flex-col lg:pl-(--sidebar-width) print:pl-0">
+        <div
+          style={{ ['--content-pl' as string]: collapsed ? 'var(--sidebar-width-collapsed)' : 'var(--sidebar-width)' }}
+          className="flex flex-col lg:pl-(--content-pl) print:pl-0"
+        >
           <Topbar />
           {/* print:pb-0 - pb-24 exists to clear the mobile bottom nav, which is itself
               print:hidden; left as-is this would just be blank trailing space in a PDF. */}

@@ -8,6 +8,7 @@ import { useAsyncData } from '@/hooks/useAsyncData';
 import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import type { SupplierProfile } from '@/types/catalog';
 
@@ -27,7 +28,7 @@ export default function SuppliersPage() {
   }, []);
 
   const filterKey = JSON.stringify({ search, selectedCategory });
-  const { data: suppliers } = useAsyncData<SupplierProfile[]>(filterKey, () =>
+  const { data: suppliers, error, reload } = useAsyncData<SupplierProfile[]>(filterKey, () =>
     catalogService.listSuppliers({ category: selectedCategory ?? undefined, search: search || undefined }),
   );
 
@@ -62,7 +63,9 @@ export default function SuppliersPage() {
         </div>
       </div>
 
-      {suppliers === null ? (
+      {error ? (
+        <ErrorState title="Couldn't load suppliers" description={error} secondaryAction={{ label: 'Try again', onClick: reload }} />
+      ) : suppliers === null ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-40" />

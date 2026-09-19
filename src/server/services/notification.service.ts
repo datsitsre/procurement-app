@@ -2,7 +2,8 @@ import 'server-only';
 import { db } from '@/server/db';
 import { ok } from '@/services/base';
 import { toNotificationDto } from '@/server/dto/notification';
-import type { ServiceResult, UUID } from '@/types/common';
+import { toCursorPage, type CursorPaginationParams } from '@/server/pagination';
+import type { CursorPage, ServiceResult, UUID } from '@/types/common';
 import type { Notification, NotificationType } from '@/types/notification';
 import type { Role } from '@/config/rbac';
 
@@ -14,9 +15,34 @@ import type { Role } from '@/config/rbac';
  * ...) so notifications are finally real events, not just a fixed seeded list.
  */
 
-export async function list(userId: UUID): Promise<ServiceResult<Notification[]>> {
-  const notifications = await db.notification.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
-  return ok(notifications.map(toNotificationDto));
+/** Cursor-paginated (Phase 16, section 5) - notifications are an append-only feed that can grow
+ *  without bound for a long-lived account, so this is keyed on `createdAt+id` rather than an
+ *  offset. The cursor itself is never trusted for authorization: the query stays scoped to
+ *  `userId` regardless of what a caller passes in. */
+export async function list(userId: UUID, pagination: CursorPaginationParams): Promise<ServiceResult<CursorPage<Notification>>> {
+  const where = pagination.cursor
+    ? {
+        userId,
+        OR: [
+          { createdAt: { lt: pagination.cursor.createdAt } },
+          { createdAt: pagination.cursor.createdAt, id: { lt: pagination.cursor.id } },
+        ],
+      }
+    : { userId };
+  const rows = await db.notification.findMany({
+    where,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: pagination.take + 1,
+  });
+  const page = toCursorPage(rows, pagination.take);
+  return ok({ ...page, items: page.items.map(toNotificationDto) });
+}
+
+/** Server-side unread count (Phase 16) - the notification bell's badge must reflect every unread
+ *  notification, not just whichever page happens to be loaded in the browser. */
+export async function getUnreadCount(userId: UUID): Promise<ServiceResult<number>> {
+  const count = await db.notification.count({ where: { userId, read: false } });
+  return ok(count);
 }
 
 export async function markRead(notificationId: UUID, userId: UUID): Promise<ServiceResult<void>> {

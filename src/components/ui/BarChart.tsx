@@ -20,7 +20,7 @@ export function BarChart({ data, valueFormatter = String, height = 160 }: BarCha
   const max = Math.max(1, ...data.map((d) => d.value));
 
   return (
-    <div className="flex items-end gap-2" style={{ height }}>
+    <div className="flex gap-2" style={{ height }}>
       {data.map((d) => (
         <div key={d.label} className="flex flex-1 flex-col items-center gap-1.5" title={`${d.label}: ${valueFormatter(d.value)}`}>
           <span className="text-caption">{d.value > 0 ? valueFormatter(d.value) : ''}</span>

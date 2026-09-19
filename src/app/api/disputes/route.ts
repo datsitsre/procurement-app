@@ -7,20 +7,21 @@ import { getOrder } from '@/server/services/orders.service';
 import { createDispute, listAllDisputes } from '@/server/services/disputes.service';
 import { NewDisputeSchema } from '@/server/validation/orders';
 import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
 
 /** Every dispute across every company - the admin dispute queue (section 46/49). */
-export async function GET(request: NextRequest) {
+export const GET = withErrorHandling("/api/disputes", async (request: NextRequest) => {
   const access = await requireAuthenticated(request, Permission.PLATFORM_MANAGE);
   if (!access.ok) return access.response;
 
   const result = await listAllDisputes();
   return NextResponse.json(result.ok ? result.data : []);
-}
+});
 
 /** A buyer reports an issue with one of their own orders. `companyId`/`supplierId` are derived
  *  from the real order record, never trusted from the caller directly - otherwise a buyer could
  *  fabricate a dispute against an order that isn't theirs (section 9.2). */
-export async function POST(request: NextRequest) {
+export const POST = withErrorHandling("/api/disputes", async (request: NextRequest) => {
   if (!isSameOrigin(request)) return NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 });
 
   const auth = await getAuthContext(request);
@@ -44,4 +45,4 @@ export async function POST(request: NextRequest) {
   });
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
   return NextResponse.json(result.data);
-}
+});

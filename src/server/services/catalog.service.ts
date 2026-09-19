@@ -2,8 +2,9 @@ import 'server-only';
 import { db } from '@/server/db';
 import { fail, ok } from '@/services/base';
 import { toCategoryDto, toProductDto, toSupplierProfileDto, toWarehouseDto } from '@/server/dto/catalog';
+import { toPage, type PaginationParams } from '@/server/pagination';
 import { recordAudit } from './audit.service';
-import type { ServiceResult, UUID } from '@/types/common';
+import type { Page, ServiceResult, UUID } from '@/types/common';
 import type { Category, Product, SupplierProfile, Warehouse } from '@/types/catalog';
 import type { Prisma } from '@prisma/client';
 
@@ -36,10 +37,21 @@ export interface ProductFilters {
   sortBy?: 'relevance' | 'priceAsc' | 'priceDesc' | 'rating';
 }
 
-/** Only published listings ever reach the buyer-facing catalog (section 46) - a product
- *  pending or rejected in moderation is still visible to its own supplier and to admins, just
- *  not through this query. */
-export async function listProducts(filters: ProductFilters = {}): Promise<ServiceResult<Product[]>> {
+/**
+ * Only published listings ever reach the buyer-facing catalog (section 46) - a product pending
+ * or rejected in moderation is still visible to its own supplier and to admins, just not through
+ * this query.
+ *
+ * Paginated (Phase 17, section 11) - a real, measured benchmark against a 1000-product scratch
+ * fixture found this unpaginated query taking ~114ms average and returning a ~480KB response
+ * (vs. ~30ms/~12KB for every already-paginated endpoint) - see PHASE17_FINAL_REPORT.md's
+ * Performance Measurements section. `relevance` (the default/no explicit `sortBy`) now sorts by
+ * `createdAt desc` rather than leaving `orderBy: {}` (database-default, unspecified order) -
+ * fixing a latent correctness bug this pagination work surfaced: an unordered `findMany` makes
+ * offset pagination unstable, since Postgres doesn't guarantee any particular row order across
+ * repeated queries without an explicit ORDER BY.
+ */
+export async function listProducts(filters: ProductFilters, pagination: PaginationParams): Promise<ServiceResult<Page<Product>>> {
   const category = filters.categorySlug ? await db.category.findUnique({ where: { slug: filters.categorySlug } }) : null;
   const text = filters.search?.trim();
 
@@ -68,10 +80,13 @@ export async function listProducts(filters: ProductFilters = {}): Promise<Servic
         ? { basePrice: 'desc' }
         : filters.sortBy === 'rating'
           ? { rating: 'desc' }
-          : {};
+          : { createdAt: 'desc' };
 
-  const products = await db.product.findMany({ where, orderBy, include: PRODUCT_INCLUDE });
-  return ok(products.map(toProductDto));
+  const [products, total] = await Promise.all([
+    db.product.findMany({ where, orderBy, include: PRODUCT_INCLUDE, skip: pagination.skip, take: pagination.take }),
+    db.product.count({ where }),
+  ]);
+  return ok(toPage(products.map(toProductDto), total, pagination));
 }
 
 export async function getProductBySlug(slug: string): Promise<ServiceResult<Product>> {

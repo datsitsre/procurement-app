@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { enforceRateLimit } from '@/server/auth/rate-limit';
 import { processPaymentWebhook, verifyWebhookSignature } from '@/server/services/webhook.service';
 import { PaymentWebhookSchema } from '@/server/validation/webhooks';
+import { withErrorHandling } from '@/server/errors';
 
 /**
  * Inbound payment-provider webhook (Phase 14, Stage 11). Not session/cookie-authenticated - a
@@ -13,7 +14,7 @@ import { PaymentWebhookSchema } from '@/server/validation/webhooks';
  * webhook URL in a real integration) but isn't otherwise trusted - the signature check is the
  * only thing that matters for whether this request is genuine.
  */
-export async function POST(request: NextRequest, ctx: RouteContext<'/api/webhooks/payments/[provider]'>) {
+export const POST = withErrorHandling("/api/webhooks/payments/[provider]", async (request: NextRequest, ctx: RouteContext<'/api/webhooks/payments/[provider]'>) => {
   const { provider } = await ctx.params;
 
   // Bounds signature-guessing spam without throttling a real provider's own legitimate retry
@@ -48,4 +49,4 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/webhook
   if (!result.ok) return NextResponse.json({ ok: true, provider, note: result.error.message });
 
   return NextResponse.json({ ok: true, provider, changed: result.data.changed });
-}
+});

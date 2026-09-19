@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 import type { Product } from '@/types/catalog';
 
 export default function AdminProductsPage() {
@@ -27,14 +28,17 @@ function ModerationQueue() {
   const { session } = useAuth();
   const membership = useActiveMembership();
   const { data: products, reload } = useAsyncData<Product[]>('admin-products-list', () => catalogService.listAllProductsForModeration());
+  // Primes the client-side supplier-name cache (see catalog.service.ts's own note on why this
+  // exists) - a real request, needed because a direct visit to this page (not routed through
+  // /admin, which already lists suppliers) would otherwise show every supplier name blank.
+  useAsyncData('admin-supplier-cache', () => catalogService.listAllSuppliers());
+  const toast = useToast();
   const [actingId, setActingId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [note, setNote] = useState('');
-  const [error, setError] = useState<string | null>(null);
 
-  async function decide(productId: string, decision: 'PUBLISHED' | 'REJECTED', decisionNote?: string) {
+  async function decide(productId: string, productName: string, decision: 'PUBLISHED' | 'REJECTED', decisionNote?: string) {
     if (!session || !membership) return;
-    setError(null);
     setActingId(productId);
     const result = await catalogService.moderateProduct(productId, decision, decisionNote, membership.role, {
       id: session.user.id,
@@ -42,11 +46,12 @@ function ModerationQueue() {
     });
     setActingId(null);
     if (!result.ok) {
-      setError(result.error.message);
+      toast.show(result.error.message, 'error');
       return;
     }
     setRejectingId(null);
     setNote('');
+    toast.show(`${productName} ${decision === 'PUBLISHED' ? 'published' : 'rejected'}.`, 'success');
     reload();
   }
 
@@ -59,8 +64,6 @@ function ModerationQueue() {
         <h1 className="text-h1">Products</h1>
         <p className="text-body text-text-secondary">Review newly submitted product listings before they reach buyers.</p>
       </div>
-
-      {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
 
       {products === null ? (
         <SkeletonTable rows={4} columns={4} />
@@ -99,7 +102,7 @@ function ModerationQueue() {
                           <Button size="sm" variant="outline" onClick={() => setRejectingId(null)}>
                             Cancel
                           </Button>
-                          <Button size="sm" variant="danger" loading={actingId === p.id} disabled={!note.trim()} onClick={() => decide(p.id, 'REJECTED', note)}>
+                          <Button size="sm" variant="danger" loading={actingId === p.id} disabled={!note.trim()} onClick={() => decide(p.id, p.name, 'REJECTED', note)}>
                             Confirm rejection
                           </Button>
                         </div>
@@ -109,7 +112,7 @@ function ModerationQueue() {
                         <Button size="sm" variant="outline" onClick={() => setRejectingId(p.id)}>
                           Reject
                         </Button>
-                        <Button size="sm" loading={actingId === p.id} onClick={() => decide(p.id, 'PUBLISHED')}>
+                        <Button size="sm" loading={actingId === p.id} onClick={() => decide(p.id, p.name, 'PUBLISHED')}>
                           Publish
                         </Button>
                       </div>

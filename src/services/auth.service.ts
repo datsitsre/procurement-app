@@ -156,6 +156,15 @@ function mirrorIntoRuntimeCache(payload: ServerSessionPayload): Session | null {
     companyUsers: upsertById(runtime.companyUsers, payload.memberships.filter((m) => !demoMembershipIds.has(m.id))),
   });
 
+  // `parentGroupId`/`parentGroupName` (Phase 19) come from a real server-side join
+  // (server/dto/session.ts) that has nothing to do with the "richer seed data" reasoning above -
+  // every company on this session, seeded or not, gets its real, current value written as a
+  // profile override, so `allCompanies()` always reflects the group the server actually
+  // resolved instead of silently keeping whatever (or nothing) the static seed had.
+  for (const company of payload.companies) {
+    writeCompanyProfileOverride(company.id, { parentGroupId: company.parentGroupId, parentGroupName: company.parentGroupName });
+  }
+
   // Every company on this session that has one gets its real SupplierProfile primed into
   // catalog.service.ts's sync cache right now, from data already in hand - not lazily, the next
   // time some page happens to call listSuppliers(). getSupplierByCompanyId(activeCompany.id) is

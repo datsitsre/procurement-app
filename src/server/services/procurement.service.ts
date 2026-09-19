@@ -9,7 +9,8 @@ import {
   toRfqDto,
 } from '@/server/dto/procurement';
 import { hasPermission, Permission, RoleLabels, type Role } from '@/config/rbac';
-import type { ServiceResult, UUID } from '@/types/common';
+import { toPage, type PaginationParams } from '@/server/pagination';
+import type { Page, ServiceResult, UUID } from '@/types/common';
 import type { ApprovalRule, NegotiationMessage, PurchaseRequest, PurchaseRequestItem, Quote, RFQ, RFQItem } from '@/types/procurement';
 import type { Prisma } from '@prisma/client';
 
@@ -29,18 +30,42 @@ const RFQ_INCLUDE = {
 
 const QUOTE_INCLUDE = { items: true, supplier: true } satisfies Prisma.QuoteInclude;
 
-export async function listRfqs(companyId: UUID): Promise<ServiceResult<RFQ[]>> {
-  const rfqs = await db.rFQ.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' }, include: RFQ_INCLUDE });
-  return ok(rfqs.map(toRfqDto));
+/** Paginated (Phase 19, section 1) - a buyer's RFQ history grows with every quotation request and
+ *  has no natural upper bound over a multi-year account, the same shape as `listOrders`. Tenant
+ *  filtering happens inside the same query as pagination, never after. */
+export async function listRfqs(companyId: UUID, pagination: PaginationParams): Promise<ServiceResult<Page<RFQ>>> {
+  const [rfqs, total] = await Promise.all([
+    db.rFQ.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' }, include: RFQ_INCLUDE, skip: pagination.skip, take: pagination.take }),
+    db.rFQ.count({ where: { companyId } }),
+  ]);
+  return ok(toPage(rfqs.map(toRfqDto), total, pagination));
 }
 
-export async function listRfqsForSupplier(supplierId: UUID): Promise<ServiceResult<RFQ[]>> {
-  const rfqs = await db.rFQ.findMany({
-    where: { suppliers: { some: { supplierId } } },
-    orderBy: { createdAt: 'desc' },
-    include: RFQ_INCLUDE,
+export async function listRfqsForSupplier(supplierId: UUID, pagination: PaginationParams): Promise<ServiceResult<Page<RFQ>>> {
+  const where = { suppliers: { some: { supplierId } } };
+  const [rfqs, total] = await Promise.all([
+    db.rFQ.findMany({ where, orderBy: { createdAt: 'desc' }, include: RFQ_INCLUDE, skip: pagination.skip, take: pagination.take }),
+    db.rFQ.count({ where }),
+  ]);
+  return ok(toPage(rfqs.map(toRfqDto), total, pagination));
+}
+
+/** Real counts, never derived from a page of `listRfqs`/`listRfqsForSupplier` (Phase 19) - the
+ *  buyer/supplier dashboards' own "pending RFQs" stat cards need this across the *entire* tenant
+ *  history, not just whatever happens to be on the current page. Matches the same
+ *  `getSupplierOrdersToFulfillCount` pattern already established in `orders.service.ts`. */
+export async function getRfqPendingCount(companyId: UUID): Promise<ServiceResult<number>> {
+  const count = await db.rFQ.count({
+    where: { companyId, status: { notIn: ['ACCEPTED', 'REJECTED', 'EXPIRED', 'CANCELLED', 'DRAFT'] } },
   });
-  return ok(rfqs.map(toRfqDto));
+  return ok(count);
+}
+
+export async function getRfqPendingCountForSupplier(supplierId: UUID): Promise<ServiceResult<number>> {
+  const count = await db.rFQ.count({
+    where: { suppliers: { some: { supplierId, status: 'INVITED' } } },
+  });
+  return ok(count);
 }
 
 /** No auth check here - the caller (buyer company vs. invited supplier vs. neither) is decided
@@ -280,13 +305,20 @@ async function resolveApprovalSteps(companyId: UUID, amount: number): Promise<{ 
   return roles.map((approverRole, index) => ({ stepOrder: index + 1, approverRole }));
 }
 
-export async function listPurchaseRequests(companyId: UUID): Promise<ServiceResult<PurchaseRequest[]>> {
-  const requests = await db.purchaseRequest.findMany({
-    where: { companyId },
-    orderBy: { createdAt: 'desc' },
-    include: PURCHASE_REQUEST_INCLUDE,
-  });
-  return ok(requests.map(toPurchaseRequestDto));
+/** Paginated (Phase 16, section 5). Tenant scoping happens inside the same query as pagination,
+ *  never after. */
+export async function listPurchaseRequests(companyId: UUID, pagination: PaginationParams): Promise<ServiceResult<Page<PurchaseRequest>>> {
+  const [requests, total] = await Promise.all([
+    db.purchaseRequest.findMany({
+      where: { companyId },
+      orderBy: { createdAt: 'desc' },
+      include: PURCHASE_REQUEST_INCLUDE,
+      skip: pagination.skip,
+      take: pagination.take,
+    }),
+    db.purchaseRequest.count({ where: { companyId } }),
+  ]);
+  return ok(toPage(requests.map(toPurchaseRequestDto), total, pagination));
 }
 
 export async function getPurchaseRequest(id: UUID): Promise<ServiceResult<PurchaseRequest>> {

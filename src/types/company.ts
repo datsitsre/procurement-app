@@ -43,6 +43,11 @@ export interface Company {
   supplierProfile?: SupplierProfile;
   /** Companies operating under the same parent group, for the company switcher (section 10). */
   parentGroupId?: UUID;
+  /** The parent group's real display name (Phase 19) - present alongside `parentGroupId` the
+   *  same way `supplierProfile` sits alongside `supplierProfileId`: the session already joins
+   *  and returns this company's own group at login/session-load time, so the switcher never
+   *  needs a second request (or a static, potentially-stale lookup) just to show a group label. */
+  parentGroupName?: string;
   createdAt: ISODateTime;
 }
 
@@ -111,13 +116,6 @@ export interface Budget {
   /** 1-12, set only when period is MONTHLY. */
   month?: number;
   amount: number;
-}
-
-/** A named group of related companies (e.g. "Acme Technologies") shown in the switcher. */
-export interface CompanyGroup {
-  id: UUID;
-  name: string;
-  companyIds: UUID[];
 }
 
 /** Membership of a User in a Company, with the role that applies within that company only -

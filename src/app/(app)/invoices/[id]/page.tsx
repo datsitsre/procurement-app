@@ -14,6 +14,8 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
+import { Breadcrumb } from '@/components/ui/Breadcrumb';
+import { useToast } from '@/components/ui/Toast';
 import { PaymentMethodConfigs } from '@/config/payment-methods';
 import { formatDate } from '@/utils/format';
 import { cn } from '@/utils/cn';
@@ -27,6 +29,7 @@ export default function InvoiceDetailPage() {
   const membership = useActiveMembership();
   const tenant = useTenantContext();
   const { data: invoice, loading, error, reload } = useAsyncData<Invoice>(params.id, () => invoicesService.getInvoice(params.id, tenant));
+  const toast = useToast();
 
   const [paying, setPaying] = useState(false);
   const [method, setMethod] = useState<PaymentMethod | null>(null);
@@ -76,6 +79,7 @@ export default function InvoiceDetailPage() {
       return;
     }
     setPaying(false);
+    toast.show('Payment submitted.', 'success');
     reload();
   }
 
@@ -90,6 +94,10 @@ export default function InvoiceDetailPage() {
           <Printer className="h-4 w-4" aria-hidden="true" />
           Download / print
         </Button>
+      </div>
+
+      <div className="print:hidden">
+        <Breadcrumb items={[{ label: 'Invoices', href: '/invoices' }, { label: invoice.reference }]} />
       </div>
 
       <div className="rounded-lg border border-border bg-surface p-6">

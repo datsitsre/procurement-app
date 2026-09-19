@@ -56,6 +56,34 @@ function optionalMobileMoneyGateway(prefix: string, defaultBaseUrl: string): Mob
   };
 }
 
+/**
+ * Config for an S3-compatible object-storage bucket (Phase 21 - the production counterpart to
+ * `LocalDiskStorageProvider`, see server/services/storage/). Returns null - the same "null, not a
+ * config with empty strings" shape `optionalMobileMoneyGateway` already uses - when any required
+ * field is unset, so `storage/index.ts` can use `=== null` as the single "is a real bucket
+ * actually configured" check and fall back to local disk otherwise. `endpoint` is optional: unset
+ * means real AWS S3 (the SDK's own default endpoint resolution for `region`); set it to point at
+ * any S3-compatible provider instead (Cloudflare R2, DigitalOcean Spaces, MinIO, Backblaze B2,
+ * ...) - "S3-compatible", not "AWS-only", is the actual requirement here.
+ */
+export interface S3StorageEnv {
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  endpoint: string | undefined;
+}
+
+function optionalS3Storage(): S3StorageEnv | null {
+  const bucket = optional('STORAGE_BUCKET', '');
+  const region = optional('STORAGE_REGION', '');
+  const accessKeyId = optional('STORAGE_ACCESS_KEY_ID', '');
+  const secretAccessKey = optional('STORAGE_SECRET_ACCESS_KEY', '');
+  if (!bucket || !region || !accessKeyId || !secretAccessKey) return null;
+
+  return { bucket, region, accessKeyId, secretAccessKey, endpoint: optional('STORAGE_ENDPOINT', '') || undefined };
+}
+
 export const env = {
   NODE_ENV: optional('NODE_ENV', 'development') as 'development' | 'test' | 'staging' | 'production',
   DATABASE_URL: required('DATABASE_URL'),
@@ -79,6 +107,10 @@ export const env = {
   MTN_MOMO: optionalMobileMoneyGateway('MTN_MOMO', 'https://sandbox.momodeveloper.mtn.com'),
   TELECEL_CASH: optionalMobileMoneyGateway('TELECEL_CASH', ''),
   AIRTELTIGO_MONEY: optionalMobileMoneyGateway('AIRTELTIGO_MONEY', ''),
+  // Real object storage (Phase 21 - see server/services/storage/index.ts). No bucket exists in
+  // this environment; every field is unset, so this resolves to null and storage stays on
+  // LocalDiskStorageProvider.
+  STORAGE: optionalS3Storage(),
 };
 
 export const isProduction = env.NODE_ENV === 'production';

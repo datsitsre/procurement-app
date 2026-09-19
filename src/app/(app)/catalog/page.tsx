@@ -10,8 +10,31 @@ import { useAsyncData } from '@/hooks/useAsyncData';
 import { ProductCard } from '@/features/catalog/ProductCard';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import type { Page } from '@/types/common';
 import type { Category, Product } from '@/types/catalog';
+
+const PAGE_SIZE = 25;
+
+function Pager({ page, totalPages, total, onChange }: { page: number; totalPages: number; total: number; onChange: (page: number) => void }) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between">
+      <p className="text-caption text-text-secondary">
+        Page {page} of {totalPages} &middot; {total} total
+      </p>
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onChange(page - 1)}>
+          Previous
+        </Button>
+        <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => onChange(page + 1)}>
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 const COMPARE_STORAGE_KEY = 'procurement.compare.v1';
 const MAX_COMPARE = 3;
@@ -46,15 +69,22 @@ export default function CatalogPage() {
   // Lazy initializer, not an effect - sessionStorage is read once on mount without a
   // synchronous setState-in-effect (the SSR pass never touches `window`).
   const [compareIds, setCompareIds] = useState<string[]>(readCompareIds);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     catalogService.listCategories().then((r) => r.ok && setCategories(r.data));
   }, []);
 
-  const filterKey = JSON.stringify({ selectedCategory, search, sortBy, supplierId });
-  const { data: products } = useAsyncData(filterKey, () =>
-    catalogService.listProducts({ categorySlug: selectedCategory ?? undefined, search: search || undefined, sortBy, supplierId: supplierId ?? undefined }),
+  const filterKey = JSON.stringify({ selectedCategory, search, sortBy, supplierId, page });
+  const { data: result, error, reload } = useAsyncData<Page<Product>>(filterKey, () =>
+    catalogService.listProducts(
+      { categorySlug: selectedCategory ?? undefined, search: search || undefined, sortBy, supplierId: supplierId ?? undefined },
+      page,
+      PAGE_SIZE,
+    ),
   );
+  const products = result?.items ?? null;
+  const totalPages = result ? Math.max(1, Math.ceil(result.total / result.pageSize)) : 1;
 
   function persistCompare(ids: string[]) {
     setCompareIds(ids);
@@ -116,12 +146,18 @@ export default function CatalogPage() {
           type="search"
           placeholder="Search by name, brand, or SKU…"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
           className="h-9 w-full max-w-xs rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         />
         <select
           value={sortBy}
-          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          onChange={(e) => {
+            setSortBy(e.target.value as typeof sortBy);
+            setPage(1);
+          }}
           className="h-9 rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           <option value="relevance">Sort: relevance</option>
@@ -136,7 +172,11 @@ export default function CatalogPage() {
           <button
             key={c.id}
             type="button"
-            onClick={() => setSelectedCategory(c.slug)}
+            aria-pressed={selectedCategory === c.slug}
+            onClick={() => {
+              setSelectedCategory(c.slug);
+              setPage(1);
+            }}
             className={
               'rounded-md border px-3 py-1.5 text-sm font-medium ' +
               (selectedCategory === c.slug
@@ -149,7 +189,9 @@ export default function CatalogPage() {
         ))}
       </div>
 
-      {products === null ? (
+      {error ? (
+        <ErrorState title="Couldn't load the catalog" description={error} secondaryAction={{ label: 'Try again', onClick: reload }} />
+      ) : products === null ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
           {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={i} className="h-72" />
@@ -158,18 +200,21 @@ export default function CatalogPage() {
       ) : products.length === 0 ? (
         <EmptyState title="No products match" description="Try a different search term or category." />
       ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {products.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              onAddToCart={handleAddToCart}
-              addingToCart={addingId === product.id}
-              onCompareToggle={toggleCompare}
-              compareChecked={compareIds.includes(product.id)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {products.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                onAddToCart={handleAddToCart}
+                addingToCart={addingId === product.id}
+                onCompareToggle={toggleCompare}
+                compareChecked={compareIds.includes(product.id)}
+              />
+            ))}
+          </div>
+          <Pager page={page} totalPages={totalPages} total={result?.total ?? 0} onChange={setPage} />
+        </>
       )}
 
       {compareIds.length > 0 && (

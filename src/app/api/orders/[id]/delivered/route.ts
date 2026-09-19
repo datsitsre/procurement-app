@@ -4,8 +4,9 @@ import { getAuthContext, unauthorized, forbidden } from '@/server/auth/context';
 import { isSameOrigin } from '@/server/auth/csrf';
 import { getOrder, markDelivered } from '@/server/services/orders.service';
 import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
 
-export async function POST(request: NextRequest, ctx: RouteContext<'/api/orders/[id]/delivered'>) {
+export const POST = withErrorHandling("/api/orders/[id]/delivered", async (request: NextRequest, ctx: RouteContext<'/api/orders/[id]/delivered'>) => {
   if (!isSameOrigin(request)) return NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 });
 
   const auth = await getAuthContext(request);
@@ -21,4 +22,4 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/orders/
   const result = await markDelivered(id);
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
   return NextResponse.json(result.data);
-}
+});

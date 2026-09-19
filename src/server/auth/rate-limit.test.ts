@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
-import { checkRateLimit, recordAttempt, clearAttempts, enforceRateLimit } from './rate-limit';
+import { checkRateLimit, recordAttempt, clearAttempts, enforceRateLimit, getRetryAfterSeconds } from './rate-limit';
 
 describe('rate limiting (section 7 - brute-force/abuse protection)', () => {
   it('allows attempts under the limit', () => {
@@ -51,6 +51,13 @@ describe('rate limiting (section 7 - brute-force/abuse protection)', () => {
     expect(checkRateLimit('webhook', webhookKey)).toBe(true);
   });
 
+  it("procurementWrite (budgets/purchase-templates/recurring-purchases mutations, section 8) enforces its own limit of 20/min", () => {
+    const key = `test:${crypto.randomUUID()}`;
+    for (let i = 0; i < 20; i++) recordAttempt('procurementWrite', key);
+    expect(checkRateLimit('procurementWrite', key)).toBe(false);
+    expect(checkRateLimit('payment', key)).toBe(true);
+  });
+
   describe('enforceRateLimit', () => {
     it('returns null and records the attempt when under the limit', () => {
       const key = `test:${crypto.randomUUID()}`;
@@ -66,6 +73,38 @@ describe('rate limiting (section 7 - brute-force/abuse protection)', () => {
       expect(blocked?.status).toBe(429);
       const body = await blocked?.json();
       expect(body.error).toMatch(/too many/i);
+    });
+
+    it('a 429 response carries a real Retry-After header reflecting the actual remaining window, not a hardcoded value (Phase 18, section 13)', () => {
+      const key = `test:${crypto.randomUUID()}`;
+      for (let i = 0; i < 20; i++) enforceRateLimit('negotiation', key); // negotiation's max is 20, window 60s
+      const blocked = enforceRateLimit('negotiation', key);
+      const retryAfter = Number(blocked?.headers.get('Retry-After'));
+      expect(retryAfter).toBeGreaterThan(0);
+      expect(retryAfter).toBeLessThanOrEqual(60); // negotiation's configured window
+    });
+  });
+
+  describe('getRetryAfterSeconds', () => {
+    it('returns the full window when no bucket exists yet for the key', () => {
+      const key = `test:${crypto.randomUUID()}`;
+      expect(getRetryAfterSeconds('negotiation', key)).toBe(60); // negotiation's window is 60s
+    });
+
+    it('returns a smaller value the closer the window is to resetting, never 0 or negative', () => {
+      const key = `test:${crypto.randomUUID()}`;
+      recordAttempt('payment', key); // starts the window now
+      const remaining = getRetryAfterSeconds('payment', key);
+      expect(remaining).toBeGreaterThan(0);
+      expect(remaining).toBeLessThanOrEqual(15 * 60); // payment's configured window
+    });
+
+    it('different kinds for the same key have independent windows/remaining times', () => {
+      const key = `test:${crypto.randomUUID()}`;
+      recordAttempt('auth', key);
+      recordAttempt('webhook', key);
+      // auth's window is 15 min, webhook's is 1 min - these must not be conflated.
+      expect(getRetryAfterSeconds('auth', key)).toBeGreaterThan(getRetryAfterSeconds('webhook', key));
     });
   });
 });

@@ -3,8 +3,9 @@ import { getAuthContext, unauthorized } from '@/server/auth/context';
 import { getOrder } from '@/server/services/orders.service';
 import { getInvoiceForOrder } from '@/server/services/invoices.service';
 import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
 
-export async function GET(request: NextRequest, ctx: RouteContext<'/api/orders/[id]/invoice'>) {
+export const GET = withErrorHandling("/api/orders/[id]/invoice", async (request: NextRequest, ctx: RouteContext<'/api/orders/[id]/invoice'>) => {
   const auth = await getAuthContext(request);
   if (!auth) return unauthorized();
 
@@ -16,4 +17,4 @@ export async function GET(request: NextRequest, ctx: RouteContext<'/api/orders/[
 
   const result = await getInvoiceForOrder(id);
   return NextResponse.json(result.ok ? result.data : null);
-}
+});

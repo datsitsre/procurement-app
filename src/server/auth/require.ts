@@ -129,19 +129,38 @@ export async function requireAuthenticated(request: NextRequest, permission?: Pe
  *  CRON_SECRET isn't configured, the same fail-closed shape webhook signature verification uses,
  *  so an unconfigured deployment can't be swept by an unauthenticated caller who simply omits
  *  the header. Constant-time comparison so response timing can't leak how much of a guessed
- *  secret was correct. */
+ *  secret was correct.
+ *
+ *  Accepts the secret two ways (Phase 23 - a real, deployment-blocking gap found while preparing
+ *  for Vercel): the original `x-cron-secret` header (system crontab + curl, a GitHub Actions
+ *  workflow - anything that can send an arbitrary header), OR `Authorization: Bearer
+ *  <CRON_SECRET>` - the ONLY header Vercel Cron itself is documented to send automatically (it
+ *  adds this header on every scheduled invocation whenever a project env var literally named
+ *  `CRON_SECRET` is set; `vercel.json`'s own cron config has no field to customize the header
+ *  Vercel sends). Without this second check, Vercel Cron's own pings could never have
+ *  authenticated against this route no matter how `CRON_SECRET` was configured - this is
+ *  additive, not a replacement: every existing caller using `x-cron-secret` keeps working
+ *  unchanged. */
 export async function requireCronSecret(request: NextRequest): Promise<{ ok: true } | { ok: false; response: NextResponse }> {
   const { env } = await import('@/server/env');
-  const provided = request.headers.get('x-cron-secret') ?? '';
   const expected = env.CRON_SECRET;
-
-  const providedBuffer = Buffer.from(provided);
   const expectedBuffer = Buffer.from(expected);
-  const valid =
-    expected.length > 0 &&
-    providedBuffer.length === expectedBuffer.length &&
-    crypto.timingSafeEqual(providedBuffer, expectedBuffer);
 
-  if (!valid) return { ok: false, response: NextResponse.json({ error: 'Unauthorized.' }, { status: 401 }) };
+  function matches(provided: string): boolean {
+    const providedBuffer = Buffer.from(provided);
+    return (
+      expected.length > 0 &&
+      providedBuffer.length === expectedBuffer.length &&
+      crypto.timingSafeEqual(providedBuffer, expectedBuffer)
+    );
+  }
+
+  const headerSecret = request.headers.get('x-cron-secret') ?? '';
+  const authHeader = request.headers.get('authorization') ?? '';
+  const bearerSecret = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : '';
+
+  if (!matches(headerSecret) && !matches(bearerSecret)) {
+    return { ok: false, response: NextResponse.json({ error: 'Unauthorized.' }, { status: 401 }) };
+  }
   return { ok: true };
 }

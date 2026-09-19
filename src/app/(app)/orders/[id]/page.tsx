@@ -16,6 +16,8 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
+import { Breadcrumb } from '@/components/ui/Breadcrumb';
+import { useToast } from '@/components/ui/Toast';
 import { formatDate, formatDateTime } from '@/utils/format';
 import { hasPermission, Permission, type Role } from '@/config/rbac';
 import { reorderOrder } from '@/features/orders/reorder';
@@ -85,6 +87,8 @@ export default function OrderDetailPage() {
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         Back to orders
       </Link>
+
+      <Breadcrumb items={[{ label: 'Orders', href: '/orders' }, { label: order.reference }]} />
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -259,21 +263,21 @@ function FulfillmentPanel({
   tenant: TenantContext;
   onChanged: () => void;
 }) {
+  const toast = useToast();
   const [driverName, setDriverName] = useState('');
   const [showDispatchForm, setShowDispatchForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  async function run(action: () => Promise<{ ok: boolean; error?: { message: string } }>) {
+  async function run(action: () => Promise<{ ok: boolean; error?: { message: string } }>, successMessage: string) {
     setSubmitting(true);
-    setError(null);
     const result = await action();
     setSubmitting(false);
     if (!result.ok) {
-      setError(result.error?.message ?? 'Something went wrong.');
+      toast.show(result.error?.message ?? 'Something went wrong.', 'error');
       return;
     }
     setShowDispatchForm(false);
+    toast.show(successMessage, 'success');
     onChanged();
   }
 
@@ -285,10 +289,12 @@ function FulfillmentPanel({
     <div className="rounded-lg border border-border bg-surface p-5">
       <p className="mb-3 text-h3">Fulfillment</p>
 
-      {error && <p className="mb-3 rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
-
       {order.status === 'CONFIRMED' && (
-        <Button className="w-full" loading={submitting} onClick={() => run(() => ordersService.markProcessing(order.id, callerRole, tenant))}>
+        <Button
+          className="w-full"
+          loading={submitting}
+          onClick={() => run(() => ordersService.markProcessing(order.id, callerRole, tenant), 'Order marked as processing.')}
+        >
           Start processing
         </Button>
       )}
@@ -306,7 +312,11 @@ function FulfillmentPanel({
             <Button variant="outline" className="flex-1" onClick={() => setShowDispatchForm(false)} disabled={submitting}>
               Cancel
             </Button>
-            <Button className="flex-1" loading={submitting} onClick={() => run(() => ordersService.dispatchOrder(order.id, driverName, callerRole, tenant))}>
+            <Button
+              className="flex-1"
+              loading={submitting}
+              onClick={() => run(() => ordersService.dispatchOrder(order.id, driverName, callerRole, tenant), 'Order dispatched.')}
+            >
               Confirm dispatch
             </Button>
           </div>
@@ -314,7 +324,11 @@ function FulfillmentPanel({
       )}
 
       {order.status === 'SHIPPED' && (
-        <Button className="w-full" loading={submitting} onClick={() => run(() => ordersService.markDelivered(order.id, callerRole, tenant))}>
+        <Button
+          className="w-full"
+          loading={submitting}
+          onClick={() => run(() => ordersService.markDelivered(order.id, callerRole, tenant), 'Order marked as delivered.')}
+        >
           Mark delivered
         </Button>
       )}
@@ -335,11 +349,11 @@ function DisputePanel({
   dispute: Dispute | null;
   onChanged: () => void;
 }) {
+  const toast = useToast();
   const [reporting, setReporting] = useState(false);
   const [reason, setReason] = useState('');
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   if (dispute) {
     return (
@@ -362,14 +376,14 @@ function DisputePanel({
 
   async function submit() {
     setSubmitting(true);
-    setError(null);
     const result = await disputesService.createDispute({ orderId: order.id, reason, description }, tenant);
     setSubmitting(false);
     if (!result.ok) {
-      setError(result.error.message);
+      toast.show(result.error.message, 'error');
       return;
     }
     setReporting(false);
+    toast.show('Issue reported. We’ll follow up on this dispute.', 'success');
     onChanged();
   }
 
@@ -394,7 +408,6 @@ function DisputePanel({
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
           </div>
-          {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setReporting(false)} disabled={submitting}>
               Cancel

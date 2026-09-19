@@ -28,13 +28,13 @@ export interface CompanyProfilePatch {
 }
 
 export async function getCompanyProfile(companyId: UUID): Promise<ServiceResult<Company>> {
-  const company = await db.company.findUnique({ where: { id: companyId }, include: { addresses: true } });
+  const company = await db.company.findUnique({ where: { id: companyId }, include: { addresses: true, parentGroup: true } });
   if (!company) return fail('NOT_FOUND', 'That company could not be found.');
   return ok(toCompanyDto(company));
 }
 
 export async function updateCompanyProfile(companyId: UUID, patch: CompanyProfilePatch): Promise<ServiceResult<Company>> {
-  const company = await db.company.update({ where: { id: companyId }, data: patch, include: { addresses: true } });
+  const company = await db.company.update({ where: { id: companyId }, data: patch, include: { addresses: true, parentGroup: true } });
   return ok(toCompanyDto(company));
 }
 

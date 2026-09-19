@@ -50,6 +50,16 @@ export interface Page<T> {
   pageSize: number;
 }
 
+/** Cursor-paginated list envelope for append-only feeds (notifications, ...) where an offset is
+ *  the wrong fit - see server/pagination.ts's `toCursorPage`, which produces this same shape
+ *  server-side. Declared here (rather than only in server/pagination.ts, which is `server-only`)
+ *  so client services can use the type without importing a server-only module. */
+export interface CursorPage<T> {
+  items: T[];
+  nextCursor: string | null;
+  hasNext: boolean;
+}
+
 /** Standard shape for a failed service/API call - components branch on `ok`. */
 export interface ServiceError {
   code: string;

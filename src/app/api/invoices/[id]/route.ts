@@ -2,10 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getAuthContext, unauthorized } from '@/server/auth/context';
 import { getInvoice } from '@/server/services/invoices.service';
 import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
 
 /** An invoice's owner (billed company or issuing supplier) isn't known until it's fetched, so -
  *  like the order/purchase-order routes - ownership is checked against the fetched record. */
-export async function GET(request: NextRequest, ctx: RouteContext<'/api/invoices/[id]'>) {
+export const GET = withErrorHandling("/api/invoices/[id]", async (request: NextRequest, ctx: RouteContext<'/api/invoices/[id]'>) => {
   const auth = await getAuthContext(request);
   if (!auth) return unauthorized();
 
@@ -17,4 +18,4 @@ export async function GET(request: NextRequest, ctx: RouteContext<'/api/invoices
   }
 
   return NextResponse.json(result.data);
-}
+});

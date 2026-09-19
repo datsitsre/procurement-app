@@ -14,10 +14,11 @@ import { analyticsService } from '@/services/analytics.service';
 import { StatCard } from '@/components/ui/StatCard';
 import { BarChart, HorizontalBarList } from '@/components/ui/BarChart';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { formatMoney, formatDateTime } from '@/utils/format';
 import type { Product, SupplierProfile } from '@/types/catalog';
 import type { Dispute } from '@/types/orders';
-import type { AuditEntry } from '@/types/common';
+import type { AuditEntry, CursorPage } from '@/types/common';
 import type { PlatformAnalytics } from '@/services/analytics.service';
 
 export default function AdminDashboardPage() {
@@ -30,11 +31,22 @@ export default function AdminDashboardPage() {
 
 function AdminDashboard() {
   const { session } = useAuth();
-  const { data: suppliers } = useAsyncData<SupplierProfile[]>('admin-suppliers', () => catalogService.listAllSuppliers());
-  const { data: products } = useAsyncData<Product[]>('admin-products', () => catalogService.listAllProductsForModeration());
-  const { data: disputes } = useAsyncData<Dispute[]>('admin-disputes', () => disputesService.listAllDisputes());
-  const { data: analytics } = useAsyncData<PlatformAnalytics>('admin-analytics', () => analyticsService.getPlatformAnalytics());
-  const { data: auditEntries } = useAsyncData<AuditEntry[]>('admin-audit', () => auditLogService.listEntries());
+  const { data: suppliers, error: suppliersError, reload: reloadSuppliers } = useAsyncData<SupplierProfile[]>('admin-suppliers', () => catalogService.listAllSuppliers());
+  const { data: products, error: productsError, reload: reloadProducts } = useAsyncData<Product[]>('admin-products', () => catalogService.listAllProductsForModeration());
+  const { data: disputes, error: disputesError, reload: reloadDisputes } = useAsyncData<Dispute[]>('admin-disputes', () => disputesService.listAllDisputes());
+  const { data: analytics, error: analyticsError, reload: reloadAnalytics } = useAsyncData<PlatformAnalytics>('admin-analytics', () => analyticsService.getPlatformAnalytics());
+  // Just the 5 most recent entries for this preview card - the full history lives at /admin/audit.
+  const { data: auditPage, error: auditError, reload: reloadAudit } = useAsyncData<CursorPage<AuditEntry>>('admin-audit', () => auditLogService.listEntries(null, 5));
+  const auditEntries = auditPage?.items ?? null;
+
+  const error = suppliersError ?? productsError ?? disputesError ?? analyticsError ?? auditError ?? null;
+  function retryFailed() {
+    if (suppliersError) reloadSuppliers();
+    if (productsError) reloadProducts();
+    if (disputesError) reloadDisputes();
+    if (analyticsError) reloadAnalytics();
+    if (auditError) reloadAudit();
+  }
 
   const buyerCompanies = useMemo(() => allCompanies().filter((c) => c.isBuyer), []);
   const pendingSuppliers = useMemo(() => suppliers?.filter((s) => s.verification === 'PENDING_VERIFICATION').length ?? 0, [suppliers]);
@@ -53,7 +65,9 @@ function AdminDashboard() {
         <p className="text-body text-text-secondary">Platform overview.</p>
       </div>
 
-      {loading ? (
+      {error ? (
+        <ErrorState title="Couldn't load the platform overview" description={error} secondaryAction={{ label: 'Try again', onClick: retryFailed }} />
+      ) : loading ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
           {Array.from({ length: 5 }).map((_, i) => (
             <Skeleton key={i} className="h-24" />

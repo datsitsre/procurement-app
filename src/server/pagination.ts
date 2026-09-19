@@ -1,6 +1,6 @@
 import 'server-only';
 import type { NextRequest } from 'next/server';
-import type { Page } from '@/types/common';
+import type { CursorPage, Page } from '@/types/common';
 
 /**
  * Shared pagination contract (section 14/15). The audit found zero list endpoints paginate -
@@ -45,4 +45,72 @@ export function parsePagination(request: NextRequest, opts?: { defaultPageSize?:
 
 export function toPage<T>(items: T[], total: number, params: PaginationParams): Page<T> {
   return { items, total, page: params.page, pageSize: params.pageSize };
+}
+
+/**
+ * Cursor pagination (Phase 16, section 6) - for append-only, continuously-growing feeds
+ * (notifications today; audit logs/messages would use the same shape if/when they get a list
+ * endpoint) where offset pagination degrades as the table grows and "page 40 of 900" isn't a
+ * meaningful thing for a user to ask for anyway. The cursor encodes `(createdAt, id)`, not just a
+ * timestamp - two rows can share a millisecond, and `id` (a cuid, monotonically ordered by
+ * creation) breaks the tie deterministically so no row is ever skipped or repeated across pages.
+ */
+
+export interface Cursor {
+  createdAt: Date;
+  id: string;
+}
+
+export interface CursorPaginationParams {
+  cursor: Cursor | null;
+  take: number;
+}
+
+export function encodeCursor(cursor: Cursor): string {
+  return Buffer.from(`${cursor.createdAt.toISOString()}|${cursor.id}`, 'utf8').toString('base64url');
+}
+
+/** Returns null for a missing, malformed, or tampered cursor - never throws. A bad cursor just
+ *  means "start from the beginning" rather than failing the request; there's no security
+ *  implication in accepting an attacker-crafted cursor value here, since the query it drives is
+ *  still always scoped by the caller's own tenant/user id, never by anything the cursor itself
+ *  asserts about who's asking. */
+export function decodeCursor(raw: string): Cursor | null {
+  try {
+    const decoded = Buffer.from(raw, 'base64url').toString('utf8');
+    const separatorIndex = decoded.indexOf('|');
+    if (separatorIndex < 0) return null;
+    const iso = decoded.slice(0, separatorIndex);
+    const id = decoded.slice(separatorIndex + 1);
+    if (!id) return null;
+    const createdAt = new Date(iso);
+    if (Number.isNaN(createdAt.getTime())) return null;
+    return { createdAt, id };
+  } catch {
+    return null;
+  }
+}
+
+export function parseCursorPagination(request: NextRequest, opts?: { defaultPageSize?: number; maxPageSize?: number }): CursorPaginationParams {
+  const defaultPageSize = opts?.defaultPageSize ?? DEFAULT_PAGE_SIZE;
+  const maxPageSize = opts?.maxPageSize ?? MAX_PAGE_SIZE;
+
+  const rawPageSize = Number(request.nextUrl.searchParams.get('pageSize'));
+  const take = Number.isInteger(rawPageSize) && rawPageSize > 0 ? Math.min(rawPageSize, maxPageSize) : defaultPageSize;
+
+  const rawCursor = request.nextUrl.searchParams.get('cursor');
+  const cursor = rawCursor ? decodeCursor(rawCursor) : null;
+
+  return { cursor, take };
+}
+
+/** `rows` must have been fetched with `take: params.take + 1` (one extra, to know whether
+ *  there's a next page without a separate count query - section 17's "don't load everything just
+ *  to compute pagination metadata"). Slices the extra row off and derives the next cursor from
+ *  the real last item, never from client input. */
+export function toCursorPage<T extends { createdAt: Date; id: string }>(rows: T[], take: number): CursorPage<T> {
+  const hasNext = rows.length > take;
+  const items = hasNext ? rows.slice(0, take) : rows;
+  const last = items[items.length - 1];
+  return { items, hasNext, nextCursor: hasNext && last ? encodeCursor({ createdAt: last.createdAt, id: last.id }) : null };
 }

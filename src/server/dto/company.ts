@@ -14,7 +14,7 @@ import type {
  *  Decimal -> number, Date -> ISO string, null -> undefined, never a raw ORM entity crossing
  *  the API boundary (section 36's "use DTOs, not raw database entities" rule). */
 
-export function toCompanyDto(company: PrismaCompany & { addresses?: PrismaAddress[] }): Company {
+export function toCompanyDto(company: PrismaCompany & { addresses?: PrismaAddress[]; parentGroup?: { name: string } | null }): Company {
   return {
     id: company.id,
     name: company.name,
@@ -46,6 +46,7 @@ export function toCompanyDto(company: PrismaCompany & { addresses?: PrismaAddres
     isSupplier: company.isSupplier,
     isBuyer: company.isBuyer,
     parentGroupId: company.parentGroupId ?? undefined,
+    parentGroupName: company.parentGroup?.name ?? undefined,
     createdAt: company.createdAt.toISOString(),
   };
 }

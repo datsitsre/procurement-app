@@ -14,9 +14,12 @@ import { TemplatesPanel } from '@/features/procurement/TemplatesPanel';
 import type { CostCenter } from '@/types/company';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 import { VAT_RATE, FLAT_DELIVERY_FEE, calculateTax } from '@/utils/pricing';
+import { cn } from '@/utils/cn';
 import type { CurrencyCode } from '@/types/common';
 import type { PurchaseRequestItem } from '@/types/procurement';
 
@@ -29,9 +32,10 @@ export default function CartPage() {
   const tenant = useTenantContext();
   const companyId = company?.id ?? null;
   const { data: costCenters } = useAsyncData<CostCenter[]>(companyId, () => companyService.listCostCenters(companyId!));
-  const [message, setMessage] = useState<string | null>(null);
+  const toast = useToast();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
+  const [reasonError, setReasonError] = useState<string | null>(null);
   const [costCenterId, setCostCenterId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [showReasonPrompt, setShowReasonPrompt] = useState(false);
@@ -55,24 +59,23 @@ export default function CartPage() {
 
   async function handleTemplateApplied(warnings: string[]) {
     await refresh();
-    if (warnings.length > 0) setMessage(warnings.join(' '));
+    if (warnings.length > 0) toast.show(warnings.join(' '), 'info');
   }
 
   async function handleChange(productId: string, next: number) {
-    setMessage(null);
     setPendingId(productId);
     const err = await setQuantity(productId, Math.max(0, next));
     setPendingId(null);
-    if (err) setMessage(err.message);
+    if (err) toast.show(err.message, 'error');
   }
 
   async function handleSubmitRequest() {
     if (!company || !session || !membership) return;
     if (!reason.trim()) {
-      setMessage('Add a reason for this purchase before submitting.');
+      setReasonError('Add a reason for this purchase before submitting.');
       return;
     }
-    setMessage(null);
+    setReasonError(null);
     setSubmitting(true);
 
     const items: PurchaseRequestItem[] = lines.map((l) => ({
@@ -100,10 +103,11 @@ export default function CartPage() {
 
     setSubmitting(false);
     if (!result.ok) {
-      setMessage(result.error.message);
+      toast.show(result.error.message, 'error');
       return;
     }
     await clear();
+    toast.show('Purchase request submitted for approval.', 'success');
     router.push(`/purchase-requests/${result.data.id}`);
   }
 
@@ -121,11 +125,6 @@ export default function CartPage() {
     return (
       <div className="flex flex-col gap-6">
         <h1 className="text-h1">Cart</h1>
-        {message && (
-          <div role="alert" className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
-            {message}
-          </div>
-        )}
         <EmptyState
           icon={ShoppingCart}
           title="Your cart is empty"
@@ -153,12 +152,6 @@ export default function CartPage() {
     <div className="flex flex-col gap-6">
       <h1 className="text-h1">Cart</h1>
 
-      {message && (
-        <div role="alert" className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
-          {message}
-        </div>
-      )}
-
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="flex flex-col gap-4 lg:col-span-2">
           {groupedBySupplier.map(({ supplierId, supplier, lines: supplierLines }) => (
@@ -168,54 +161,58 @@ export default function CartPage() {
               </div>
               <ul className="divide-y divide-border">
                 {supplierLines.map(({ item, product, lineTotal, savingsPerUnit }) => (
-                  <li key={item.id} className="flex items-center gap-4 px-4 py-4">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- demo product photo */}
-                    <img src={product.images[0]} alt={product.name} className="h-16 w-16 rounded-md object-cover" />
-                    <div className="flex-1">
-                      <Link href={`/product/${product.slug}`} className="text-sm font-medium hover:underline">
-                        {product.name}
-                      </Link>
-                      <p className="text-caption">
-                        <PriceDisplay amount={item.unitPrice} currency={product.currency} size="sm" /> each
-                        {savingsPerUnit > 0 && <span className="text-success"> · saving {savingsPerUnit} /unit</span>}
-                      </p>
-                      <p className="text-metadata">MOQ {product.moq}</p>
+                  <li key={item.id} className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:gap-4">
+                    <div className="flex flex-1 gap-4">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- demo product photo */}
+                      <img src={product.images[0]} alt={product.name} className="h-16 w-16 shrink-0 rounded-md object-cover" />
+                      <div className="flex-1">
+                        <Link href={`/product/${product.slug}`} className="text-sm font-medium hover:underline">
+                          {product.name}
+                        </Link>
+                        <p className="text-caption">
+                          <PriceDisplay amount={item.unitPrice} currency={product.currency} size="sm" /> each
+                          {savingsPerUnit > 0 && <span className="text-success"> · saving {savingsPerUnit} /unit</span>}
+                        </p>
+                        <p className="text-metadata">MOQ {product.moq}</p>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between gap-3 sm:justify-end sm:gap-4">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          aria-label="Decrease quantity"
+                          disabled={pendingId === product.id}
+                          onClick={() => handleChange(product.id, item.quantity - 1 < product.moq ? 0 : item.quantity - 1)}
+                          className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-neutral-bg disabled:opacity-50"
+                        >
+                          <Minus className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                        <span className="w-8 text-center text-sm font-medium">{item.quantity}</span>
+                        <button
+                          type="button"
+                          aria-label="Increase quantity"
+                          disabled={pendingId === product.id}
+                          onClick={() => handleChange(product.id, item.quantity + 1)}
+                          className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-neutral-bg disabled:opacity-50"
+                        >
+                          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      </div>
+
+                      <div className="w-20 shrink-0 text-right text-sm font-semibold sm:w-24">
+                        <PriceDisplay amount={lineTotal} currency={product.currency} size="sm" />
+                      </div>
+
                       <button
                         type="button"
-                        aria-label="Decrease quantity"
-                        disabled={pendingId === product.id}
-                        onClick={() => handleChange(product.id, item.quantity - 1 < product.moq ? 0 : item.quantity - 1)}
-                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-neutral-bg disabled:opacity-50"
+                        aria-label={`Remove ${product.name}`}
+                        onClick={() => removeItem(product.id)}
+                        className="shrink-0 text-text-tertiary hover:text-danger"
                       >
-                        <Minus className="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
-                      <span className="w-8 text-center text-sm font-medium">{item.quantity}</span>
-                      <button
-                        type="button"
-                        aria-label="Increase quantity"
-                        disabled={pendingId === product.id}
-                        onClick={() => handleChange(product.id, item.quantity + 1)}
-                        className="flex h-7 w-7 items-center justify-center rounded-md border border-border hover:bg-neutral-bg disabled:opacity-50"
-                      >
-                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </div>
-
-                    <div className="w-24 text-right text-sm font-semibold">
-                      <PriceDisplay amount={lineTotal} currency={product.currency} size="sm" />
-                    </div>
-
-                    <button
-                      type="button"
-                      aria-label={`Remove ${product.name}`}
-                      onClick={() => removeItem(product.id)}
-                      className="text-text-tertiary hover:text-danger"
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    </button>
                   </li>
                 ))}
               </ul>
@@ -256,29 +253,36 @@ export default function CartPage() {
                 id="reason"
                 rows={3}
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                onChange={(e) => {
+                  setReason(e.target.value);
+                  if (reasonError) setReasonError(null);
+                }}
                 placeholder="e.g. Network infrastructure upgrade"
-                className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                aria-invalid={!!reasonError}
+                aria-describedby={reasonError ? 'reason-error' : undefined}
+                className={cn(
+                  'w-full rounded-md border bg-surface px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                  reasonError ? 'border-danger focus-visible:ring-danger' : 'border-border',
+                )}
               />
+              {reasonError && (
+                <p id="reason-error" className="text-xs text-danger">
+                  {reasonError}
+                </p>
+              )}
               {costCenters && costCenters.length > 0 && (
-                <>
-                  <label htmlFor="cost-center" className="text-sm font-medium">
-                    Cost center (optional)
-                  </label>
-                  <select
-                    id="cost-center"
-                    value={costCenterId}
-                    onChange={(e) => setCostCenterId(e.target.value)}
-                    className="h-9 rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                  >
-                    <option value="">No cost center</option>
-                    {costCenters.map((cc) => (
-                      <option key={cc.id} value={cc.id}>
-                        {cc.code} · {cc.name}
-                      </option>
-                    ))}
-                  </select>
-                </>
+                <Select
+                  label="Cost center (optional)"
+                  value={costCenterId}
+                  onChange={(e) => setCostCenterId(e.target.value)}
+                >
+                  <option value="">No cost center</option>
+                  {costCenters.map((cc) => (
+                    <option key={cc.id} value={cc.id}>
+                      {cc.code} · {cc.name}
+                    </option>
+                  ))}
+                </Select>
               )}
               <Button onClick={handleSubmitRequest} loading={submitting} className="w-full">
                 Submit for approval

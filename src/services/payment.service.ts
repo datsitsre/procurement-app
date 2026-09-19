@@ -14,12 +14,19 @@ export interface ChargeInput {
 }
 
 export interface PaymentService {
-  listPayments(companyId: UUID): Promise<ServiceResult<Payment[]>>;
+  /** Paginated (Phase 19, section 1) - `?page=&pageSize=`, default 25, max 100, matching every
+   *  other tenant-scoped list endpoint (`Page<Payment>`, not a bare array). */
+  listPayments(companyId: UUID, page?: number, pageSize?: number): Promise<ServiceResult<Page<Payment>>>;
   /** Every payment across every company - the platform admin overview (section 46), paginated. */
   listAllPayments(page?: number, pageSize?: number): Promise<ServiceResult<Page<Payment>>>;
   /** Payments a supplier has received (section 44) - the supplier-workspace counterpart to
-   *  `listPayments`, which is keyed by the *buyer's* company id instead. */
-  listPaymentsForSupplier(supplierId: UUID): Promise<ServiceResult<Payment[]>>;
+   *  `listPayments`, which is keyed by the *buyer's* company id instead. Paginated, same shape. */
+  listPaymentsForSupplier(supplierId: UUID, page?: number, pageSize?: number): Promise<ServiceResult<Page<Payment>>>;
+  /** Real database aggregation (Phase 19) - the finance/supplier dashboards' own "paid this
+   *  month" stat, summed across the current calendar month, never just whatever page is
+   *  currently loaded. */
+  getPaidThisMonthTotal(companyId: UUID): Promise<ServiceResult<number>>;
+  getPaidThisMonthTotalForSupplier(supplierId: UUID): Promise<ServiceResult<number>>;
 }
 
 /**
@@ -31,16 +38,26 @@ export interface PaymentService {
  * directly (the old mock's checkout page used to call this itself before creating the order).
  */
 class ApiPaymentService implements PaymentService {
-  async listPayments(companyId: UUID): Promise<ServiceResult<Payment[]>> {
-    return apiRequest<Payment[]>(`/api/companies/${companyId}/payments`);
+  async listPayments(companyId: UUID, page = 1, pageSize = 25): Promise<ServiceResult<Page<Payment>>> {
+    return apiRequest<Page<Payment>>(`/api/companies/${companyId}/payments?page=${page}&pageSize=${pageSize}`);
   }
 
   async listAllPayments(page = 1, pageSize = 25): Promise<ServiceResult<Page<Payment>>> {
     return apiRequest<Page<Payment>>(`/api/payments?page=${page}&pageSize=${pageSize}`);
   }
 
-  async listPaymentsForSupplier(supplierId: UUID): Promise<ServiceResult<Payment[]>> {
-    return apiRequest<Payment[]>(`/api/suppliers/${supplierId}/payments`);
+  async listPaymentsForSupplier(supplierId: UUID, page = 1, pageSize = 25): Promise<ServiceResult<Page<Payment>>> {
+    return apiRequest<Page<Payment>>(`/api/suppliers/${supplierId}/payments?page=${page}&pageSize=${pageSize}`);
+  }
+
+  async getPaidThisMonthTotal(companyId: UUID): Promise<ServiceResult<number>> {
+    const result = await apiRequest<{ amount: number }>(`/api/companies/${companyId}/payments/paid-this-month`);
+    return result.ok ? { ok: true, data: result.data.amount } : result;
+  }
+
+  async getPaidThisMonthTotalForSupplier(supplierId: UUID): Promise<ServiceResult<number>> {
+    const result = await apiRequest<{ amount: number }>(`/api/suppliers/${supplierId}/payments/paid-this-month`);
+    return result.ok ? { ok: true, data: result.data.amount } : result;
   }
 }
 

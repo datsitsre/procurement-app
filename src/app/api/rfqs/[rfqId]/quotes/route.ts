@@ -5,11 +5,12 @@ import { requireSupplierAccess } from '@/server/auth/require';
 import { getRfq, listQuotesForRfq, submitQuote } from '@/server/services/procurement.service';
 import { SubmitQuoteSchema } from '@/server/validation/procurement';
 import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
 
 /** Quotes carry competitor pricing, so - unlike the mock, which never checked - this only
  *  returns them to the RFQ's own buyer company or the invited supplier who submitted, the same
  *  dual-owner check as GET /api/rfqs/[rfqId]. */
-export async function GET(request: NextRequest, ctx: RouteContext<'/api/rfqs/[rfqId]/quotes'>) {
+export const GET = withErrorHandling("/api/rfqs/[rfqId]/quotes", async (request: NextRequest, ctx: RouteContext<'/api/rfqs/[rfqId]/quotes'>) => {
   const auth = await getAuthContext(request);
   if (!auth) return unauthorized();
 
@@ -30,9 +31,9 @@ export async function GET(request: NextRequest, ctx: RouteContext<'/api/rfqs/[rf
     ? result.data.filter((q) => q.supplierId === auth.tenant.supplierId)
     : result.data;
   return NextResponse.json(quotes);
-}
+});
 
-export async function POST(request: NextRequest, ctx: RouteContext<'/api/rfqs/[rfqId]/quotes'>) {
+export const POST = withErrorHandling("/api/rfqs/[rfqId]/quotes", async (request: NextRequest, ctx: RouteContext<'/api/rfqs/[rfqId]/quotes'>) => {
   const body = await request.json().catch(() => null);
   const supplierId = typeof body?.supplierId === 'string' ? body.supplierId : '';
 
@@ -48,4 +49,4 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/rfqs/[r
   const result = await submitQuote({ ...parsed.data, rfqId, supplierId });
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
   return NextResponse.json(result.data);
-}
+});

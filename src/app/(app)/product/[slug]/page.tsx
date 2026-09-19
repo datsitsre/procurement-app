@@ -8,11 +8,14 @@ import { catalogService } from '@/services/catalog.service';
 import { useCart } from '@/hooks/useCart';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { BulkPricingTable } from '@/features/catalog/BulkPricingTable';
+import { ProductCard } from '@/features/catalog/ProductCard';
 import { Button } from '@/components/ui/Button';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Badge } from '@/components/ui/Badge';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
+import { Breadcrumb } from '@/components/ui/Breadcrumb';
+import { useToast } from '@/components/ui/Toast';
 import { availableStock, resolveTierPrice, type Product } from '@/types/catalog';
 
 export default function ProductDetailPage() {
@@ -20,8 +23,19 @@ export default function ProductDetailPage() {
   const router = useRouter();
   const { setQuantity: setCartQuantity } = useCart();
 
+  const toast = useToast();
   const { data: product, loading, error } = useAsyncData<Product>(params.slug, () => catalogService.getProductBySlug(params.slug));
   const supplier = useMemo(() => (product ? catalogService.getSupplierById(product.supplierId) : undefined), [product]);
+
+  // "More from this supplier" - a real, existing filter (supplierId), not an invented
+  // "related products" concept the backend has no notion of (no category-similarity/
+  // recommendation logic exists anywhere in this app, and inventing one client-side would be
+  // exactly the kind of business logic the redesign brief says must stay out of the browser).
+  const { data: moreFromSupplierPage } = useAsyncData(
+    product ? `${product.supplierId}-more` : null,
+    () => catalogService.listProducts({ supplierId: product!.supplierId }, 1, 5),
+  );
+  const moreFromSupplier = (moreFromSupplierPage?.items ?? []).filter((p) => p.id !== product?.id).slice(0, 4);
 
   const [quantity, setQuantity] = useState(1);
   // Reset the quantity input to the new product's MOQ when navigating between products -
@@ -33,8 +47,8 @@ export default function ProductDetailPage() {
     setQuantity(product.moq);
   }
 
-  const [message, setMessage] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [addingRelatedId, setAddingRelatedId] = useState<string | null>(null);
 
   if (loading) {
     return (
@@ -64,15 +78,21 @@ export default function ProductDetailPage() {
 
   async function handleAddToCart() {
     if (!product) return;
-    setMessage(null);
     setAdding(true);
     const err = await setCartQuantity(product.id, quantity);
     setAdding(false);
     if (err) {
-      setMessage(err.message);
+      toast.show(err.message, 'error');
     } else {
-      setMessage(`Added ${quantity} × ${product.name} to your cart.`);
+      toast.show(`Added ${quantity} × ${product.name} to your cart.`, 'success');
     }
+  }
+
+  async function handleAddRelatedToCart(p: Product) {
+    setAddingRelatedId(p.id);
+    const err = await setCartQuantity(p.id, p.moq);
+    setAddingRelatedId(null);
+    toast.show(err ? err.message : `Added ${p.moq} × ${p.name} to your cart.`, err ? 'error' : 'success');
   }
 
   return (
@@ -81,6 +101,8 @@ export default function ProductDetailPage() {
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         Back to catalog
       </Link>
+
+      <Breadcrumb items={[{ label: 'Catalog', href: '/catalog' }, { label: product.name }]} />
 
       <div className="grid gap-8 lg:grid-cols-2">
         <div>
@@ -114,12 +136,6 @@ export default function ProductDetailPage() {
             <p className="mb-2 text-h3">Bulk pricing</p>
             <BulkPricingTable tiers={product.priceTiers} currency={product.currency} activeQuantity={quantity} />
           </div>
-
-          {message && (
-            <div role="status" className="rounded-md border border-info-border bg-info-bg px-3 py-2 text-sm text-accent">
-              {message}
-            </div>
-          )}
 
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1.5">
@@ -187,13 +203,32 @@ export default function ProductDetailPage() {
                 <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
                 {supplier.city}, {supplier.country}
               </p>
-              {/* Supplier profile pages ship in Phase 5 - nothing to link to yet. */}
+              <Link href={`/suppliers/${supplier.slug}`} className="mt-1 w-fit text-sm font-medium text-accent hover:underline">
+                View supplier profile
+              </Link>
             </div>
           ) : (
             <p className="text-caption">Supplier information unavailable.</p>
           )}
         </section>
       </div>
+
+      {moreFromSupplier.length > 0 && (
+        <section>
+          <h2 className="text-h3 mb-3">More from {supplier?.name ?? 'this supplier'}</h2>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+            {moreFromSupplier.map((p) => (
+              <ProductCard
+                key={p.id}
+                product={p}
+                supplier={supplier}
+                onAddToCart={handleAddRelatedToCart}
+                addingToCart={addingRelatedId === p.id}
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

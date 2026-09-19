@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Check, Circle, X } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useTenantContext } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { procurementService } from '@/services/procurement.service';
@@ -11,9 +11,10 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
+import { WorkflowStepper, type WorkflowStep } from '@/components/ui/WorkflowStepper';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { RoleLabels, type Role } from '@/config/rbac';
 import { formatDate } from '@/utils/format';
-import { cn } from '@/utils/cn';
 import { FLAT_DELIVERY_FEE, calculateTax } from '@/utils/pricing';
 import type { PurchaseRequest, PurchaseOrder } from '@/types/procurement';
 
@@ -54,16 +55,12 @@ export default function PurchaseRequestDetailPage() {
         Back to purchase requests
       </Link>
 
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-h1">{pr.reference}</h1>
-          <p className="text-body text-text-secondary">
-            Requested by {pr.requesterName}
-            {pr.department && ` · ${pr.department}`} · {formatDate(pr.createdAt)}
-          </p>
-        </div>
-        <StatusBadge domain="purchaseRequest" status={pr.status} />
-      </div>
+      <PageHeader
+        breadcrumbs={[{ label: 'Purchase requests', href: '/purchase-requests' }, { label: pr.reference }]}
+        title={pr.reference}
+        description={`Requested by ${pr.requesterName}${pr.department ? ` · ${pr.department}` : ''} · ${formatDate(pr.createdAt)}`}
+        actions={<StatusBadge domain="purchaseRequest" status={pr.status} />}
+      />
 
       <div className="rounded-lg border border-border bg-surface p-5">
         <p className="text-sm">
@@ -99,37 +96,38 @@ export default function PurchaseRequestDetailPage() {
       </div>
 
       <div className="rounded-lg border border-border bg-surface p-5">
-        <p className="mb-4 text-h3">Approval</p>
-        <ol className="flex flex-col gap-3">
-          {pr.approvalSteps.map((step) => (
-            <li key={step.id} className="flex items-start gap-3">
-              <span
-                className={cn(
-                  'flex h-6 w-6 items-center justify-center rounded-full text-xs',
-                  step.status === 'APPROVED' && 'bg-success text-white',
-                  step.status === 'REJECTED' && 'bg-danger text-white',
-                  step.status === 'PENDING' && 'bg-neutral-bg text-text-tertiary',
-                )}
-              >
-                {step.status === 'APPROVED' ? (
-                  <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                ) : step.status === 'REJECTED' ? (
-                  <X className="h-3.5 w-3.5" aria-hidden="true" />
-                ) : (
-                  <Circle className="h-2 w-2 fill-current" aria-hidden="true" />
-                )}
-              </span>
-              <div className="flex flex-col">
-                <span className="text-sm">
-                  {RoleLabels[step.approverRole as Role] ?? step.approverRole}
-                  {step.approverName && ` (${step.approverName})`}
-                  {step.decidedAt && <span className="text-caption"> · {formatDate(step.decidedAt)}</span>}
-                </span>
-                {step.comment && <span className="text-caption italic">&ldquo;{step.comment}&rdquo;</span>}
-              </div>
-            </li>
-          ))}
-        </ol>
+        <p className="mb-5 text-h3">Approval</p>
+        {(() => {
+          const firstPendingIndex = pr.approvalSteps.findIndex((s) => s.status === 'PENDING');
+          const workflowSteps: WorkflowStep[] = pr.approvalSteps.map((step, index) => ({
+            key: step.id,
+            label: RoleLabels[step.approverRole as Role] ?? step.approverRole,
+            meta: step.approverName ?? (step.status === 'PENDING' && index === firstPendingIndex ? 'Awaiting decision' : undefined),
+            status:
+              step.status === 'APPROVED'
+                ? 'done'
+                : step.status === 'REJECTED'
+                  ? 'rejected'
+                  : index === firstPendingIndex
+                    ? 'current'
+                    : 'upcoming',
+          }));
+          return <WorkflowStepper steps={workflowSteps} />;
+        })()}
+        {pr.approvalSteps.some((s) => s.decidedAt || s.comment) && (
+          <ul className="mt-5 flex flex-col gap-2 border-t border-border pt-4">
+            {pr.approvalSteps
+              .filter((s) => s.decidedAt)
+              .map((step) => (
+                <li key={step.id} className="text-sm text-text-secondary">
+                  <span className="font-medium text-text-primary">{RoleLabels[step.approverRole as Role] ?? step.approverRole}</span>
+                  {step.approverName && ` (${step.approverName})`} {step.status === 'APPROVED' ? 'approved' : 'rejected'} this request
+                  {step.decidedAt && ` on ${formatDate(step.decidedAt)}`}
+                  {step.comment && <span className="italic"> &mdash; &ldquo;{step.comment}&rdquo;</span>}
+                </li>
+              ))}
+          </ul>
+        )}
       </div>
 
       {purchaseOrders && purchaseOrders.length > 0 && (

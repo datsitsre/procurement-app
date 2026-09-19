@@ -1,4 +1,4 @@
-import type { Company, CompanyGroup, CompanyUser, User } from '@/types/company';
+import type { Company, CompanyUser, User } from '@/types/company';
 import { Role } from '@/config/rbac';
 
 /**
@@ -64,14 +64,6 @@ export const demoUsers: User[] = [
     name: 'Grace Owusu',
     email: 'grace.owusu@platform.example',
     createdAt: '2024-01-01T09:00:00Z',
-  },
-];
-
-export const demoCompanyGroups: CompanyGroup[] = [
-  {
-    id: 'group-acme',
-    name: 'Acme Technologies',
-    companyIds: ['company-acme-gh', 'company-acme-ng', 'company-acme-ke'],
   },
 ];
 

@@ -2,10 +2,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { getAuthContext, unauthorized } from '@/server/auth/context';
 import { getOrder } from '@/server/services/orders.service';
 import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
 
 /** An order's owner (buyer company or fulfilling supplier) isn't known until it's fetched, so -
  *  like the purchase order/RFQ routes - ownership is checked against the fetched record. */
-export async function GET(request: NextRequest, ctx: RouteContext<'/api/orders/[id]'>) {
+export const GET = withErrorHandling("/api/orders/[id]", async (request: NextRequest, ctx: RouteContext<'/api/orders/[id]'>) => {
   const auth = await getAuthContext(request);
   if (!auth) return unauthorized();
 
@@ -17,4 +18,4 @@ export async function GET(request: NextRequest, ctx: RouteContext<'/api/orders/[
   }
 
   return NextResponse.json(result.data);
-}
+});

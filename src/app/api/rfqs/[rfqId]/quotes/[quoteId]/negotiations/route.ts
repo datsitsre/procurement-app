@@ -6,10 +6,11 @@ import { enforceRateLimit } from '@/server/auth/rate-limit';
 import { getRfq, listNegotiationMessages, listQuotesForRfq, sendNegotiationMessage } from '@/server/services/procurement.service';
 import { SendNegotiationMessageSchema } from '@/server/validation/procurement';
 import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
 
 type Ctx = RouteContext<'/api/rfqs/[rfqId]/quotes/[quoteId]/negotiations'>;
 
-export async function GET(request: NextRequest, ctx: Ctx) {
+export const GET = withErrorHandling("/api/rfqs/[rfqId]/quotes/[quoteId]/negotiations", async (request: NextRequest, ctx: Ctx) => {
   const auth = await getAuthContext(request);
   if (!auth) return unauthorized();
 
@@ -24,14 +25,14 @@ export async function GET(request: NextRequest, ctx: Ctx) {
 
   const result = await listNegotiationMessages(rfqId, quoteId);
   return NextResponse.json(result.ok ? result.data : []);
-}
+});
 
 /** Either side of the negotiation can post here - the RFQ's own buyer company, or the invited
  *  supplier who owns this specific quote (never a competing supplier also invited to the same
  *  RFQ, even though they can see the RFQ itself). `senderRole` is resolved here, from who the
  *  authenticated caller actually is, and handed to the service - never trusted from the request
  *  body. */
-export async function POST(request: NextRequest, ctx: Ctx) {
+export const POST = withErrorHandling("/api/rfqs/[rfqId]/quotes/[quoteId]/negotiations", async (request: NextRequest, ctx: Ctx) => {
   if (!isSameOrigin(request)) return NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 });
 
   const auth = await getAuthContext(request);
@@ -78,4 +79,4 @@ export async function POST(request: NextRequest, ctx: Ctx) {
   );
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
   return NextResponse.json(result.data);
-}
+});

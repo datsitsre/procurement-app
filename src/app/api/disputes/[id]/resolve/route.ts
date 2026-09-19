@@ -3,10 +3,11 @@ import { Permission } from '@/config/rbac';
 import { requireAuthenticated } from '@/server/auth/require';
 import { resolveDispute } from '@/server/services/disputes.service';
 import { ResolveDisputeSchema } from '@/server/validation/orders';
+import { withErrorHandling } from '@/server/errors';
 
 /** A platform admin closes out a dispute - RESOLVED_REFUND also marks the underlying order's
  *  payment REFUNDED. */
-export async function POST(request: NextRequest, ctx: RouteContext<'/api/disputes/[id]/resolve'>) {
+export const POST = withErrorHandling("/api/disputes/[id]/resolve", async (request: NextRequest, ctx: RouteContext<'/api/disputes/[id]/resolve'>) => {
   const access = await requireAuthenticated(request, Permission.PLATFORM_MANAGE);
   if (!access.ok) return access.response;
 
@@ -18,4 +19,4 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/dispute
   const result = await resolveDispute(id, parsed.data.decision, parsed.data.note, access.auth.userId, access.auth.userName);
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
   return NextResponse.json(result.data);
-}
+});

@@ -5,7 +5,6 @@ import { Building2, Check, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { useAuth } from '@/hooks/useAuth';
 import { companiesOf } from '@/services/auth.service';
-import { demoCompanyGroups } from '@/lib/demo-data/companies';
 
 /** Lets a user who belongs to multiple companies (e.g. regional entities of one group) switch
  *  which one is "active" - every company-scoped view (orders, spend, suppliers, invoices)
@@ -22,17 +21,28 @@ export function CompanySwitcher() {
         setOpen(false);
       }
     }
+    // Phase 19 accessibility audit - a keyboard user who opened this dropdown had no way to
+    // close it without a mouse click outside.
+    function onEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
     document.addEventListener('mousedown', onClickOutside);
-    return () => document.removeEventListener('mousedown', onClickOutside);
+    document.addEventListener('keydown', onEscape);
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside);
+      document.removeEventListener('keydown', onEscape);
+    };
   }, []);
 
   if (!session) return null;
 
   const myCompanies = companiesOf(session);
   const activeCompany = myCompanies.find((c) => c.id === session.activeCompanyId);
-  const group = activeCompany?.parentGroupId
-    ? demoCompanyGroups.find((g) => g.id === activeCompany.parentGroupId)
-    : undefined;
+  // Real data (Phase 19) - `mirrorIntoRuntimeCache` (auth.service.ts) writes `parentGroupId`/
+  // `parentGroupName` as a company-profile override for every company on every login/register/
+  // switch-company response, seeded or not, specifically so this resolves here without a
+  // static lookup or a second request.
+  const groupName = activeCompany?.parentGroupName;
 
   if (myCompanies.length <= 1) {
     return (
@@ -70,8 +80,8 @@ export function CompanySwitcher() {
           role="listbox"
           className="absolute left-0 z-40 mt-1 w-72 overflow-hidden rounded-lg border border-border bg-surface shadow-lg"
         >
-          {group && (
-            <div className="border-b border-border px-3 py-2 text-metadata">{group.name}</div>
+          {groupName && (
+            <div className="border-b border-border px-3 py-2 text-metadata">{groupName}</div>
           )}
           <ul className="max-h-72 overflow-y-auto py-1">
             {myCompanies.map((company) => (

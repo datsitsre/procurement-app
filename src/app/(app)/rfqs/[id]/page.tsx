@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, MessageSquare, Star, Trophy } from 'lucide-react';
+import { ArrowLeft, MessageSquare, Star } from 'lucide-react';
 import { useAuth, useActiveCompany, useActiveMembership, useTenantContext, useWorkspace } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { procurementService } from '@/services/procurement.service';
@@ -13,8 +13,10 @@ import { SupplierRfqResponse } from '@/features/supplier/SupplierRfqResponse';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { formatDate } from '@/utils/format';
 import type { Quote, RFQ } from '@/types/procurement';
 
@@ -137,15 +139,12 @@ function BuyerRfqDetail({
         Back to RFQs
       </Link>
 
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-h1">{rfq.reference}</h1>
-          <p className="text-body text-text-secondary">
-            {rfq.items.map((i) => `${i.productName} × ${i.quantity}`).join(', ')} · delivery to {rfq.deliveryLocation} by {formatDate(rfq.requiredDeliveryDate)}
-          </p>
-        </div>
-        <StatusBadge domain="rfq" status={rfq.status} />
-      </div>
+      <PageHeader
+        breadcrumbs={[{ label: 'RFQs', href: '/rfqs' }, { label: rfq.reference }]}
+        title={rfq.reference}
+        description={`${rfq.items.map((i) => `${i.productName} × ${i.quantity}`).join(', ')} · delivery to ${rfq.deliveryLocation} by ${formatDate(rfq.requiredDeliveryDate)}`}
+        actions={<StatusBadge domain="rfq" status={rfq.status} />}
+      />
 
       {rfq.additionalRequirements && (
         <div className="rounded-lg border border-border bg-surface p-4 text-sm">
@@ -172,66 +171,151 @@ function BuyerRfqDetail({
       </div>
 
       <div>
-        <h2 className="text-h3 mb-3">Quotes</h2>
+        <h2 className="text-h3 mb-3">Quote comparison</h2>
         {!quotes ? (
           <SkeletonText lines={4} />
         ) : quotes.length === 0 ? (
           <p className="text-caption">No quotes received yet.</p>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {quotes.map((quote) => {
-              const supplier = catalogService.getSupplierById(quote.supplierId);
-              const isBest = quote.totalPrice === bestPrice;
-              return (
-                <div key={quote.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-semibold">{quote.supplierName}</p>
-                      {supplier && (
-                        <p className="flex items-center gap-1 text-caption">
-                          <Star className="h-3 w-3 fill-warning text-warning" aria-hidden="true" />
-                          {supplier.rating.toFixed(1)}
-                        </p>
-                      )}
+          <>
+            {/* Desktop: a real comparison table (section 12) - differences are meant to be
+                scannable at a glance, which a card grid makes you hunt for. */}
+            <div className="hidden overflow-x-auto rounded-lg border border-border bg-surface md:block">
+              <table className="w-full text-table">
+                <thead>
+                  <tr className="text-metadata">
+                    <th className="p-4 text-left">Supplier</th>
+                    <th className="p-4 text-right">Price</th>
+                    <th className="p-4 text-left">Delivery</th>
+                    <th className="p-4 text-left">Warranty</th>
+                    <th className="p-4 text-left">Status</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quotes.map((quote) => {
+                    const supplier = catalogService.getSupplierById(quote.supplierId);
+                    const isLowest = quote.totalPrice === bestPrice;
+                    return (
+                      <Fragment key={quote.id}>
+                        <tr className="border-t border-border align-top">
+                          <td className="p-4">
+                            <p className="font-medium">{quote.supplierName}</p>
+                            {supplier && (
+                              <p className="mt-0.5 flex items-center gap-1 text-caption">
+                                <Star className="h-3 w-3 fill-warning text-warning" aria-hidden="true" />
+                                {supplier.rating.toFixed(1)}
+                              </p>
+                            )}
+                          </td>
+                          <td className="p-4 text-right">
+                            <PriceDisplay amount={quote.totalPrice} size="md" />
+                            {/* "Lowest" is a factual observation about this RFQ's own submitted
+                                numbers, not an editorial "best supplier" judgment (delivery,
+                                warranty, and negotiation history all matter too, and this app
+                                doesn't score suppliers into a single ranking). */}
+                            {isLowest && (
+                              <Badge tone="success" className="mt-1">
+                                Lowest
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="p-4 text-text-secondary">
+                            {quote.deliveryDays} day{quote.deliveryDays === 1 ? '' : 's'}
+                          </td>
+                          <td className="p-4 text-text-secondary">{quote.warrantyMonths} months</td>
+                          <td className="p-4">
+                            <Badge tone={rfq.acceptedQuoteId === quote.id ? 'success' : 'neutral'}>
+                              {rfq.acceptedQuoteId === quote.id ? 'Accepted' : 'Submitted'}
+                            </Badge>
+                          </td>
+                          <td className="p-4">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setOpenThreadQuoteId(openThreadQuoteId === quote.id ? null : quote.id)}
+                              >
+                                <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+                                Negotiate
+                              </Button>
+                              <Button size="sm" loading={accepting === quote.id} disabled={rfq.status === 'ACCEPTED'} onClick={() => handleAccept(quote)}>
+                                Accept
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                        {quote.notes && (
+                          <tr className="border-t border-border bg-neutral-bg/40">
+                            <td colSpan={6} className="px-4 py-2 text-caption">
+                              {quote.notes}
+                            </td>
+                          </tr>
+                        )}
+                        {openThreadQuoteId === quote.id && (
+                          <tr className="border-t border-border">
+                            <td colSpan={6} className="p-4">
+                              <NegotiationThread rfqId={rfq.id} quoteId={quote.id} />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile: cards, matching this app's established table -> card pattern rather than
+                a horizontally-scrolling table. */}
+            <div className="flex flex-col gap-3 md:hidden">
+              {quotes.map((quote) => {
+                const supplier = catalogService.getSupplierById(quote.supplierId);
+                const isLowest = quote.totalPrice === bestPrice;
+                return (
+                  <div key={quote.id} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold">{quote.supplierName}</p>
+                        {supplier && (
+                          <p className="flex items-center gap-1 text-caption">
+                            <Star className="h-3 w-3 fill-warning text-warning" aria-hidden="true" />
+                            {supplier.rating.toFixed(1)}
+                          </p>
+                        )}
+                      </div>
+                      <Badge tone={rfq.acceptedQuoteId === quote.id ? 'success' : 'neutral'}>
+                        {rfq.acceptedQuoteId === quote.id ? 'Accepted' : 'Submitted'}
+                      </Badge>
                     </div>
-                    {isBest && (
-                      <span className="flex items-center gap-1 rounded-md bg-success-bg px-2 py-1 text-xs font-medium text-success">
-                        <Trophy className="h-3 w-3" aria-hidden="true" />
-                        Best price
-                      </span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <PriceDisplay amount={quote.totalPrice} size="lg" />
+                      {isLowest && <Badge tone="success">Lowest</Badge>}
+                    </div>
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                      <dt className="text-text-secondary">Delivery</dt>
+                      <dd>
+                        {quote.deliveryDays} day{quote.deliveryDays === 1 ? '' : 's'}
+                      </dd>
+                      <dt className="text-text-secondary">Warranty</dt>
+                      <dd>{quote.warrantyMonths} months</dd>
+                    </dl>
+                    {quote.notes && <p className="text-caption">{quote.notes}</p>}
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => setOpenThreadQuoteId(openThreadQuoteId === quote.id ? null : quote.id)}>
+                        <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+                        Negotiate
+                      </Button>
+                      <Button size="sm" loading={accepting === quote.id} disabled={rfq.status === 'ACCEPTED'} onClick={() => handleAccept(quote)}>
+                        Accept quote
+                      </Button>
+                    </div>
+                    {openThreadQuoteId === quote.id && <NegotiationThread rfqId={rfq.id} quoteId={quote.id} />}
                   </div>
-
-                  <PriceDisplay amount={quote.totalPrice} size="lg" />
-
-                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                    <dt className="text-text-secondary">Delivery</dt>
-                    <dd>{quote.deliveryDays} day{quote.deliveryDays === 1 ? '' : 's'}</dd>
-                    <dt className="text-text-secondary">Warranty</dt>
-                    <dd>{quote.warrantyMonths} months</dd>
-                  </dl>
-
-                  {quote.notes && <p className="text-caption">{quote.notes}</p>}
-
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setOpenThreadQuoteId(openThreadQuoteId === quote.id ? null : quote.id)}
-                    >
-                      <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
-                      Negotiate
-                    </Button>
-                    <Button size="sm" loading={accepting === quote.id} disabled={rfq.status === 'ACCEPTED'} onClick={() => handleAccept(quote)}>
-                      Accept quote
-                    </Button>
-                  </div>
-
-                  {openThreadQuoteId === quote.id && <NegotiationThread rfqId={rfq.id} quoteId={quote.id} />}
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
     </div>

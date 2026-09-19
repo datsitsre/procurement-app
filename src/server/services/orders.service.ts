@@ -2,7 +2,8 @@ import 'server-only';
 import { db } from '@/server/db';
 import { fail, ok } from '@/services/base';
 import { toDeliveryDto, toOrderDto, toOrderTimelineEventDto, toShipmentDto } from '@/server/dto/orders';
-import type { ServiceResult, UUID } from '@/types/common';
+import { toPage, type PaginationParams } from '@/server/pagination';
+import type { Page, ServiceResult, UUID } from '@/types/common';
 import type { Delivery, Order, OrderTimelineEvent, PaymentMethod, Shipment } from '@/types/orders';
 import type { PurchaseOrder } from '@/types/procurement';
 import type { Prisma } from '@prisma/client';
@@ -22,15 +23,65 @@ import type { Prisma } from '@prisma/client';
 
 const ORDER_INCLUDE = { items: true, supplier: true } satisfies Prisma.OrderInclude;
 
-export async function listOrders(companyId: UUID): Promise<ServiceResult<Order[]>> {
-  const orders = await db.order.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' }, include: ORDER_INCLUDE });
-  return ok(orders.map(toOrderDto));
+export interface OrderSummary {
+  totalSpend: number;
+  monthlySpend: number;
+  openOrders: number;
 }
 
-/** Every order across every company - the platform admin overview (section 46). */
-export async function listAllOrders(): Promise<ServiceResult<Order[]>> {
-  const orders = await db.order.findMany({ orderBy: { createdAt: 'desc' }, include: ORDER_INCLUDE });
-  return ok(orders.map(toOrderDto));
+/** Dashboard summary stats (Phase 16, section 9/Category C) - real database aggregation
+ *  (`aggregate`/`count`), never "load every order and sum in JavaScript". Existed as a client-side
+ *  `.reduce()` over the *entire* unpaginated order list before `listOrders` itself was paginated -
+ *  that had to move server-side along with pagination, or the dashboard's totals would have
+ *  silently gone wrong past a company's first page of orders (section 23's frontend-compatibility
+ *  concern, caught during this same change rather than after). */
+/** The supplier-workspace counterpart to `getOrderSummary` - the one stat
+ *  `features/supplier/SupplierDashboard.tsx` needs that isn't already covered by
+ *  `analytics.service.ts`'s existing supplier analytics. Real `count`, never derived from a page
+ *  of `listOrdersForSupplier`. */
+export async function getSupplierOrdersToFulfillCount(supplierId: UUID): Promise<ServiceResult<number>> {
+  const count = await db.order.count({ where: { supplierId, status: { in: ['CONFIRMED', 'PROCESSING'] } } });
+  return ok(count);
+}
+
+export async function getOrderSummary(companyId: UUID): Promise<ServiceResult<OrderSummary>> {
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+
+  const [totalAgg, monthlyAgg, openOrders] = await Promise.all([
+    db.order.aggregate({ where: { companyId, paymentStatus: 'PAID' }, _sum: { total: true } }),
+    db.order.aggregate({ where: { companyId, paymentStatus: 'PAID', createdAt: { gte: monthStart } }, _sum: { total: true } }),
+    db.order.count({ where: { companyId, status: { notIn: ['DELIVERED', 'CANCELLED'] } } }),
+  ]);
+
+  return ok({
+    totalSpend: Number(totalAgg._sum.total ?? 0),
+    monthlySpend: Number(monthlyAgg._sum.total ?? 0),
+    openOrders,
+  });
+}
+
+/** Paginated (Phase 16, section 5) - a real buyer's order history grows every checkout and has no
+ *  natural upper bound over a multi-year account. Tenant filtering happens inside the same query
+ *  as pagination, never after (section 7) - `companyId` is always the caller's own, re-derived
+ *  server-side by the route, never trusted from pagination params. */
+export async function listOrders(companyId: UUID, pagination: PaginationParams): Promise<ServiceResult<Page<Order>>> {
+  const [orders, total] = await Promise.all([
+    db.order.findMany({ where: { companyId }, orderBy: { createdAt: 'desc' }, include: ORDER_INCLUDE, skip: pagination.skip, take: pagination.take }),
+    db.order.count({ where: { companyId } }),
+  ]);
+  return ok(toPage(orders.map(toOrderDto), total, pagination));
+}
+
+/** Every order across every company - the platform admin overview (section 46). Paginated - the
+ *  single most unbounded order listing in the app (no tenant scope to bound it at all). */
+export async function listAllOrders(pagination: PaginationParams): Promise<ServiceResult<Page<Order>>> {
+  const [orders, total] = await Promise.all([
+    db.order.findMany({ orderBy: { createdAt: 'desc' }, include: ORDER_INCLUDE, skip: pagination.skip, take: pagination.take }),
+    db.order.count(),
+  ]);
+  return ok(toPage(orders.map(toOrderDto), total, pagination));
 }
 
 export async function getOrder(id: UUID): Promise<ServiceResult<Order>> {
@@ -153,9 +204,12 @@ export async function createFromPurchaseOrder(
   return ok(orderDto);
 }
 
-export async function listOrdersForSupplier(supplierId: UUID): Promise<ServiceResult<Order[]>> {
-  const orders = await db.order.findMany({ where: { supplierId }, orderBy: { createdAt: 'desc' }, include: ORDER_INCLUDE });
-  return ok(orders.map(toOrderDto));
+export async function listOrdersForSupplier(supplierId: UUID, pagination: PaginationParams): Promise<ServiceResult<Page<Order>>> {
+  const [orders, total] = await Promise.all([
+    db.order.findMany({ where: { supplierId }, orderBy: { createdAt: 'desc' }, include: ORDER_INCLUDE, skip: pagination.skip, take: pagination.take }),
+    db.order.count({ where: { supplierId } }),
+  ]);
+  return ok(toPage(orders.map(toOrderDto), total, pagination));
 }
 
 async function addTimelineEvent(orderId: UUID, status: string, label: string) {

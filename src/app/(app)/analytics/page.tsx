@@ -40,7 +40,7 @@ export default function AnalyticsPage() {
 function BuyerAnalyticsView() {
   const company = useActiveCompany();
   const companyId = company?.id ?? null;
-  const { data } = useAsyncData<BuyerAnalytics>(companyId, () => analyticsService.getBuyerAnalytics(companyId!));
+  const { data, error, reload } = useAsyncData<BuyerAnalytics>(companyId, () => analyticsService.getBuyerAnalytics(companyId!));
 
   return (
     <div className="flex flex-col gap-6">
@@ -49,7 +49,9 @@ function BuyerAnalyticsView() {
         <p className="text-body text-text-secondary">Spend trends and savings for {company?.name}.</p>
       </div>
 
-      {!data ? (
+      {error ? (
+        <ErrorState title="Couldn't load analytics" description={error} secondaryAction={{ label: 'Try again', onClick: reload }} />
+      ) : !data ? (
         <AnalyticsSkeleton />
       ) : (
         <>
@@ -111,7 +113,7 @@ function BuyerAnalyticsView() {
 }
 
 function SupplierAnalyticsView({ supplier }: { supplier: SupplierProfile }) {
-  const { data } = useAsyncData<SupplierAnalytics>(supplier.id, () => analyticsService.getSupplierAnalytics(supplier.id));
+  const { data, error, reload } = useAsyncData<SupplierAnalytics>(supplier.id, () => analyticsService.getSupplierAnalytics(supplier.id));
   const winRate = data && data.quotesSubmitted > 0 ? Math.round((data.quotesWon / data.quotesSubmitted) * 100) : null;
 
   return (
@@ -121,7 +123,9 @@ function SupplierAnalyticsView({ supplier }: { supplier: SupplierProfile }) {
         <p className="text-body text-text-secondary">Revenue and RFQ performance for {supplier.name}.</p>
       </div>
 
-      {!data ? (
+      {error ? (
+        <ErrorState title="Couldn't load analytics" description={error} secondaryAction={{ label: 'Try again', onClick: reload }} />
+      ) : !data ? (
         <AnalyticsSkeleton />
       ) : (
         <>

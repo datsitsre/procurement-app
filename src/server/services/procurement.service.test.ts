@@ -155,13 +155,13 @@ describe('createRfq', () => {
     expect(created.data.status).toBe('SENT');
     expect(created.data.suppliers).toEqual([{ supplierId: TEST_SUPPLIER_ID, supplierName: 'Procurement Test Supplier', status: 'INVITED' }]);
 
-    const buyerList = await listRfqs(TEST_COMPANY_ID);
+    const buyerList = await listRfqs(TEST_COMPANY_ID, { page: 1, pageSize: 25, skip: 0, take: 25 });
     expect(buyerList.ok).toBe(true);
-    if (buyerList.ok) expect(buyerList.data.some((r) => r.id === created.data.id)).toBe(true);
+    if (buyerList.ok) expect(buyerList.data.items.some((r) => r.id === created.data.id)).toBe(true);
 
-    const supplierList = await listRfqsForSupplier(TEST_SUPPLIER_ID);
+    const supplierList = await listRfqsForSupplier(TEST_SUPPLIER_ID, { page: 1, pageSize: 25, skip: 0, take: 25 });
     expect(supplierList.ok).toBe(true);
-    if (supplierList.ok) expect(supplierList.data.some((r) => r.id === created.data.id)).toBe(true);
+    if (supplierList.ok) expect(supplierList.data.items.some((r) => r.id === created.data.id)).toBe(true);
   });
 });
 
@@ -465,9 +465,9 @@ describe('purchase requests + spending limits + approvals (Phase 14, Stage 6)', 
     expect(fetched.ok).toBe(true);
     if (fetched.ok) expect(fetched.data.status).toBe('CONVERTED_TO_PO');
 
-    const list = await listPurchaseRequests(TEST_COMPANY_ID);
+    const list = await listPurchaseRequests(TEST_COMPANY_ID, { skip: 0, take: 25, page: 1, pageSize: 25 });
     expect(list.ok).toBe(true);
-    if (list.ok) expect(list.data.some((p) => p.id === pr.data.id)).toBe(true);
+    if (list.ok) expect(list.data.items.some((p) => p.id === pr.data.id)).toBe(true);
   });
 
   it('two concurrent decideStep approvals on the same final step never both convert to a PO - only one purchase order is ever created (section 6/25 - concurrency)', async () => {

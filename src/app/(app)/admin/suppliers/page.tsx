@@ -10,6 +10,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 import type { SupplierProfile } from '@/types/catalog';
 
 export default function AdminSuppliersPage() {
@@ -24,12 +25,17 @@ function SuppliersQueue() {
   const { session } = useAuth();
   const membership = useActiveMembership();
   const { data: suppliers, reload } = useAsyncData<SupplierProfile[]>('admin-suppliers-list', () => catalogService.listAllSuppliers());
+  const toast = useToast();
   const [actingId, setActingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  async function decide(supplierId: string, decision: 'VERIFIED' | 'SUSPENDED' | 'REJECTED') {
+  const DECISION_LABEL: Record<'VERIFIED' | 'SUSPENDED' | 'REJECTED', string> = {
+    VERIFIED: 'verified',
+    SUSPENDED: 'suspended',
+    REJECTED: 'rejected',
+  };
+
+  async function decide(supplierId: string, supplierName: string, decision: 'VERIFIED' | 'SUSPENDED' | 'REJECTED') {
     if (!session || !membership) return;
-    setError(null);
     setActingId(supplierId);
     const result = await catalogService.verifySupplier(supplierId, decision, membership.role, {
       id: session.user.id,
@@ -37,9 +43,10 @@ function SuppliersQueue() {
     });
     setActingId(null);
     if (!result.ok) {
-      setError(result.error.message);
+      toast.show(result.error.message, 'error');
       return;
     }
+    toast.show(`${supplierName} ${DECISION_LABEL[decision]}.`, 'success');
     reload();
   }
 
@@ -52,8 +59,6 @@ function SuppliersQueue() {
         <h1 className="text-h1">Suppliers</h1>
         <p className="text-body text-text-secondary">Verify new suppliers and manage existing ones.</p>
       </div>
-
-      {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
 
       {suppliers === null ? (
         <SkeletonTable rows={5} columns={4} />
@@ -74,10 +79,10 @@ function SuppliersQueue() {
                     <p className="text-caption">{s.description}</p>
                   </div>
                   <div className="flex gap-2">
-                    <Button size="sm" variant="outline" loading={actingId === s.id} onClick={() => decide(s.id, 'REJECTED')}>
+                    <Button size="sm" variant="outline" loading={actingId === s.id} onClick={() => decide(s.id, s.name, 'REJECTED')}>
                       Reject
                     </Button>
-                    <Button size="sm" loading={actingId === s.id} onClick={() => decide(s.id, 'VERIFIED')}>
+                    <Button size="sm" loading={actingId === s.id} onClick={() => decide(s.id, s.name, 'VERIFIED')}>
                       Verify
                     </Button>
                   </div>
@@ -99,12 +104,12 @@ function SuppliersQueue() {
                 <div className="flex items-center gap-3">
                   <StatusBadge domain="supplierVerification" status={s.verification} />
                   {(s.verification === 'VERIFIED' || s.verification === 'PREMIUM_VERIFIED') && (
-                    <Button size="sm" variant="outline" loading={actingId === s.id} onClick={() => decide(s.id, 'SUSPENDED')}>
+                    <Button size="sm" variant="outline" loading={actingId === s.id} onClick={() => decide(s.id, s.name, 'SUSPENDED')}>
                       Suspend
                     </Button>
                   )}
                   {s.verification === 'SUSPENDED' && (
-                    <Button size="sm" loading={actingId === s.id} onClick={() => decide(s.id, 'VERIFIED')}>
+                    <Button size="sm" loading={actingId === s.id} onClick={() => decide(s.id, s.name, 'VERIFIED')}>
                       Reinstate
                     </Button>
                   )}

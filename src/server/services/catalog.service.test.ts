@@ -142,17 +142,17 @@ describe('Products', () => {
     expect(created.data.inventory).toHaveLength(1);
     expect(created.data.inventory[0].stock).toBe(20);
 
-    const buyerFacing = await listProducts({ supplierId: TEST_SUPPLIER_ID });
+    const buyerFacing = await listProducts({ supplierId: TEST_SUPPLIER_ID }, { skip: 0, take: 25, page: 1, pageSize: 25 });
     expect(buyerFacing.ok).toBe(true);
-    if (buyerFacing.ok) expect(buyerFacing.data.some((p) => p.id === created.data.id)).toBe(false);
+    if (buyerFacing.ok) expect(buyerFacing.data.items.some((p) => p.id === created.data.id)).toBe(false);
 
     // Once published, it appears in the buyer-facing catalog. actorId must be a real User id -
     // AuditLog.actorId is a genuine FK - so this uses the seeded platform admin (prisma/seed.ts).
     const moderated = await moderateProduct(created.data.id, 'PUBLISHED', undefined, { id: 'user-grace-owusu', name: 'Grace Owusu' });
     expect(moderated.ok).toBe(true);
-    const afterPublish = await listProducts({ supplierId: TEST_SUPPLIER_ID });
+    const afterPublish = await listProducts({ supplierId: TEST_SUPPLIER_ID }, { skip: 0, take: 25, page: 1, pageSize: 25 });
     expect(afterPublish.ok).toBe(true);
-    if (afterPublish.ok) expect(afterPublish.data.some((p) => p.id === created.data.id)).toBe(true);
+    if (afterPublish.ok) expect(afterPublish.data.items.some((p) => p.id === created.data.id)).toBe(true);
   });
 
   it("refuses updating a product scoped to a different supplier (the where clause enforces it)", async () => {

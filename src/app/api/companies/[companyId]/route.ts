@@ -3,8 +3,9 @@ import { Permission } from '@/config/rbac';
 import { requireCompanyAccess } from '@/server/auth/require';
 import { getCompanyProfile, updateCompanyProfile } from '@/server/services/company.service';
 import { CompanyProfilePatchSchema } from '@/server/validation/company';
+import { withErrorHandling } from '@/server/errors';
 
-export async function GET(request: NextRequest, ctx: RouteContext<'/api/companies/[companyId]'>) {
+export const GET = withErrorHandling("/api/companies/[companyId]", async (request: NextRequest, ctx: RouteContext<'/api/companies/[companyId]'>) => {
   const { companyId } = await ctx.params;
   const access = await requireCompanyAccess(request, companyId);
   if (!access.ok) return access.response;
@@ -12,9 +13,9 @@ export async function GET(request: NextRequest, ctx: RouteContext<'/api/companie
   const result = await getCompanyProfile(companyId);
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 404 });
   return NextResponse.json(result.data);
-}
+});
 
-export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/companies/[companyId]'>) {
+export const PATCH = withErrorHandling("/api/companies/[companyId]", async (request: NextRequest, ctx: RouteContext<'/api/companies/[companyId]'>) => {
   const { companyId } = await ctx.params;
   const access = await requireCompanyAccess(request, companyId, Permission.SETTINGS_MANAGE);
   if (!access.ok) return access.response;
@@ -28,4 +29,4 @@ export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/compan
   const result = await updateCompanyProfile(companyId, parsed.data);
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 404 });
   return NextResponse.json(result.data);
-}
+});

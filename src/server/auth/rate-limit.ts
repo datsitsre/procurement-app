@@ -15,7 +15,7 @@ import { NextResponse } from 'next/server';
  * traffic, so each `RateLimitKind` has its own bucket namespace and its own config below.
  */
 
-export type RateLimitKind = 'auth' | 'payment' | 'webhook' | 'negotiation' | 'rfqCreate';
+export type RateLimitKind = 'auth' | 'payment' | 'webhook' | 'negotiation' | 'rfqCreate' | 'procurementWrite';
 
 const LIMITS: Record<RateLimitKind, { windowMs: number; max: number }> = {
   // Login/register - brute-force credential guessing and mass fake-account creation.
@@ -33,6 +33,10 @@ const LIMITS: Record<RateLimitKind, { windowMs: number; max: number }> = {
   // RFQ creation - each one fans out to every invited supplier, so this is closer to a bulk-send
   // action than an ordinary write.
   rfqCreate: { windowMs: 60 * 60 * 1000, max: 30 },
+  // Budget/purchase-template/recurring-purchase create-update-delete, and the manual "run due
+  // schedules now" sweep trigger (Phase 16, section 8) - generous enough for real admin
+  // configuration work, tight enough to stop a scripted flood of writes or repeated sweep runs.
+  procurementWrite: { windowMs: 60 * 1000, max: 20 },
 };
 
 interface Bucket {
@@ -87,13 +91,30 @@ export function clearAttempts(kind: RateLimitKind, key: string): void {
   buckets.delete(bucketKey(kind, key));
 }
 
+/** How many whole seconds until `key`'s current window resets, for the `Retry-After` header
+ *  (section 13/Phase 18) - derived from the same bucket state `checkRateLimit` itself reads, so
+ *  it can never drift from the real remaining window. If no bucket exists yet (a `checkRateLimit`
+ *  call between two racing requests could plausibly see this), the full window is the correct,
+ *  safe answer - the caller genuinely has the entire window ahead of them. Always at least 1, so
+ *  a client is never told to retry after 0 seconds. */
+export function getRetryAfterSeconds(kind: RateLimitKind, key: string): number {
+  const { windowMs } = LIMITS[kind];
+  const bucket = buckets.get(bucketKey(kind, key));
+  if (!bucket) return Math.ceil(windowMs / 1000);
+  const remainingMs = windowMs - (Date.now() - bucket.windowStartedAt);
+  return Math.max(1, Math.ceil(remainingMs / 1000));
+}
+
 /** Check-and-record in one call, for endpoints where every request - successful or not - should
  *  count toward the limit (unlike login, which only counts failures so a legitimate user isn't
- *  penalized for their own successful sign-ins). Returns a ready-to-return 429 response when the
- *  caller is over limit, or null when the request may proceed. */
+ *  penalized for their own successful sign-ins). Returns a ready-to-return 429 response (carrying
+ *  a real, computed `Retry-After` header - section 13 - never a hardcoded value) when the caller
+ *  is over limit, or null when the request may proceed. */
 export function enforceRateLimit(kind: RateLimitKind, key: string): NextResponse | null {
   if (!checkRateLimit(kind, key)) {
-    return NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 });
+    const response = NextResponse.json({ error: 'Too many requests. Try again later.' }, { status: 429 });
+    response.headers.set('Retry-After', String(getRetryAfterSeconds(kind, key)));
+    return response;
   }
   recordAttempt(kind, key);
   return null;

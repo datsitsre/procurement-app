@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Wallet, Package, CheckSquare, FileText, Receipt, Star, ShieldCheck } from 'lucide-react';
@@ -16,11 +16,9 @@ import { StatCard } from '@/components/ui/StatCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { PriceDisplay } from '@/components/ui/PriceDisplay';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { RoleLabels } from '@/config/rbac';
 import { formatDate } from '@/utils/format';
-import type { Order } from '@/types/orders';
-import type { Invoice } from '@/types/orders';
-import type { RFQ } from '@/types/procurement';
 import type { SupplierProfile } from '@/types/catalog';
 
 export default function DashboardPage() {
@@ -57,54 +55,48 @@ function BuyerDashboard() {
   const membership = useActiveMembership();
 
   const companyId = company?.id ?? null;
-  const { data: orders } = useAsyncData<Order[]>(companyId, () => ordersService.listOrders(companyId!));
-  const { data: invoices } = useAsyncData<Invoice[]>(companyId, () => invoicesService.listInvoices(companyId!));
-  const { data: rfqs } = useAsyncData<RFQ[]>(companyId, () => procurementService.listRfqs(companyId!));
+  // Totals are computed server-side via real database aggregation (Phase 16), never by loading
+  // every order into the browser and summing in JS - `listOrders` itself is paginated now, so a
+  // page of it alone could never produce a correct all-time/monthly total for a company with more
+  // than one page of order history.
+  const { data: orderSummary, error: orderSummaryError, reload: reloadOrderSummary } = useAsyncData(companyId, () => ordersService.getOrderSummary(companyId!));
+  const { data: recentOrdersPage, error: recentOrdersError, reload: reloadRecentOrders } = useAsyncData(companyId, () => ordersService.listOrders(companyId!, 1, 4));
+  // Real database aggregation (Phase 19) - never loaded/summed from the full invoice/RFQ history,
+  // which is now paginated and could span many pages for a long-lived account.
+  const { data: invoiceAging, error: invoicesError, reload: reloadInvoices } = useAsyncData(companyId, () => invoicesService.getInvoiceAgingSummary(companyId!));
+  const { data: pendingRfqs, error: rfqsError, reload: reloadRfqs } = useAsyncData(companyId, () => procurementService.getRfqPendingCount(companyId!));
 
   const approvalsKey = companyId && membership ? `${companyId}:${membership.role}` : null;
-  const { data: pendingApprovals } = useAsyncData(approvalsKey, () => procurementService.listPendingApprovals(companyId!, membership!.role));
+  const { data: pendingApprovals, error: approvalsError, reload: reloadApprovals } = useAsyncData(approvalsKey, () => procurementService.listPendingApprovals(companyId!, membership!.role));
   const pendingApprovalCount = pendingApprovals?.length ?? null;
+
+  // One combined error surface (section 5's frontend-failure audit) - a dashboard is several
+  // independent data sources at once, so a single failed one shouldn't need its own dedicated
+  // error card; retrying re-fetches only the source(s) that actually failed.
+  const error = orderSummaryError ?? recentOrdersError ?? invoicesError ?? rfqsError ?? approvalsError ?? null;
+  function retryFailed() {
+    if (orderSummaryError) reloadOrderSummary();
+    if (recentOrdersError) reloadRecentOrders();
+    if (invoicesError) reloadInvoices();
+    if (rfqsError) reloadRfqs();
+    if (approvalsError) reloadApprovals();
+  }
 
   const [suppliers, setSuppliers] = useState<SupplierProfile[]>([]);
   useEffect(() => {
     catalogService.listSuppliers().then((r) => r.ok && setSuppliers(r.data));
   }, []);
 
-  const now = new Date();
+  const totalSpend = orderSummary?.totalSpend ?? 0;
+  const monthlySpend = orderSummary?.monthlySpend ?? 0;
+  const openOrders = orderSummary?.openOrders ?? 0;
 
-  const totalSpend = useMemo(
-    () => orders?.filter((o) => o.paymentStatus === 'PAID').reduce((sum, o) => sum + o.total, 0) ?? 0,
-    [orders],
-  );
+  const outstandingInvoices = { count: invoiceAging?.count ?? 0, amount: invoiceAging?.total ?? 0 };
 
-  const monthlySpend = useMemo(
-    () =>
-      orders
-        ?.filter((o) => {
-          const d = new Date(o.createdAt);
-          return o.paymentStatus === 'PAID' && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-        })
-        .reduce((sum, o) => sum + o.total, 0) ?? 0,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [orders],
-  );
-
-  const openOrders = useMemo(() => orders?.filter((o) => o.status !== 'DELIVERED' && o.status !== 'CANCELLED').length ?? 0, [orders]);
-
-  const pendingRfqs = useMemo(
-    () => rfqs?.filter((r) => !['ACCEPTED', 'REJECTED', 'EXPIRED', 'CANCELLED', 'DRAFT'].includes(r.status)).length ?? 0,
-    [rfqs],
-  );
-
-  const outstandingInvoices = useMemo(() => {
-    const list = invoices?.filter((i) => i.status === 'PENDING' || i.status === 'OVERDUE') ?? [];
-    return { count: list.length, amount: list.reduce((sum, i) => sum + (i.total - i.amountPaid), 0) };
-  }, [invoices]);
-
-  const recentOrders = orders?.slice(0, 4) ?? [];
+  const recentOrders = recentOrdersPage?.items ?? [];
   const recommendedSuppliers = [...suppliers].sort((a, b) => b.rating - a.rating).slice(0, 3);
 
-  const loading = orders === null || invoices === null || rfqs === null || pendingApprovalCount === null;
+  const loading = orderSummary === null || recentOrdersPage === null || invoiceAging === null || pendingRfqs === null || pendingApprovalCount === null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -115,7 +107,9 @@ function BuyerDashboard() {
         </p>
       </div>
 
-      {loading ? (
+      {error ? (
+        <ErrorState title="Couldn't load your dashboard" description={error} secondaryAction={{ label: 'Try again', onClick: retryFailed }} />
+      ) : loading ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-24" />
@@ -132,7 +126,7 @@ function BuyerDashboard() {
             icon={CheckSquare}
             tone={pendingApprovalCount! > 0 ? 'warning' : 'neutral'}
           />
-          <StatCard label="Pending RFQs" value={String(pendingRfqs)} icon={FileText} />
+          <StatCard label="Pending RFQs" value={String(pendingRfqs ?? 0)} icon={FileText} />
           <StatCard
             label="Outstanding invoices"
             value={`${outstandingInvoices.count} · ${formatShort(outstandingInvoices.amount, company?.currency)}`}
@@ -142,6 +136,7 @@ function BuyerDashboard() {
         </div>
       )}
 
+      {!error && (
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="rounded-lg border border-border bg-surface lg:col-span-2">
           <div className="flex items-center justify-between border-b border-border px-5 py-4">
@@ -201,6 +196,7 @@ function BuyerDashboard() {
           </ul>
         </div>
       </div>
+      )}
     </div>
   );
 }
