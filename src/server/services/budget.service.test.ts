@@ -28,6 +28,9 @@ const TEST_CATEGORY_ID = `test-category-budget-${Date.now()}`;
 const TEST_PRODUCT_ID = `test-product-budget-${Date.now()}`;
 const TEST_USER_ID = 'user-john-doe'; // seeded OWNER at company-acme-gh - no default spending limit, reused here
 const ACTOR = { id: TEST_USER_ID, name: 'John Doe' };
+// decideStep rejects self-approval (section 27) - a distinct, real approver for the one test
+// below that both creates and decides a request.
+const TEST_APPROVER_USER_ID = `test-approver-budget-${Date.now()}`;
 
 beforeAll(async () => {
   await db.company.create({ data: { id: TEST_COMPANY_ID, name: 'Budget Test Co', country: 'GH', currency: 'GHS' } });
@@ -67,6 +70,12 @@ beforeAll(async () => {
   await db.companyMembership.create({
     data: { companyId: TEST_COMPANY_ID, userId: TEST_USER_ID, role: 'OWNER', status: 'ACTIVE', joinedAt: new Date() },
   });
+  await db.user.create({
+    data: { id: TEST_APPROVER_USER_ID, name: 'Test Approver', email: `${TEST_APPROVER_USER_ID}@example.test`, passwordHash: 'x' },
+  });
+  await db.companyMembership.create({
+    data: { companyId: TEST_COMPANY_ID, userId: TEST_APPROVER_USER_ID, role: 'OWNER', status: 'ACTIVE', joinedAt: new Date() },
+  });
 });
 
 afterAll(async () => {
@@ -76,6 +85,7 @@ afterAll(async () => {
   await db.budgetAlertSettings.deleteMany({ where: { companyId: { in: [TEST_COMPANY_ID, OTHER_COMPANY_ID] } } });
   await db.budget.deleteMany({ where: { companyId: { in: [TEST_COMPANY_ID, OTHER_COMPANY_ID] } } });
   await db.companyMembership.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
+  await db.user.delete({ where: { id: TEST_APPROVER_USER_ID } }).catch(() => undefined);
   await db.product.delete({ where: { id: TEST_PRODUCT_ID } }).catch(() => undefined);
   await db.category.delete({ where: { id: TEST_CATEGORY_ID } }).catch(() => undefined);
   await db.supplierProfile.delete({ where: { id: TEST_SUPPLIER_ID } }).catch(() => undefined);
@@ -229,7 +239,7 @@ describe('budget enforcement in createPurchaseRequest (section 6)', () => {
 
     // Reject it - via the same OWNER approval step (fallback band, single OWNER step).
     const { decideStep } = await import('./procurement.service');
-    const decided = await decideStep(created.data.id, 'OWNER', 'REJECTED', TEST_USER_ID, 'John Doe', 'Not needed after all');
+    const decided = await decideStep(created.data.id, 'OWNER', 'REJECTED', TEST_APPROVER_USER_ID, 'Test Approver', 'Not needed after all');
     expect(decided.ok).toBe(true);
 
     const afterReject = await db.budget.findUnique({ where: { id: budget.data.id } });

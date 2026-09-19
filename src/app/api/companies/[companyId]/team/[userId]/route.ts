@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { Permission } from '@/config/rbac';
+import { Permission, type Role } from '@/config/rbac';
 import { requireCompanyAccess } from '@/server/auth/require';
 import { updateTeamMember } from '@/server/services/company.service';
 import { UpdateTeamMemberSchema } from '@/server/validation/company';
@@ -19,7 +19,10 @@ export const PATCH = withErrorHandling("/api/companies/[companyId]/team/[userId]
     return NextResponse.json({ error: 'Invalid request.', fieldErrors: parsed.error.flatten().fieldErrors }, { status: 422 });
   }
 
-  const result = await updateTeamMember(companyId, userId, parsed.data);
-  if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
+  const result = await updateTeamMember(companyId, userId, parsed.data, { userId: access.auth.userId, role: access.auth.role as Role });
+  if (!result.ok) {
+    const status = result.error.code === 'SELF_ROLE_CHANGE_DENIED' || result.error.code === 'OWNER_ROLE_RESTRICTED' ? 403 : 422;
+    return NextResponse.json({ error: result.error.message }, { status });
+  }
   return NextResponse.json(result.data);
 });

@@ -17,5 +17,8 @@ export const GET = withErrorHandling("/api/invoices/[id]", async (request: NextR
     return NextResponse.json({ error: 'That invoice could not be found.' }, { status: 404 });
   }
 
+  const { auditCrossCompanyRead } = await import('@/server/services/audit.service');
+  await auditCrossCompanyRead(auth, 'Invoice', id, result.data.companyId);
+
   return NextResponse.json(result.data);
 });

@@ -2,7 +2,7 @@ import 'server-only';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { db } from '@/server/db';
-import type { Role } from '@/config/rbac';
+import { CROSS_TENANT_ROLES, PLATFORM_ROLES, type Role } from '@/config/rbac';
 import type { TenantContext } from '@/types/common';
 import { SESSION_COOKIE_NAME, verifySessionToken } from './session';
 
@@ -39,8 +39,19 @@ async function resolveTenant(activeCompanyId: string | null, userId: string): Pr
   // "no tenant" rather than trusting the stale id, the same fail-closed behavior ownsRecord uses.
   if (!membership || membership.status !== 'ACTIVE') return { tenant: {}, role: undefined };
 
-  if (membership.role === 'PLATFORM_ADMIN') {
+  // Only the exceptional, system-wide roles receive the ownsRecord() tenant-isolation bypass -
+  // PLATFORM_MANAGER is a real platform role (it holds PLATFORM_SETTINGS_MANAGE etc.) but is
+  // deliberately NOT in this list, so it can never read/write another company's transactional
+  // data no matter what route it calls. See rbac.ts's CROSS_TENANT_ROLES for the single source
+  // of truth this mirrors.
+  if (CROSS_TENANT_ROLES.includes(membership.role as Role)) {
     return { tenant: { isPlatformAdmin: true }, role: membership.role as Role };
+  }
+  if (PLATFORM_ROLES.includes(membership.role as Role)) {
+    // A platform role that isn't cross-tenant (PLATFORM_MANAGER) - no companyId/supplierId,
+    // no isPlatformAdmin bypass. Route-level permission checks (PLATFORM_SETTINGS_MANAGE, etc.)
+    // are this role's entire authorization story.
+    return { tenant: {}, role: membership.role as Role };
   }
 
   const company = await db.company.findUnique({

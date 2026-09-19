@@ -31,6 +31,10 @@ const BUYER_USER_ID = 'user-john-doe'; // seeded OWNER at company-acme-gh
 const OWNER_SUPPLIER_USER_ID = 'user-adwoa-mensah'; // seeded SUPPLIER_ADMIN, reattached below
 const UNINVITED_SUPPLIER_USER_ID = 'user-kofi-boateng'; // seeded SUPPLIER_ADMIN at supplier-prime
 const EMPLOYEE_USER_ID = 'user-michael-doe'; // reattached below with EMPLOYEE role at the scratch buyer company
+// A second, real OWNER-tier member of the scratch buyer company - decideStep now rejects
+// self-approval (section 27), so deciding a request BUYER_USER_ID itself requested needs a
+// genuinely different approver holding the same OWNER role the fallback approval step requires.
+const SECOND_OWNER_USER_ID = 'user-sarah-smith'; // seeded, not otherwise used in this file
 // Same physical user as BUYER_USER_ID, but signed in with a different seeded company active
 // (John Doe is also OWNER at company-acme-ng) - a genuinely different tenant for isolation
 // purposes, without needing a fabricated user id.
@@ -43,6 +47,7 @@ let ownerSupplierSessionToken: string;
 let uninvitedSupplierSessionToken: string;
 let otherBuyerSessionToken: string;
 let employeeSessionToken: string;
+let secondOwnerSessionToken: string;
 
 function requestFor(url: string, token: string, init?: { method?: string; body?: string }) {
   return new NextRequest(`http://localhost${url}`, {
@@ -104,6 +109,7 @@ beforeAll(async () => {
     data: [
       { companyId: BUYER_COMPANY_ID, userId: BUYER_USER_ID, role: 'OWNER', status: 'ACTIVE', joinedAt: new Date() },
       { companyId: BUYER_COMPANY_ID, userId: EMPLOYEE_USER_ID, role: 'EMPLOYEE', status: 'ACTIVE', joinedAt: new Date() },
+      { companyId: BUYER_COMPANY_ID, userId: SECOND_OWNER_USER_ID, role: 'OWNER', status: 'ACTIVE', joinedAt: new Date() },
       { companyId: OWNER_SUPPLIER_COMPANY_ID, userId: OWNER_SUPPLIER_USER_ID, role: 'SUPPLIER_ADMIN', status: 'ACTIVE', joinedAt: new Date() },
     ],
   });
@@ -147,6 +153,7 @@ beforeAll(async () => {
   buyerSessionToken = (await createSession({ userId: BUYER_USER_ID, activeCompanyId: BUYER_COMPANY_ID })).token;
   ownerSupplierSessionToken = (await createSession({ userId: OWNER_SUPPLIER_USER_ID, activeCompanyId: OWNER_SUPPLIER_COMPANY_ID })).token;
   employeeSessionToken = (await createSession({ userId: EMPLOYEE_USER_ID, activeCompanyId: BUYER_COMPANY_ID })).token;
+  secondOwnerSessionToken = (await createSession({ userId: SECOND_OWNER_USER_ID, activeCompanyId: BUYER_COMPANY_ID })).token;
   // Genuinely different, pre-existing seeded tenants - no scratch data needed for these two.
   uninvitedSupplierSessionToken = (await createSession({ userId: UNINVITED_SUPPLIER_USER_ID, activeCompanyId: 'supplier-company-prime' })).token;
   otherBuyerSessionToken = (await createSession({ userId: BUYER_USER_ID, activeCompanyId: OTHER_BUYER_ACTIVE_COMPANY_ID })).token;
@@ -436,9 +443,22 @@ describe('GET /api/purchase-requests/[id] and POST .../decide (tenant + role iso
     expect(response.status).toBe(404);
   });
 
-  it('lets the owning company decide it', async () => {
+  it('refuses the requester approving their own request, even holding the required approver role (section 27 - separation of duties)', async () => {
     const response = await decideStepRoute(
       requestFor(`/api/purchase-requests/${PURCHASE_REQUEST_ID}/decide`, buyerSessionToken, {
+        method: 'POST',
+        body: JSON.stringify({ decision: 'APPROVED' }),
+      }),
+      { params: Promise.resolve({ id: PURCHASE_REQUEST_ID }) },
+    );
+    expect(response.status).toBe(403);
+    const body = await response.json();
+    expect(body.error).toMatch(/cannot approve or reject your own/i);
+  });
+
+  it('lets a different, authorized owner at the same company decide it', async () => {
+    const response = await decideStepRoute(
+      requestFor(`/api/purchase-requests/${PURCHASE_REQUEST_ID}/decide`, secondOwnerSessionToken, {
         method: 'POST',
         body: JSON.stringify({ decision: 'APPROVED' }),
       }),

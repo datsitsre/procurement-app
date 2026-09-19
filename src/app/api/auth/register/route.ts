@@ -4,7 +4,6 @@ import { hashPassword } from '@/server/auth/password';
 import { createSession, setSessionCookie } from '@/server/auth/session';
 import { isSameOrigin } from '@/server/auth/csrf';
 import { enforceRateLimit } from '@/server/auth/rate-limit';
-import { buildSessionPayload } from '@/server/dto/session';
 import { RegisterSchema } from '@/server/validation/auth';
 import { withErrorHandling } from '@/server/errors';
 
@@ -13,6 +12,18 @@ import { withErrorHandling } from '@/server/errors';
  * auth.service.ts's mock `register`. Company + User + CompanyMembership are created in one
  * transaction (section 12) so a failure partway through (e.g. the membership insert) can never
  * leave an orphaned company or user behind with no way to sign in to it.
+ *
+ * Phase 26 - the new membership starts `PENDING_APPROVAL`, not `ACTIVE`. This is not a new
+ * enforcement mechanism: `resolveTenant` (server/auth/context.ts) and `buildSessionPayload`
+ * (server/dto/session.ts) already treat any non-ACTIVE membership as "no tenant, no role, no
+ * company in the session payload" - a real, pre-existing fail-closed behavior originally built
+ * for INVITED/SUSPENDED. Setting the *initial* status to PENDING_APPROVAL instead of ACTIVE
+ * means a brand-new self-registration is automatically covered by that same, already-verified
+ * gate - the elevated access (OWNER of a real company) genuinely cannot be exercised until a
+ * platform admin approves it (`server/services/platformUsers.service.ts`'s `decideRegistration`).
+ * A session is still issued (the client needs one to show a "pending approval" screen and to log
+ * out), but it carries no working tenant/role until that happens - verified by
+ * registration.routes.test.ts's "PENDING_APPROVAL cannot access protected functionality" tests.
  */
 export const POST = withErrorHandling("/api/auth/register", async (request: NextRequest) => {
   if (!isSameOrigin(request)) {
@@ -48,13 +59,20 @@ export const POST = withErrorHandling("/api/auth/register", async (request: Next
       data: { name: fullName, email: email.toLowerCase(), passwordHash },
     });
     const membership = await tx.companyMembership.create({
-      data: { companyId: company.id, userId: user.id, role: 'OWNER', status: 'ACTIVE', joinedAt: new Date() },
+      data: { companyId: company.id, userId: user.id, role: 'OWNER', status: 'PENDING_APPROVAL' },
     });
     return { user, membership };
   });
 
-  const payload = await buildSessionPayload(user.id, membership.companyId);
-  if (!payload) return NextResponse.json({ error: 'Registration failed.' }, { status: 500 });
+  // Deliberately NOT buildSessionPayload's own shape here (it strips non-ACTIVE memberships
+  // entirely, which is correct for login/session but would silently hide *why* this response has
+  // no companies - a fresh registrant needs to be told they're pending, not just given an empty
+  // list that looks like a bug).
+  const response = NextResponse.json({
+    user: { id: user.id, name: user.name, email: user.email, createdAt: user.createdAt.toISOString() },
+    registrationStatus: 'PENDING_APPROVAL',
+    message: 'Your account has been created and is awaiting approval. You will be able to sign in once a platform administrator approves your registration.',
+  });
 
   const { token, expiresAt } = await createSession({
     userId: user.id,
@@ -62,8 +80,6 @@ export const POST = withErrorHandling("/api/auth/register", async (request: Next
     userAgent: request.headers.get('user-agent'),
     ipAddress: request.headers.get('x-forwarded-for'),
   });
-
-  const response = NextResponse.json(payload);
   setSessionCookie(response, token, expiresAt);
   return response;
 });

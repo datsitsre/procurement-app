@@ -11,8 +11,13 @@ import { withErrorHandling } from '@/server/errors';
 
 /** Every dispute across every company - the admin dispute queue (section 46/49). */
 export const GET = withErrorHandling("/api/disputes", async (request: NextRequest) => {
-  const access = await requireAuthenticated(request, Permission.PLATFORM_MANAGE);
+  // Cross-company dispute data, tied to specific orders/companies - PLATFORM_SUPER_ADMIN
+  // (and legacy PLATFORM_ADMIN) only.
+  const access = await requireAuthenticated(request, Permission.PLATFORM_TRANSACTIONS_ACCESS);
   if (!access.ok) return access.response;
+
+  const { auditCrossCompanyRead } = await import('@/server/services/audit.service');
+  await auditCrossCompanyRead(access.auth, 'Dispute', 'LIST');
 
   const result = await listAllDisputes();
   return NextResponse.json(result.ok ? result.data : []);

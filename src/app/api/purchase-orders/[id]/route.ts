@@ -18,5 +18,8 @@ export const GET = withErrorHandling("/api/purchase-orders/[id]", async (request
     return NextResponse.json({ error: 'That purchase order could not be found.' }, { status: 404 });
   }
 
+  const { auditCrossCompanyRead } = await import('@/server/services/audit.service');
+  await auditCrossCompanyRead(auth, 'PurchaseOrder', id, result.data.companyId);
+
   return NextResponse.json(result.data);
 });

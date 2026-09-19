@@ -35,13 +35,33 @@ enum Role {
   EMPLOYEE
   SUPPLIER_ADMIN
   SUPPLIER_STAFF
+  /// Legacy platform role, kept for backward compatibility with accounts created before the
+  /// PLATFORM_MANAGER/PLATFORM_SUPER_ADMIN split - granted the same permission set as
+  /// PLATFORM_SUPER_ADMIN (src/config/rbac.ts) so no existing account regresses.
   PLATFORM_ADMIN
+  /// Platform operations: manages platform users/settings/registration approvals/catalog
+  /// moderation. Deliberately does NOT receive the tenant-isolation bypass
+  /// (src/server/auth/context.ts's resolveTenant) or company-transaction permissions - see
+  /// PLATFORM_SUPER_ADMIN for the exceptional, audited, cross-company role.
+  PLATFORM_MANAGER
+  /// The exceptional system-wide role - the only one besides the legacy PLATFORM_ADMIN that
+  /// receives the ownsRecord() tenant-isolation bypass, for troubleshooting across companies.
+  PLATFORM_SUPER_ADMIN
 }
 
 enum MembershipStatus {
   ACTIVE
   INVITED
   SUSPENDED
+  /// A brand-new self-registered company's OWNER membership starts here (see
+  /// server/dto/session.ts's own ACTIVE-only membership filter, and resolveTenant in
+  /// server/auth/context.ts, both of which already treat any non-ACTIVE status as "no tenant" -
+  /// so a pending membership was already functionally locked out before this status existed;
+  /// this value just makes that state explicit and queryable instead of overloading SUSPENDED).
+  PENDING_APPROVAL
+  /// A platform admin rejected this registration - terminal, distinct from SUSPENDED (which
+  /// implies "was once active, temporarily revoked").
+  REJECTED
 }
 
 enum CreditTerm {

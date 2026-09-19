@@ -7,7 +7,8 @@ import { withErrorHandling } from '@/server/errors';
 /** Every product across every supplier, unfiltered by moderation status - the admin
  *  product-moderation queue (section 46). */
 export const GET = withErrorHandling("/api/products/moderation", async (request: NextRequest) => {
-  const access = await requireAuthenticated(request, Permission.PLATFORM_MANAGE);
+  // Catalog quality control, not a company transaction - available to PLATFORM_MANAGER too.
+  const access = await requireAuthenticated(request, Permission.PLATFORM_CATALOG_MODERATE);
   if (!access.ok) return access.response;
 
   const result = await listAllProductsForModeration();

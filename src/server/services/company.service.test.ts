@@ -31,6 +31,10 @@ const TEST_COMPANY_ID = `test-company-service-${Date.now()}`;
 const TEST_COMPANY_2_ID = `test-company-service-2-${Date.now()}`;
 const TEST_SUPPLIER_COMPANY_ID = `test-supplier-company-service-${Date.now()}`;
 const NEW_USER_EMAIL = `new-team-member-${Date.now()}@example.test`;
+// A real, distinct OWNER-tier actor for addTeamMember/updateTeamMember calls (their audit-trail
+// write has a real FK to User, and the new self-role-change guard needs an actor id that's never
+// equal to the member being acted on).
+const OWNER_ACTOR_USER_ID = `test-owner-actor-service-${Date.now()}`;
 
 beforeAll(async () => {
   await db.company.create({
@@ -42,11 +46,21 @@ beforeAll(async () => {
   await db.company.create({
     data: { id: TEST_SUPPLIER_COMPANY_ID, name: 'Company Service Test Supplier Co', country: 'GH', currency: 'GHS', isSupplier: true },
   });
+  await db.user.create({
+    data: { id: OWNER_ACTOR_USER_ID, name: 'Owner Actor', email: `${OWNER_ACTOR_USER_ID}@example.test`, passwordHash: 'x' },
+  });
+  // A real membership for the self-role-change test below - updateTeamMember looks up the
+  // target's membership by (companyId, userId) before reaching the escalation checks, so the
+  // actor needs a genuine row here to exercise SELF_ROLE_CHANGE_DENIED rather than NOT_FOUND.
+  await db.companyMembership.create({
+    data: { companyId: TEST_COMPANY_ID, userId: OWNER_ACTOR_USER_ID, role: 'OWNER', status: 'ACTIVE', joinedAt: new Date() },
+  });
 });
 
 afterAll(async () => {
   await db.companyMembership.deleteMany({ where: { companyId: { in: [TEST_COMPANY_ID, TEST_COMPANY_2_ID, TEST_SUPPLIER_COMPANY_ID] } } });
   await db.user.deleteMany({ where: { email: NEW_USER_EMAIL } });
+  await db.user.delete({ where: { id: OWNER_ACTOR_USER_ID } }).catch(() => undefined);
   await db.company.delete({ where: { id: TEST_COMPANY_ID } }).catch(() => undefined);
   await db.company.delete({ where: { id: TEST_COMPANY_2_ID } }).catch(() => undefined);
   await db.company.delete({ where: { id: TEST_SUPPLIER_COMPANY_ID } }).catch(() => undefined);
@@ -170,9 +184,13 @@ describe('Spending limits (Phase 14, Stage 6)', () => {
   });
 });
 
+// A generic OWNER-tier actor for tests that aren't specifically about the escalation guards
+// themselves (see the dedicated "role-escalation protection" describe block below for those).
+const OWNER_ACTOR = { userId: OWNER_ACTOR_USER_ID, role: 'OWNER' } as const;
+
 describe('addTeamMember', () => {
   it('creates a brand-new account with a real, usable temporary password when the email has none yet', async () => {
-    const result = await addTeamMember(TEST_COMPANY_ID, { email: NEW_USER_EMAIL, name: 'New Person', role: 'EMPLOYEE' });
+    const result = await addTeamMember(TEST_COMPANY_ID, { email: NEW_USER_EMAIL, name: 'New Person', role: 'EMPLOYEE' }, OWNER_ACTOR);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.user.email).toBe(NEW_USER_EMAIL);
@@ -189,13 +207,13 @@ describe('addTeamMember', () => {
   });
 
   it('rejects a missing name for a genuinely new email - there is no account to fall back to', async () => {
-    const result = await addTeamMember(TEST_COMPANY_ID, { email: `no-name-${Date.now()}@example.test`, role: 'EMPLOYEE' });
+    const result = await addTeamMember(TEST_COMPANY_ID, { email: `no-name-${Date.now()}@example.test`, role: 'EMPLOYEE' }, OWNER_ACTOR);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('NAME_REQUIRED');
   });
 
   it('adds an existing account as a new membership at a different company instead of creating a duplicate user, with no temporary password', async () => {
-    const result = await addTeamMember(TEST_COMPANY_2_ID, { email: NEW_USER_EMAIL, role: 'FINANCE_MANAGER' });
+    const result = await addTeamMember(TEST_COMPANY_2_ID, { email: NEW_USER_EMAIL, role: 'FINANCE_MANAGER' }, OWNER_ACTOR);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.temporaryPassword).toBeUndefined();
@@ -205,21 +223,21 @@ describe('addTeamMember', () => {
   });
 
   it('refuses adding someone already a member of this company', async () => {
-    const result = await addTeamMember(TEST_COMPANY_ID, { email: NEW_USER_EMAIL, role: 'EMPLOYEE' });
+    const result = await addTeamMember(TEST_COMPANY_ID, { email: NEW_USER_EMAIL, role: 'EMPLOYEE' }, OWNER_ACTOR);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('ALREADY_MEMBER');
   });
 
   it("refuses a role that doesn't belong to this company's side of the marketplace - never lets USERS_MANAGE at a buyer company hand out SUPPLIER_ADMIN or PLATFORM_ADMIN", async () => {
-    const supplierRoleAtBuyer = await addTeamMember(TEST_COMPANY_ID, { email: `x-${Date.now()}@example.test`, name: 'X', role: 'SUPPLIER_ADMIN' });
+    const supplierRoleAtBuyer = await addTeamMember(TEST_COMPANY_ID, { email: `x-${Date.now()}@example.test`, name: 'X', role: 'SUPPLIER_ADMIN' }, OWNER_ACTOR);
     expect(supplierRoleAtBuyer.ok).toBe(false);
     if (!supplierRoleAtBuyer.ok) expect(supplierRoleAtBuyer.error.code).toBe('INVALID_ROLE');
 
-    const platformRoleAtBuyer = await addTeamMember(TEST_COMPANY_ID, { email: `y-${Date.now()}@example.test`, name: 'Y', role: 'PLATFORM_ADMIN' });
+    const platformRoleAtBuyer = await addTeamMember(TEST_COMPANY_ID, { email: `y-${Date.now()}@example.test`, name: 'Y', role: 'PLATFORM_ADMIN' }, OWNER_ACTOR);
     expect(platformRoleAtBuyer.ok).toBe(false);
     if (!platformRoleAtBuyer.ok) expect(platformRoleAtBuyer.error.code).toBe('INVALID_ROLE');
 
-    const buyerRoleAtSupplier = await addTeamMember(TEST_SUPPLIER_COMPANY_ID, { email: `z-${Date.now()}@example.test`, name: 'Z', role: 'OWNER' });
+    const buyerRoleAtSupplier = await addTeamMember(TEST_SUPPLIER_COMPANY_ID, { email: `z-${Date.now()}@example.test`, name: 'Z', role: 'OWNER' }, OWNER_ACTOR);
     expect(buyerRoleAtSupplier.ok).toBe(false);
     if (!buyerRoleAtSupplier.ok) expect(buyerRoleAtSupplier.error.code).toBe('INVALID_ROLE');
   });
@@ -240,7 +258,7 @@ describe('updateTeamMember', () => {
       department: 'Finance',
       name: 'Edited Name',
       avatarUrl: avatar,
-    });
+    }, OWNER_ACTOR);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data.membership.role).toBe('FINANCE_MANAGER');
@@ -250,22 +268,61 @@ describe('updateTeamMember', () => {
   });
 
   it('returns NOT_FOUND for a userId not actually a member of this company', async () => {
-    const result = await updateTeamMember(TEST_COMPANY_ID, 'user-does-not-exist', { role: 'EMPLOYEE' });
+    const result = await updateTeamMember(TEST_COMPANY_ID, 'user-does-not-exist', { role: 'EMPLOYEE' }, OWNER_ACTOR);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('NOT_FOUND');
   });
 
   it("refuses moving a member to a role outside this company's own workspace", async () => {
     const user = await db.user.findUniqueOrThrow({ where: { email: NEW_USER_EMAIL } });
-    const result = await updateTeamMember(TEST_COMPANY_ID, user.id, { role: 'SUPPLIER_ADMIN' });
+    const result = await updateTeamMember(TEST_COMPANY_ID, user.id, { role: 'SUPPLIER_ADMIN' }, OWNER_ACTOR);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('INVALID_ROLE');
   });
 
   it('rejects clearing the name to empty', async () => {
     const user = await db.user.findUniqueOrThrow({ where: { email: NEW_USER_EMAIL } });
-    const result = await updateTeamMember(TEST_COMPANY_ID, user.id, { name: '   ' });
+    const result = await updateTeamMember(TEST_COMPANY_ID, user.id, { name: '   ' }, OWNER_ACTOR);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('EMPTY_NAME');
+  });
+});
+
+describe('role-escalation protection (section 24/25)', () => {
+  it('refuses an OWNER changing their own role through this endpoint - no self-service role change, promotion or otherwise', async () => {
+    const result = await updateTeamMember(TEST_COMPANY_ID, OWNER_ACTOR.userId, { role: 'ADMIN' }, OWNER_ACTOR);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('SELF_ROLE_CHANGE_DENIED');
+  });
+
+  it('refuses a non-OWNER (ADMIN, permission-equivalent to OWNER) granting the OWNER role to someone else', async () => {
+    const nonOwnerActor = { userId: OWNER_ACTOR.userId, role: 'ADMIN' } as const;
+    const target = await db.user.findUniqueOrThrow({ where: { email: NEW_USER_EMAIL } });
+    const result = await updateTeamMember(TEST_COMPANY_ID, target.id, { role: 'OWNER' }, nonOwnerActor);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('OWNER_ROLE_RESTRICTED');
+  });
+
+  it('refuses a non-OWNER demoting an existing OWNER away from the role, even to another valid role', async () => {
+    // Promote the target to OWNER first (as a real OWNER actor, which is allowed), then attempt
+    // to change it away as a non-OWNER actor.
+    const target = await db.user.findUniqueOrThrow({ where: { email: NEW_USER_EMAIL } });
+    const promoted = await updateTeamMember(TEST_COMPANY_ID, target.id, { role: 'OWNER' }, OWNER_ACTOR);
+    expect(promoted.ok).toBe(true);
+
+    const nonOwnerActor = { userId: OWNER_ACTOR.userId, role: 'ADMIN' } as const;
+    const demoted = await updateTeamMember(TEST_COMPANY_ID, target.id, { role: 'EMPLOYEE' }, nonOwnerActor);
+    expect(demoted.ok).toBe(false);
+    if (!demoted.ok) expect(demoted.error.code).toBe('OWNER_ROLE_RESTRICTED');
+
+    // Restore for any later test relying on this member's role.
+    await updateTeamMember(TEST_COMPANY_ID, target.id, { role: 'FINANCE_MANAGER' }, OWNER_ACTOR);
+  });
+
+  it('refuses a non-OWNER granting the OWNER role to a brand-new team member via addTeamMember', async () => {
+    const nonOwnerActor = { userId: OWNER_ACTOR.userId, role: 'ADMIN' } as const;
+    const result = await addTeamMember(TEST_COMPANY_ID, { email: `no-escalation-${Date.now()}@example.test`, name: 'No Escalation', role: 'OWNER' }, nonOwnerActor);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('OWNER_ROLE_RESTRICTED');
   });
 });

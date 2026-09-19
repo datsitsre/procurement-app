@@ -19,7 +19,20 @@ export const Role = {
   EMPLOYEE: 'EMPLOYEE',
   SUPPLIER_ADMIN: 'SUPPLIER_ADMIN',
   SUPPLIER_STAFF: 'SUPPLIER_STAFF',
+  /** Legacy platform role - kept for backward compatibility with accounts created before the
+   *  manager/super-admin split below; granted the same permissions as PLATFORM_SUPER_ADMIN so no
+   *  existing account regresses. Do not grant this role to new accounts - use one of the two
+   *  below instead. */
   PLATFORM_ADMIN: 'PLATFORM_ADMIN',
+  /** Platform operations - manages platform users, settings, registration approvals, and
+   *  catalog moderation. Deliberately does NOT receive the tenant-isolation bypass (see
+   *  server/auth/context.ts's resolveTenant) or any company-transaction permission - being a
+   *  platform administrator must never mean "sees every company's data." */
+  PLATFORM_MANAGER: 'PLATFORM_MANAGER',
+  /** The exceptional, system-wide role. The only role besides the legacy PLATFORM_ADMIN that
+   *  receives the tenant-isolation bypass, for cross-company troubleshooting - every such access
+   *  is expected to be audited (see PLATFORM_TRANSACTIONS_ACCESS's own comment). */
+  PLATFORM_SUPER_ADMIN: 'PLATFORM_SUPER_ADMIN',
 } as const;
 export type Role = (typeof Role)[keyof typeof Role];
 
@@ -33,7 +46,12 @@ export const BUYER_ROLES: Role[] = [
   Role.EMPLOYEE,
 ];
 export const SUPPLIER_ROLES: Role[] = [Role.SUPPLIER_ADMIN, Role.SUPPLIER_STAFF];
-export const PLATFORM_ROLES: Role[] = [Role.PLATFORM_ADMIN];
+export const PLATFORM_ROLES: Role[] = [Role.PLATFORM_ADMIN, Role.PLATFORM_MANAGER, Role.PLATFORM_SUPER_ADMIN];
+
+/** Roles that receive the ownsRecord() tenant-isolation bypass (server/auth/context.ts) - a
+ *  strictly narrower set than PLATFORM_ROLES. PLATFORM_MANAGER is deliberately excluded: it's a
+ *  platform role, but not one authorized to read/write another company's transactional data. */
+export const CROSS_TENANT_ROLES: Role[] = [Role.PLATFORM_ADMIN, Role.PLATFORM_SUPER_ADMIN];
 
 /** Which "workspace" a role signs into - drives which app shell + nav a user sees. */
 export type Workspace = 'buyer' | 'supplier' | 'platform';
@@ -86,8 +104,35 @@ export const Permission = {
   // Settings (approval-rule config, company profile, etc.)
   SETTINGS_MANAGE: 'settings.manage',
 
-  // Platform administration
+  // Company-level audit trail (own company only - see /api/companies/[companyId]/audit-log)
+  AUDIT_VIEW: 'audit.view',
+
+  // Platform administration - kept for backward compatibility; every route that used to check
+  // only this now also accepts the finer-grained permissions below (see each route's own diff).
   PLATFORM_MANAGE: 'platform.manage',
+
+  // Platform operations - granted to both PLATFORM_MANAGER and PLATFORM_SUPER_ADMIN (and the
+  // legacy PLATFORM_ADMIN). None of these grant access to a specific company's transactions.
+  PLATFORM_SETTINGS_MANAGE: 'platform.settings.manage',
+  PLATFORM_USERS_MANAGE: 'platform.users.manage',
+  PLATFORM_REGISTRATION_APPROVE: 'platform.registration.approve',
+  /** Product/supplier listing moderation and verification - a platform quality-control function,
+   *  not access to any company's procurement transactions. */
+  PLATFORM_CATALOG_MODERATE: 'platform.catalog.moderate',
+  /** View the platform-wide audit trail. PLATFORM_MANAGER's view is filtered to platform-action
+   *  entries only (see audit.service.ts's listAuditLog `scope` param) - it does not imply
+   *  PLATFORM_TRANSACTIONS_ACCESS. */
+  PLATFORM_AUDIT_VIEW: 'platform.audit.view',
+
+  // Platform super-admin only - the exceptional, cross-company capabilities.
+  /** Manage platform-tier role assignments (who is a PLATFORM_MANAGER/PLATFORM_SUPER_ADMIN) -
+   *  never granted to PLATFORM_MANAGER, which would otherwise let a manager promote themselves. */
+  PLATFORM_ROLES_MANAGE: 'platform.roles.manage',
+  /** Cross-company transactional access - orders, payments, disputes, invoices, budgets,
+   *  analytics, recurring purchases. This is the one permission that actually exposes another
+   *  company's business data to platform staff, and it is granted ONLY to PLATFORM_SUPER_ADMIN
+   *  (and the legacy PLATFORM_ADMIN) - never to PLATFORM_MANAGER. */
+  PLATFORM_TRANSACTIONS_ACCESS: 'platform.transactions.access',
 } as const;
 export type Permission = (typeof Permission)[keyof typeof Permission];
 
@@ -109,6 +154,7 @@ const ALL_BUYER_PERMISSIONS: Permission[] = [
   Permission.USERS_MANAGE,
   Permission.ANALYTICS_READ,
   Permission.SETTINGS_MANAGE,
+  Permission.AUDIT_VIEW,
 ];
 
 /** Role -> permission grants. Deliberately explicit (no wildcard "owner gets everything")
@@ -169,6 +215,7 @@ export const RolePermissions: Record<Role, Permission[]> = {
     Permission.USERS_MANAGE,
     Permission.ANALYTICS_READ,
     Permission.SETTINGS_MANAGE,
+    Permission.AUDIT_VIEW,
   ],
   [Role.SUPPLIER_STAFF]: [
     Permission.ORDERS_READ,
@@ -177,7 +224,44 @@ export const RolePermissions: Record<Role, Permission[]> = {
     Permission.PRODUCTS_READ,
     Permission.PRODUCTS_MANAGE,
   ],
-  [Role.PLATFORM_ADMIN]: [Permission.PLATFORM_MANAGE, Permission.ANALYTICS_READ],
+  // Platform operations only - explicitly excludes PLATFORM_TRANSACTIONS_ACCESS and
+  // PLATFORM_ROLES_MANAGE. A PLATFORM_MANAGER can run the platform; it cannot see a single
+  // company's purchase requests, orders, invoices, payments, budgets, or recurring purchases,
+  // and it cannot promote itself or anyone else to a platform role.
+  [Role.PLATFORM_MANAGER]: [
+    Permission.PLATFORM_SETTINGS_MANAGE,
+    Permission.PLATFORM_USERS_MANAGE,
+    Permission.PLATFORM_REGISTRATION_APPROVE,
+    Permission.PLATFORM_CATALOG_MODERATE,
+    Permission.PLATFORM_AUDIT_VIEW,
+  ],
+  // The exceptional, system-wide role - everything PLATFORM_MANAGER has, plus the two
+  // permissions that actually cross a tenant boundary (transactions + role management).
+  [Role.PLATFORM_SUPER_ADMIN]: [
+    Permission.PLATFORM_MANAGE,
+    Permission.PLATFORM_SETTINGS_MANAGE,
+    Permission.PLATFORM_USERS_MANAGE,
+    Permission.PLATFORM_REGISTRATION_APPROVE,
+    Permission.PLATFORM_CATALOG_MODERATE,
+    Permission.PLATFORM_AUDIT_VIEW,
+    Permission.PLATFORM_ROLES_MANAGE,
+    Permission.PLATFORM_TRANSACTIONS_ACCESS,
+    Permission.ANALYTICS_READ,
+  ],
+  // Legacy role - kept permission-equivalent to PLATFORM_SUPER_ADMIN so accounts created before
+  // this split (including any already in production) do not lose access. Do not grant this role
+  // to new accounts.
+  [Role.PLATFORM_ADMIN]: [
+    Permission.PLATFORM_MANAGE,
+    Permission.PLATFORM_SETTINGS_MANAGE,
+    Permission.PLATFORM_USERS_MANAGE,
+    Permission.PLATFORM_REGISTRATION_APPROVE,
+    Permission.PLATFORM_CATALOG_MODERATE,
+    Permission.PLATFORM_AUDIT_VIEW,
+    Permission.PLATFORM_ROLES_MANAGE,
+    Permission.PLATFORM_TRANSACTIONS_ACCESS,
+    Permission.ANALYTICS_READ,
+  ],
 };
 
 export function hasPermission(role: Role, permission: Permission): boolean {
@@ -199,5 +283,17 @@ export const RoleLabels: Record<Role, string> = {
   [Role.EMPLOYEE]: 'Employee',
   [Role.SUPPLIER_ADMIN]: 'Supplier administrator',
   [Role.SUPPLIER_STAFF]: 'Supplier staff',
-  [Role.PLATFORM_ADMIN]: 'Platform administrator',
+  [Role.PLATFORM_ADMIN]: 'Platform administrator (legacy)',
+  [Role.PLATFORM_MANAGER]: 'Platform manager',
+  [Role.PLATFORM_SUPER_ADMIN]: 'Platform super admin',
 };
+
+/** Role-escalation guard (section 24) - who may assign a given platform-tier role to someone.
+ *  Only PLATFORM_SUPER_ADMIN (or the legacy PLATFORM_ADMIN) may grant PLATFORM_MANAGER or
+ *  PLATFORM_SUPER_ADMIN - a PLATFORM_MANAGER can never promote itself or anyone else to a
+ *  platform role, matching the "Platform Manager cannot become Super Admin" rule. Not used for
+ *  company-level roles - see BUYER_ROLES/SUPPLIER_ROLES's own allowlist checks in
+ *  company.service.ts, which already exclude platform roles from what any company can grant. */
+export function canAssignPlatformRole(actorRole: Role): boolean {
+  return actorRole === Role.PLATFORM_SUPER_ADMIN || actorRole === Role.PLATFORM_ADMIN;
+}

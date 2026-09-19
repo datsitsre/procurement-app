@@ -126,7 +126,7 @@ export interface CompanyUser {
   userId: UUID;
   role: Role;
   department?: string;
-  status: 'ACTIVE' | 'INVITED' | 'SUSPENDED';
+  status: 'ACTIVE' | 'INVITED' | 'SUSPENDED' | 'PENDING_APPROVAL' | 'REJECTED';
   invitedAt?: ISODateTime;
   joinedAt?: ISODateTime;
 }

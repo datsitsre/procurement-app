@@ -30,7 +30,7 @@ export const POST = withErrorHandling("/api/purchase-requests/[id]/decide", asyn
 
   const result = await decideStep(id, auth.role, parsed.data.decision, auth.userId, auth.userName, parsed.data.comment);
   if (!result.ok) {
-    const status = result.error.code === 'CONFLICT' ? 409 : 422;
+    const status = result.error.code === 'CONFLICT' ? 409 : result.error.code === 'SELF_APPROVAL_DENIED' ? 403 : 422;
     return NextResponse.json({ error: result.error.message }, { status });
   }
   return NextResponse.json(result.data);

@@ -8,7 +8,9 @@ import { withErrorHandling } from '@/server/errors';
 /** A platform admin closes out a dispute - RESOLVED_REFUND also marks the underlying order's
  *  payment REFUNDED. */
 export const POST = withErrorHandling("/api/disputes/[id]/resolve", async (request: NextRequest, ctx: RouteContext<'/api/disputes/[id]/resolve'>) => {
-  const access = await requireAuthenticated(request, Permission.PLATFORM_MANAGE);
+  // Resolving a dispute acts on a specific company's order - PLATFORM_SUPER_ADMIN (and legacy
+  // PLATFORM_ADMIN) only.
+  const access = await requireAuthenticated(request, Permission.PLATFORM_TRANSACTIONS_ACCESS);
   if (!access.ok) return access.response;
 
   const body = await request.json().catch(() => null);

@@ -6,8 +6,12 @@ import { withErrorHandling } from '@/server/errors';
 
 /** The platform admin overview across every company (section 46). */
 export const GET = withErrorHandling("/api/analytics", async (request: NextRequest) => {
-  const access = await requireAuthenticated(request, Permission.PLATFORM_MANAGE);
+  // Cross-company transaction analytics - PLATFORM_SUPER_ADMIN (and legacy PLATFORM_ADMIN) only.
+  const access = await requireAuthenticated(request, Permission.PLATFORM_TRANSACTIONS_ACCESS);
   if (!access.ok) return access.response;
+
+  const { auditCrossCompanyRead } = await import('@/server/services/audit.service');
+  await auditCrossCompanyRead(access.auth, 'PlatformAnalytics', 'LIST');
 
   const result = await getPlatformAnalytics();
   if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 500 });

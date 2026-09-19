@@ -72,7 +72,11 @@ export interface AddedTeamMember extends TeamMember {
  *  DEMO_ACCOUNTS.md). Either way the new membership is ACTIVE immediately, not a pending
  *  "invited, must accept" state - there's no accept-an-invite flow for it to be pending on, and
  *  an admin adding someone here is already vouching for them having real access now. */
-export async function addTeamMember(companyId: UUID, input: NewTeamMemberInput): Promise<ServiceResult<AddedTeamMember>> {
+export async function addTeamMember(
+  companyId: UUID,
+  input: NewTeamMemberInput,
+  actor: { userId: UUID; role: Role },
+): Promise<ServiceResult<AddedTeamMember>> {
   const email = input.email.trim().toLowerCase();
   if (!email) return fail('EMPTY', 'Enter an email address.');
 
@@ -87,6 +91,12 @@ export async function addTeamMember(companyId: UUID, input: NewTeamMemberInput):
   if (!allowedRoles.includes(input.role)) {
     return fail('INVALID_ROLE', `${input.role} is not a role this company can grant.`);
   }
+  // Role-escalation protection (section 24) - USERS_MANAGE is held by both OWNER and ADMIN
+  // (they're permission-equivalent in rbac.ts), so without this, an ADMIN could hand out the
+  // OWNER role freely. Only an existing OWNER may grant OWNER.
+  if (input.role === 'OWNER' && actor.role !== 'OWNER') {
+    return fail('OWNER_ROLE_RESTRICTED', 'Only an existing owner can grant the owner role.');
+  }
 
   const existingUser = await db.user.findUnique({ where: { email } });
 
@@ -99,6 +109,7 @@ export async function addTeamMember(companyId: UUID, input: NewTeamMemberInput):
     const membership = await db.companyMembership.create({
       data: { companyId, userId: existingUser.id, role: input.role, department: input.department, status: 'ACTIVE', joinedAt: new Date() },
     });
+    await recordTeamAudit(companyId, actor.userId, 'TEAM_MEMBER_ADDED', existingUser.id, { role: input.role });
     return ok({ membership: toMembershipDto(membership), user: toUserDto(existingUser) });
   }
 
@@ -117,7 +128,25 @@ export async function addTeamMember(companyId: UUID, input: NewTeamMemberInput):
     return { user, membership };
   });
 
+  await recordTeamAudit(companyId, actor.userId, 'TEAM_MEMBER_ADDED', user.id, { role: input.role });
   return ok({ membership: toMembershipDto(membership), user: toUserDto(user), temporaryPassword });
+}
+
+/** Shared audit-trail helper for team/membership changes (section 25/28) - never called for a
+ *  read, only for the mutations that actually change who has access to a company. */
+async function recordTeamAudit(companyId: UUID, actorId: UUID, action: string, targetUserId: UUID, newValue: unknown, previousValue?: unknown): Promise<void> {
+  const { recordAudit } = await import('./audit.service');
+  const actor = await db.user.findUnique({ where: { id: actorId }, select: { name: true } });
+  await recordAudit({
+    actorId,
+    actorName: actor?.name ?? 'Unknown',
+    companyId,
+    action,
+    entityType: 'CompanyMembership',
+    entityId: targetUserId,
+    previousValue,
+    newValue,
+  });
 }
 
 export interface TeamMemberPatch {
@@ -136,11 +165,27 @@ export interface TeamMemberPatch {
  *  list). `userId` + `companyId` together are what's checked, exactly like every other
  *  company-scoped mutation in this file - never just a membership id, which on its own says
  *  nothing about which company it belongs to. */
-export async function updateTeamMember(companyId: UUID, userId: UUID, patch: TeamMemberPatch): Promise<ServiceResult<TeamMember>> {
+export async function updateTeamMember(
+  companyId: UUID,
+  userId: UUID,
+  patch: TeamMemberPatch,
+  actor: { userId: UUID; role: Role },
+): Promise<ServiceResult<TeamMember>> {
   const membership = await db.companyMembership.findUnique({ where: { companyId_userId: { companyId, userId } }, include: { user: true } });
   if (!membership) return fail('NOT_FOUND', 'That team member could not be found.');
 
   if (patch.role) {
+    // Role-escalation protection (section 24/25) - no one may change their own role through
+    // this endpoint, promotion or otherwise; a separate owner/admin must do it. Without this, any
+    // USERS_MANAGE holder (including ADMIN, permission-equivalent to OWNER in rbac.ts) could
+    // promote themselves to OWNER with a single PATCH on their own userId.
+    if (actor.userId === userId) {
+      return fail('SELF_ROLE_CHANGE_DENIED', 'You cannot change your own role. Ask another owner or admin to do this.');
+    }
+    // Only an existing OWNER may grant or revoke the OWNER role itself.
+    if ((patch.role === 'OWNER' || membership.role === 'OWNER') && actor.role !== 'OWNER') {
+      return fail('OWNER_ROLE_RESTRICTED', 'Only an existing owner can grant or change the owner role.');
+    }
     const company = await db.company.findUnique({ where: { id: companyId } });
     const allowedRoles = company?.isSupplier ? SUPPLIER_ROLES : BUYER_ROLES;
     if (!allowedRoles.includes(patch.role)) {
@@ -167,6 +212,10 @@ export async function updateTeamMember(companyId: UUID, userId: UUID, patch: Tea
       },
     }),
   ]);
+
+  if (patch.role && patch.role !== membership.role) {
+    await recordTeamAudit(companyId, actor.userId, 'TEAM_MEMBER_ROLE_CHANGED', userId, { role: patch.role }, { role: membership.role });
+  }
 
   return ok({ membership: toMembershipDto(updatedMembership), user: toUserDto(updatedUser) });
 }

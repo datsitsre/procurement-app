@@ -11,6 +11,9 @@ export const GET = withErrorHandling("/api/companies/[companyId]/budgets", async
   const access = await requireCompanyAccess(request, companyId);
   if (!access.ok) return access.response;
 
+  const { auditCrossCompanyRead } = await import('@/server/services/audit.service');
+  await auditCrossCompanyRead(access.auth, 'Budget', companyId, companyId);
+
   const result = await listBudgets(companyId);
   return NextResponse.json(result.ok ? result.data : []);
 });

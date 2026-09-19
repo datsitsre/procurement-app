@@ -8,8 +8,12 @@ import { withErrorHandling } from '@/server/errors';
 /** Every order across every company - the platform admin overview (section 46), paginated
  *  (?page=&pageSize=, default 25, max 100 - Phase 16). */
 export const GET = withErrorHandling("/api/orders", async (request: NextRequest) => {
-  const access = await requireAuthenticated(request, Permission.PLATFORM_MANAGE);
+  // Cross-company order data - PLATFORM_SUPER_ADMIN (and legacy PLATFORM_ADMIN) only.
+  const access = await requireAuthenticated(request, Permission.PLATFORM_TRANSACTIONS_ACCESS);
   if (!access.ok) return access.response;
+
+  const { auditCrossCompanyRead } = await import('@/server/services/audit.service');
+  await auditCrossCompanyRead(access.auth, 'Order', 'LIST');
 
   const pagination = parsePagination(request);
   const result = await listAllOrders(pagination);

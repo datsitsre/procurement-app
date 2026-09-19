@@ -34,6 +34,9 @@ const TEST_CATEGORY_ID = `test-category-procurement-${Date.now()}`;
 const TEST_PRODUCT_ID = `test-product-procurement-${Date.now()}`;
 const TEST_USER_ID = 'user-john-doe'; // seeded buyer at company-acme-gh, reused here as the RFQ creator
 const TEST_SUPPLIER_USER_ID = 'user-adwoa-mensah'; // seeded SUPPLIER_ADMIN at supplier-company-abc, reused as a real negotiation reply sender
+// A separate, real approver - decideStep now rejects self-approval (section 27), so any test that
+// decides a request TEST_USER_ID itself requested must use a different, real member as approver.
+const TEST_APPROVER_USER_ID = `test-approver-procurement-${Date.now()}`;
 
 // Notifications (Phase 14, Stage 9) land on this real seeded user's row, shared across several
 // test files - track exactly which entity ids this file's own notifications reference so
@@ -82,6 +85,12 @@ beforeAll(async () => {
   await db.companyMembership.create({
     data: { companyId: TEST_COMPANY_ID, userId: TEST_USER_ID, role: 'EMPLOYEE', status: 'ACTIVE', joinedAt: new Date() },
   });
+  await db.user.create({
+    data: { id: TEST_APPROVER_USER_ID, name: 'Test Approver', email: `${TEST_APPROVER_USER_ID}@example.test`, passwordHash: 'x' },
+  });
+  await db.companyMembership.create({
+    data: { companyId: TEST_COMPANY_ID, userId: TEST_APPROVER_USER_ID, role: 'OWNER', status: 'ACTIVE', joinedAt: new Date() },
+  });
 });
 
 afterAll(async () => {
@@ -107,6 +116,7 @@ afterAll(async () => {
   await db.approvalRule.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
   await db.spendingLimit.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
   await db.companyMembership.deleteMany({ where: { companyId: TEST_COMPANY_ID } });
+  await db.user.delete({ where: { id: TEST_APPROVER_USER_ID } }).catch(() => undefined);
   await db.product.delete({ where: { id: TEST_PRODUCT_ID } }).catch(() => undefined);
   await db.category.delete({ where: { id: TEST_CATEGORY_ID } }).catch(() => undefined);
   await db.supplierProfile.delete({ where: { id: TEST_SUPPLIER_ID } }).catch(() => undefined);
@@ -440,7 +450,7 @@ describe('purchase requests + spending limits + approvals (Phase 14, Stage 6)', 
     expect(wrongApprover.ok).toBe(false);
     if (!wrongApprover.ok) expect(wrongApprover.error.code).toBe('WRONG_APPROVER');
 
-    const noReason = await decideStep(pr.data.id, 'OWNER', 'REJECTED', TEST_USER_ID, 'John Doe');
+    const noReason = await decideStep(pr.data.id, 'OWNER', 'REJECTED', TEST_APPROVER_USER_ID, 'Test Approver');
     expect(noReason.ok).toBe(false);
     if (!noReason.ok) expect(noReason.error.code).toBe('REASON_REQUIRED');
 
@@ -448,12 +458,12 @@ describe('purchase requests + spending limits + approvals (Phase 14, Stage 6)', 
     expect(pending.ok).toBe(true);
     if (pending.ok) expect(pending.data.some((p) => p.id === pr.data.id)).toBe(true);
 
-    const decided = await decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_USER_ID, 'John Doe');
+    const decided = await decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_APPROVER_USER_ID, 'Test Approver');
     expect(decided.ok).toBe(true);
     if (decided.ok) {
       expect(decided.data.status).toBe('CONVERTED_TO_PO');
       expect(decided.data.approvalSteps[0].status).toBe('APPROVED');
-      expect(decided.data.approvalSteps[0].approverName).toBe('John Doe');
+      expect(decided.data.approvalSteps[0].approverName).toBe('Test Approver');
     }
 
     // Phase 14, Stage 9 - the requester hears about the final decision.
@@ -487,8 +497,8 @@ describe('purchase requests + spending limits + approvals (Phase 14, Stage 6)', 
     // Fires both requests genuinely concurrently - the real shape of a double-click or a
     // retried request racing the original approval.
     const [first, second] = await Promise.all([
-      decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_USER_ID, 'John Doe'),
-      decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_USER_ID, 'John Doe'),
+      decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_APPROVER_USER_ID, 'Test Approver'),
+      decideStep(pr.data.id, 'OWNER', 'APPROVED', TEST_APPROVER_USER_ID, 'Test Approver'),
     ]);
 
     const results = [first, second];

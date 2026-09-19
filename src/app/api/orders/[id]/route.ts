@@ -17,5 +17,8 @@ export const GET = withErrorHandling("/api/orders/[id]", async (request: NextReq
     return NextResponse.json({ error: 'That order could not be found.' }, { status: 404 });
   }
 
+  const { auditCrossCompanyRead } = await import('@/server/services/audit.service');
+  await auditCrossCompanyRead(auth, 'Order', id, result.data.companyId);
+
   return NextResponse.json(result.data);
 });

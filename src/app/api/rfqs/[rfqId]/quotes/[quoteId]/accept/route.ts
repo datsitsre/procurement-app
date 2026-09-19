@@ -15,7 +15,7 @@ export const POST = withErrorHandling("/api/rfqs/[rfqId]/quotes/[quoteId]/accept
   const access = await requireCompanyAccess(request, rfq.data.companyId, Permission.PURCHASE_ORDER_CREATE);
   if (!access.ok) return access.response;
 
-  const result = await acceptQuote(rfqId, quoteId, access.auth.userName);
+  const result = await acceptQuote(rfqId, quoteId, access.auth.userName, access.auth.userId);
   if (!result.ok) {
     const status = result.error.code === 'CONFLICT' ? 409 : 404;
     return NextResponse.json({ error: result.error.message }, { status });

@@ -259,6 +259,7 @@ export async function acceptQuote(
   rfqId: UUID,
   quoteId: UUID,
   authorizedByName: string,
+  authorizedByUserId?: UUID,
 ): Promise<ServiceResult<{ rfq: RFQ; quote: Quote; purchaseOrderId: UUID }>> {
   const quote = await db.quote.findUnique({ where: { id: quoteId }, include: QUOTE_INCLUDE });
   if (!quote || quote.rfqId !== rfqId) return fail('NOT_FOUND', 'That RFQ or quote could not be found.');
@@ -282,6 +283,18 @@ export async function acceptQuote(
   });
 
   if (!result) return fail('CONFLICT', 'This RFQ has already been accepted.');
+
+  const { recordAudit } = await import('./audit.service');
+  await recordAudit({
+    actorId: authorizedByUserId,
+    actorName: authorizedByName,
+    companyId: result.rfq.companyId,
+    action: 'RFQ_QUOTE_ACCEPTED',
+    entityType: 'RFQ',
+    entityId: rfqId,
+    newValue: { quoteId, purchaseOrderId: result.purchaseOrderId },
+  });
+
   return ok(result);
 }
 
@@ -466,6 +479,12 @@ export async function decideStep(
       `This request is waiting on ${step ? RoleLabels[step.approverRole as Role] ?? step.approverRole : 'no one'}, not your role.`,
     );
   }
+  // Separation of duties (section 27) - holding the approver role for this step is not enough
+  // if you're also the person who asked for the money. A PROCUREMENT_MANAGER (or OWNER/ADMIN)
+  // who both creates and can approve requests must not be able to sign off on their own.
+  if (pr.requesterUserId === approverUserId) {
+    return fail('SELF_APPROVAL_DENIED', 'You cannot approve or reject your own purchase request. Ask another authorized approver.');
+  }
   if (decision === 'REJECTED' && !comment?.trim()) {
     return fail('REASON_REQUIRED', 'Add a reason for rejecting this request so the requester knows what to fix.');
   }
@@ -510,6 +529,18 @@ export async function decideStep(
   if (!updated) return fail('CONFLICT', 'This approval step has already been decided.');
 
   const updatedDto = toPurchaseRequestDto(updated);
+
+  const { recordAudit } = await import('./audit.service');
+  await recordAudit({
+    actorId: approverUserId,
+    actorName: authorizedByName,
+    companyId: updated.companyId,
+    action: `PURCHASE_REQUEST_${decision}`,
+    entityType: 'PurchaseRequest',
+    entityId: updated.id,
+    previousValue: { status: 'IN_APPROVAL', stepId: step.id },
+    newValue: { status: updated.status, decision, comment },
+  });
 
   const { notifyUser, notifyCompanyRoles } = await import('./notification.service');
   if (updated.status === 'REJECTED' || updated.status === 'CONVERTED_TO_PO') {

@@ -8,7 +8,8 @@ import { withErrorHandling } from '@/server/errors';
 /** Publishes or rejects a product awaiting moderation - a rejected listing stays visible to
  *  its supplier (with a moderationNote explaining why) but never reaches the buyer catalog. */
 export const PATCH = withErrorHandling("/api/products/[productId]/moderation", async (request: NextRequest, ctx: RouteContext<'/api/products/[productId]/moderation'>) => {
-  const access = await requireAuthenticated(request, Permission.PLATFORM_MANAGE);
+  // Catalog quality control, not a company transaction - available to PLATFORM_MANAGER too.
+  const access = await requireAuthenticated(request, Permission.PLATFORM_CATALOG_MODERATE);
   if (!access.ok) return access.response;
 
   const body = await request.json().catch(() => null);

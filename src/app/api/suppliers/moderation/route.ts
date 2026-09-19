@@ -7,7 +7,9 @@ import { withErrorHandling } from '@/server/errors';
 /** Every supplier regardless of verification status - the admin verification queue (section
  *  46), same shape as GET /api/products/moderation. */
 export const GET = withErrorHandling("/api/suppliers/moderation", async (request: NextRequest) => {
-  const access = await requireAuthenticated(request, Permission.PLATFORM_MANAGE);
+  // Supplier onboarding quality control, not a company's transaction data - available to
+  // PLATFORM_MANAGER too.
+  const access = await requireAuthenticated(request, Permission.PLATFORM_CATALOG_MODERATE);
   if (!access.ok) return access.response;
 
   const result = await listAllSuppliers();

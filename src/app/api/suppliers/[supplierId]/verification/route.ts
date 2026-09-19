@@ -9,7 +9,9 @@ import { withErrorHandling } from '@/server/errors';
  *  PATCH /api/products/[productId]/moderation. Not requireSupplierAccess - a supplier can't
  *  verify itself, this is exclusively a platform decision. */
 export const PATCH = withErrorHandling("/api/suppliers/[supplierId]/verification", async (request: NextRequest, ctx: RouteContext<'/api/suppliers/[supplierId]/verification'>) => {
-  const access = await requireAuthenticated(request, Permission.PLATFORM_MANAGE);
+  // Supplier onboarding quality control, not a company's transaction data - available to
+  // PLATFORM_MANAGER too.
+  const access = await requireAuthenticated(request, Permission.PLATFORM_CATALOG_MODERATE);
   if (!access.ok) return access.response;
 
   const body = await request.json().catch(() => null);

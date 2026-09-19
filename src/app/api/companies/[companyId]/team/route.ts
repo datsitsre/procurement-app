@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { Permission } from '@/config/rbac';
+import { Permission, type Role } from '@/config/rbac';
 import { requireCompanyAccess } from '@/server/auth/require';
 import { addTeamMember, listTeamMembers } from '@/server/services/company.service';
 import { NewTeamMemberSchema } from '@/server/validation/company';
@@ -27,7 +27,10 @@ export const POST = withErrorHandling("/api/companies/[companyId]/team", async (
     return NextResponse.json({ error: 'Invalid request.', fieldErrors: parsed.error.flatten().fieldErrors }, { status: 422 });
   }
 
-  const result = await addTeamMember(companyId, parsed.data);
-  if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
+  const result = await addTeamMember(companyId, parsed.data, { userId: access.auth.userId, role: access.auth.role as Role });
+  if (!result.ok) {
+    const status = result.error.code === 'OWNER_ROLE_RESTRICTED' ? 403 : 422;
+    return NextResponse.json({ error: result.error.message }, { status });
+  }
   return NextResponse.json(result.data);
 });
