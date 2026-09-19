@@ -1,0 +1,28 @@
+import { NextResponse, type NextRequest } from 'next/server';
+import { Permission, hasPermission } from '@/config/rbac';
+import { getAuthContext, unauthorized, forbidden } from '@/server/auth/context';
+import { isSameOrigin } from '@/server/auth/csrf';
+import { getOrder, markProcessing } from '@/server/services/orders.service';
+import { ownsRecord } from '@/services/base';
+import { withErrorHandling } from '@/server/errors';
+
+/** `caller` must be the fulfilling supplier (section 9.2) - ORDERS_FULFILL alone only proves
+ *  the role can fulfill *some* order, not that this one is theirs, so ownership is re-checked
+ *  against the fetched record, not a path segment. */
+export const POST = withErrorHandling("/api/orders/[id]/processing", async (request: NextRequest, ctx: RouteContext<'/api/orders/[id]/processing'>) => {
+  if (!isSameOrigin(request)) return NextResponse.json({ error: 'Invalid request origin.' }, { status: 403 });
+
+  const auth = await getAuthContext(request);
+  if (!auth) return unauthorized();
+  if (!auth.role || !hasPermission(auth.role, Permission.ORDERS_FULFILL)) return forbidden();
+
+  const { id } = await ctx.params;
+  const order = await getOrder(id);
+  if (!order.ok || !ownsRecord(auth.tenant, undefined, order.data.supplierId)) {
+    return NextResponse.json({ error: 'That order could not be found.' }, { status: 404 });
+  }
+
+  const result = await markProcessing(id);
+  if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
+  return NextResponse.json(result.data);
+});

@@ -1,0 +1,28 @@
+import type { ISODateTime, UUID } from './common';
+
+export type NotificationType =
+  | 'RFQ_NEW'
+  | 'QUOTE_RECEIVED'
+  | 'QUOTE_ACCEPTED'
+  | 'NEGOTIATION_MESSAGE'
+  | 'APPROVAL_REQUESTED'
+  | 'APPROVAL_DECIDED'
+  | 'PAYMENT_RECEIVED'
+  | 'ORDER_SHIPPED'
+  | 'DELIVERY_DELAYED'
+  | 'INVOICE_DUE'
+  | 'LOW_STOCK'
+  | 'RECURRING_PURCHASE_GENERATED'
+  | 'RECURRING_PURCHASE_FAILED';
+
+export interface Notification {
+  id: UUID;
+  userId: UUID;
+  type: NotificationType;
+  title: string;
+  body: string;
+  entityId?: UUID;
+  entityHref?: string;
+  read: boolean;
+  createdAt: ISODateTime;
+}

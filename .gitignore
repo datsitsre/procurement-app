@@ -1,0 +1,55 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Claude Code session/tooling state - not project source
+.claude/
+
+# environment secrets - never commit real values
+.env
+.env.*
+!.env.example
+
+# ---------- Next.js ----------
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js build output
+/.next/
+/out/
+/build
+
+# misc
+*.pem
+
+# debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# vercel
+.vercel
+
+# local-disk document storage (Phase 20) - dev/test only, never a real deployment's persistent
+# storage; see src/server/services/storage/localDiskStorage.ts
+/.uploads/
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+dev.log

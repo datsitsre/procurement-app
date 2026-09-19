@@ -1,0 +1,1331 @@
+// Prisma schema - Phase 14 (Production Backend Foundation).
+//
+// This is the authoritative, persistent data model behind the platform's business operations.
+// Field names deliberately mirror src/types/*.ts (Company, User, Product, RFQ, PurchaseRequest,
+// Order, Invoice, Payment, ...) so the frontend migration in later Phase 14 stages is a matter
+// of swapping a mock service's storage for a Prisma-backed repository, not redesigning shapes.
+//
+// IDs: every model uses a String primary key (cuid()) rather than a sequential integer - matches
+// this app's existing convention (src/types/common.ts's UUID = string) of never using guessable
+// sequential ids for records that cross tenant boundaries.
+//
+// Money: stored as Decimal(14, 2) - a real currency amount, never a JS float - matching the
+// currency semantics already used throughout the frontend's demo data (e.g. 46063.00 GHS).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =========================================================================
+// IDENTITY
+// =========================================================================
+
+enum Role {
+  OWNER
+  ADMIN
+  PROCUREMENT_MANAGER
+  BUYER
+  FINANCE_MANAGER
+  APPROVER
+  EMPLOYEE
+  SUPPLIER_ADMIN
+  SUPPLIER_STAFF
+  PLATFORM_ADMIN
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum CreditTerm {
+  PREPAID
+  NET_7
+  NET_15
+  NET_30
+  NET_60
+}
+
+/// A registered platform user. Password hashes never leave this table - no API response may
+/// ever include `passwordHash` (see src/services DTO-mapping convention this schema is meant to
+/// replace the localStorage-backed half of).
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  phone        String?
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships             CompanyMembership[]
+  sessions                Session[]
+  passwordResetTokens     PasswordResetToken[]
+  notifications           Notification[]
+  auditEntries            AuditLog[]           @relation("AuditActor")
+  createdRfqs             RFQ[]                @relation("RfqCreatedBy")
+  createdPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestRequester")
+  createdTemplates        PurchaseTemplate[]
+  createdRecurring        RecurringPurchase[]
+  sentNegotiationMessages NegotiationMessage[]
+  decidedApprovalSteps    ApprovalStep[]
+
+  @@index([email])
+}
+
+/// Server-side session (section 7) - an opaque, random token hashed at rest, not a JWT, so a
+/// session can be individually revoked (logout, "log out of all devices", password change)
+/// without needing a blocklist. `expiresAt` is enforced on every request, not just at login.
+model Session {
+  id              String    @id @default(cuid())
+  userId          String
+  tokenHash       String    @unique
+  activeCompanyId String?
+  userAgent       String?
+  ipAddress       String?
+  createdAt       DateTime  @default(now())
+  expiresAt       DateTime
+  revokedAt       DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// A buyer or supplier organization - every tenant boundary in the system is a Company.id.
+/// See CompanyMembership for who may act on behalf of one, and TenantContext (services/base.ts's
+/// eventual server-side equivalent) for how a request resolves "which company am I allowed to
+/// touch" from the authenticated session rather than a client-supplied id.
+model Company {
+  id                 String     @id @default(cuid())
+  name               String
+  legalName          String?
+  registrationNumber String?
+  taxId              String?
+  industry           String?
+  website            String?
+  phone              String?
+  email              String?
+  description        String?
+  country            String
+  currency           String
+  logoUrl            String?
+  creditTerms        CreditTerm @default(NET_30)
+  creditLimit        Decimal?   @db.Decimal(14, 2)
+  creditAvailable    Decimal?   @db.Decimal(14, 2)
+  isSupplier         Boolean    @default(false)
+  isBuyer            Boolean    @default(false)
+  parentGroupId      String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  parentGroup CompanyGroup? @relation(fields: [parentGroupId], references: [id])
+
+  addresses             Address[]
+  branches              Branch[]
+  departments           Department[]
+  costCenters           CostCenter[]
+  memberships           CompanyMembership[]
+  budgets               Budget[]
+  budgetAlertSettings   BudgetAlertSettings?
+  spendingLimits        SpendingLimit[]
+  approvalRules         ApprovalRule[]
+  supplierProfile       SupplierProfile?
+  rfqs                  RFQ[]               @relation("BuyerRfqs")
+  purchaseRequests      PurchaseRequest[]   @relation("BuyerPurchaseRequests")
+  purchaseOrdersAsBuyer PurchaseOrder[]     @relation("BuyerPurchaseOrders")
+  purchaseTemplates     PurchaseTemplate[]
+  recurringPurchases    RecurringPurchase[]
+  carts                 Cart[]
+  ordersAsBuyer         Order[]             @relation("BuyerOrders")
+  invoicesAsBuyer       Invoice[]           @relation("BuyerInvoices")
+  payments              Payment[]
+  disputesAsBuyer       Dispute[]           @relation("BuyerDisputes")
+  auditEntries          AuditLog[]
+  apiKeys               ApiKey[]
+
+  @@index([isSupplier])
+  @@index([isBuyer])
+}
+
+model CompanyGroup {
+  id        String    @id @default(cuid())
+  name      String
+  companies Company[]
+}
+
+/// Membership of a User in a Company, with the Role that applies within that company only - the
+/// same person can be OWNER of one company and EMPLOYEE of another (multi-tenant per-user roles).
+model CompanyMembership {
+  id         String           @id @default(cuid())
+  companyId  String
+  userId     String
+  role       Role
+  department String?
+  status     MembershipStatus @default(ACTIVE)
+  invitedAt  DateTime?
+  joinedAt   DateTime?
+  createdAt  DateTime         @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId])
+  @@index([userId])
+  @@index([companyId])
+}
+
+model Address {
+  id         String  @id @default(cuid())
+  companyId  String
+  label      String
+  line1      String
+  line2      String?
+  city       String
+  region     String?
+  country    String
+  postalCode String?
+  isDefault  Boolean @default(false)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+model Branch {
+  id           String   @id @default(cuid())
+  companyId    String
+  name         String
+  addressId    String
+  contactName  String?
+  contactPhone String?
+  costCenterId String?
+  isWarehouse  Boolean  @default(false)
+  isHeadOffice Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  costCenter CostCenter? @relation(fields: [costCenterId], references: [id])
+
+  @@index([companyId])
+}
+
+model Department {
+  id        String @id @default(cuid())
+  companyId String
+  name      String
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  costCenters CostCenter[]
+
+  @@unique([companyId, name])
+}
+
+model CostCenter {
+  id           String  @id @default(cuid())
+  companyId    String
+  code         String
+  name         String
+  departmentId String?
+
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  department Department? @relation(fields: [departmentId], references: [id])
+  branches   Branch[]
+  budgets    Budget[]
+
+  @@unique([companyId, code])
+}
+
+enum BudgetPeriod {
+  ANNUAL
+  MONTHLY
+}
+
+enum BudgetScope {
+  COMPANY
+  DEPARTMENT
+  COST_CENTER
+}
+
+/// A spending ceiling for one period/scope (section 11.3). Utilization is always computed on
+/// demand from real PAID orders, never stored as a running total here - see the `listUtilization`
+/// query this model backs, ported from budgets.service.ts.
+model Budget {
+  id        String       @id @default(cuid())
+  companyId String
+  scope     BudgetScope
+  department   String?
+  costCenterId String?
+  period       BudgetPeriod
+  year         Int
+  month        Int?
+  amount       Decimal      @db.Decimal(14, 2)
+  /// Running total reserved by purchase requests still in flight (SUBMITTED/IN_APPROVAL/
+  /// APPROVED/CONVERTED_TO_PO - anything not REJECTED/CANCELLED) against this budget. Distinct
+  /// from "actual" spend, which is computed live from real paid orders, never stored here -
+  /// this column exists only so a concurrent purchase-request creation can be checked/reserved
+  /// atomically (an `UPDATE ... WHERE committedAmount + :amount <= amount`), not because this
+  /// app tracks formal accounting balances.
+  committedAmount Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt       DateTime @default(now())
+
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  costCenter CostCenter? @relation(fields: [costCenterId], references: [id])
+
+  @@index([companyId])
+}
+
+/// A company's own budget-alert-threshold overrides (e.g. "flag at 70/85/100% used") - absence
+/// of a row means the company uses the application default (see DEFAULT_ALERT_THRESHOLDS).
+model BudgetAlertSettings {
+  companyId  String @id
+  thresholds Int[]
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+/// Per-role maximum single-purchase-request amount (section 11.5) - a business rule layered on
+/// top of RBAC, never a replacement for it. One row per (company, role); absence of a row means
+/// no limit for that role at that company.
+model SpendingLimit {
+  id        String  @id @default(cuid())
+  companyId String
+  role      Role
+  amount    Decimal @db.Decimal(14, 2)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, role])
+}
+
+// =========================================================================
+// CATALOG
+// =========================================================================
+
+model Category {
+  id       String  @id @default(cuid())
+  name     String
+  slug     String  @unique
+  parentId String?
+
+  parent   Category?  @relation("CategoryParent", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryParent")
+  products Product[]
+}
+
+enum ProductModerationStatus {
+  PUBLISHED
+  PENDING_REVIEW
+  REJECTED
+}
+
+model Product {
+  id               String                  @id @default(cuid())
+  slug             String                  @unique
+  name             String
+  brand            String
+  sku              String
+  supplierId       String
+  categoryId       String
+  moderationStatus ProductModerationStatus @default(PENDING_REVIEW)
+  moderationNote   String?
+  images           String[]
+  description      String
+  currency         String
+  basePrice        Decimal                 @db.Decimal(14, 2)
+  moq              Int                     @default(1)
+  rating           Decimal                 @default(0) @db.Decimal(3, 2)
+  reviewCount      Int                     @default(0)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  supplier             SupplierProfile        @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  category             Category               @relation(fields: [categoryId], references: [id])
+  specifications       ProductSpecification[]
+  priceTiers           PriceTier[]
+  inventory            InventoryRecord[]
+  cartItems            CartItem[]
+  rfqItems             RFQItem[]
+  quoteItems           QuoteItem[]
+  purchaseRequestItems PurchaseRequestItem[]
+  purchaseOrderItems   PurchaseOrderItem[]
+  orderItems           OrderItem[]
+
+  @@index([supplierId])
+  @@index([categoryId])
+  @@index([moderationStatus])
+  // Backs the paginated GET /api/products default browse query (Phase 17, section 11) -
+  // `WHERE moderationStatus = 'PUBLISHED' ORDER BY createdAt DESC LIMIT` - every buyer catalog
+  // browse hits this shape whether or not a category/supplier/search filter narrows it further.
+  @@index([moderationStatus, createdAt])
+}
+
+model ProductSpecification {
+  id        String @id @default(cuid())
+  productId String
+  label     String
+  value     String
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+/// One tier of a product's bulk-pricing table (section 13). `maxQty` null = open-ended top tier.
+model PriceTier {
+  id        String  @id @default(cuid())
+  productId String
+  minQty    Int
+  maxQty    Int?
+  unitPrice Decimal @db.Decimal(14, 2)
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model Warehouse {
+  id         String  @id @default(cuid())
+  supplierId String
+  name       String
+  city       String
+  isDefault  Boolean @default(false)
+
+  inventory InventoryRecord[]
+
+  @@index([supplierId])
+}
+
+/// Per-warehouse stock for a product. `stock - reserved` is available stock - see
+/// availableStock() in types/catalog.ts, ported here as a query-time computation, never stored.
+model InventoryRecord {
+  id                String @id @default(cuid())
+  productId         String
+  warehouseId       String
+  stock             Int    @default(0)
+  reserved          Int    @default(0)
+  lowStockThreshold Int    @default(0)
+
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, warehouseId])
+}
+
+// =========================================================================
+// SUPPLIERS
+// =========================================================================
+
+enum SupplierVerificationStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  PREMIUM_VERIFIED
+  SUSPENDED
+  REJECTED
+}
+
+/// The supplier-facing profile for a Company with isSupplier = true. Kept as its own model
+/// (rather than fields directly on Company) because a supplier profile has a fundamentally
+/// different lifecycle (platform verification) than a buyer's company record ever does.
+model SupplierProfile {
+  id                String                     @id @default(cuid())
+  companyId         String                     @unique
+  name              String
+  slug              String                     @unique
+  logoUrl           String?
+  categories        String[]
+  city              String
+  country           String
+  verification      SupplierVerificationStatus @default(PENDING_VERIFICATION)
+  rating            Decimal                    @default(0) @db.Decimal(3, 2)
+  reviewCount       Int                        @default(0)
+  responseTimeHours Int                        @default(24)
+  completedOrders   Int                        @default(0)
+  certifications    String[]
+  description       String
+
+  company              Company                       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  ratingsReceived      SupplierRating[]
+  performanceSnapshots SupplierPerformanceSnapshot[]
+  products             Product[]
+  rfqInvites           RFQSupplier[]
+  quotes               Quote[]
+  purchaseOrders       PurchaseOrder[]
+  orders               Order[]
+  disputes             Dispute[]
+  invoices             Invoice[]
+
+  @@index([verification])
+}
+
+/// One buyer's rating of a supplier after an order (section 46/13's supplier intelligence).
+model SupplierRating {
+  id         String   @id @default(cuid())
+  supplierId String
+  companyId  String
+  orderId    String?  @unique
+  score      Int
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  supplier SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([supplierId])
+}
+
+/// A periodic rollup of a supplier's performance (on-time rate, dispute rate, average response
+/// time, ...) - written by the supplier-analytics background job (section 16), read by the
+/// supplier intelligence dashboard instead of recomputing across every historical order each
+/// page load.
+model SupplierPerformanceSnapshot {
+  id               String   @id @default(cuid())
+  supplierId       String
+  periodStart      DateTime
+  periodEnd        DateTime
+  onTimeRate       Decimal  @db.Decimal(5, 2)
+  disputeRate      Decimal  @db.Decimal(5, 2)
+  avgResponseHours Decimal  @db.Decimal(6, 2)
+  totalOrders      Int
+  totalRevenue     Decimal  @db.Decimal(14, 2)
+  createdAt        DateTime @default(now())
+
+  supplier SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([supplierId, periodStart])
+}
+
+// =========================================================================
+// PROCUREMENT
+// =========================================================================
+
+enum RfqStatus {
+  DRAFT
+  SENT
+  VIEWED
+  QUOTED
+  NEGOTIATION
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum RfqSupplierStatus {
+  INVITED
+  VIEWED
+  QUOTED
+  DECLINED
+}
+
+model RFQ {
+  id                     String    @id @default(cuid())
+  reference              String    @unique
+  companyId              String
+  createdByUserId        String
+  requiredDeliveryDate   DateTime
+  deliveryLocation       String
+  additionalRequirements String?
+  status                 RfqStatus @default(DRAFT)
+  acceptedQuoteId        String?   @unique
+  createdAt              DateTime  @default(now())
+  expiresAt              DateTime?
+
+  company       Company              @relation("BuyerRfqs", fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy     User                 @relation("RfqCreatedBy", fields: [createdByUserId], references: [id])
+  items         RFQItem[]
+  suppliers     RFQSupplier[]
+  quotes        Quote[]
+  negotiations  NegotiationMessage[]
+  acceptedQuote Quote?               @relation("AcceptedQuote", fields: [acceptedQuoteId], references: [id])
+  attachments   Document[]
+
+  @@index([companyId])
+  @@index([status])
+}
+
+model RFQItem {
+  id          String @id @default(cuid())
+  rfqId       String
+  productId   String
+  productName String
+  quantity    Int
+
+  rfq     RFQ     @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([rfqId])
+}
+
+/// Tracks one supplier's participation in an RFQ, independent of whether they've quoted yet.
+model RFQSupplier {
+  id         String            @id @default(cuid())
+  rfqId      String
+  supplierId String
+  status     RfqSupplierStatus @default(INVITED)
+
+  rfq      RFQ             @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  supplier SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([rfqId, supplierId])
+  @@index([supplierId])
+}
+
+model Quote {
+  id             String   @id @default(cuid())
+  rfqId          String
+  supplierId     String
+  totalPrice     Decimal  @db.Decimal(14, 2)
+  deliveryDays   Int
+  warrantyMonths Int
+  notes          String?
+  submittedAt    DateTime @default(now())
+
+  rfq           RFQ                  @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  supplier      SupplierProfile      @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  items         QuoteItem[]
+  negotiations  NegotiationMessage[]
+  acceptedByRfq RFQ?                 @relation("AcceptedQuote")
+
+  @@index([rfqId])
+  @@index([supplierId])
+}
+
+model QuoteItem {
+  id        String  @id @default(cuid())
+  quoteId   String
+  productId String
+  quantity  Int
+  unitPrice Decimal @db.Decimal(14, 2)
+
+  quote   Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([quoteId])
+}
+
+enum NegotiationSenderRole {
+  BUYER
+  SUPPLIER
+}
+
+/// Append-only negotiation thread on a quote (section 20: "Do not allow users to alter
+/// historical messages" - no update/delete mutation exists for this model).
+model NegotiationMessage {
+  id               String                @id @default(cuid())
+  rfqId            String
+  quoteId          String
+  senderRole       NegotiationSenderRole
+  senderUserId     String?
+  message          String
+  proposedPrice    Decimal?              @db.Decimal(14, 2)
+  proposedQuantity Int?
+  sentAt           DateTime              @default(now())
+
+  rfq    RFQ   @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  quote  Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  sender User? @relation(fields: [senderUserId], references: [id])
+
+  @@index([rfqId, quoteId])
+}
+
+enum PurchaseRequestStatus {
+  DRAFT
+  SUBMITTED
+  IN_APPROVAL
+  APPROVED
+  REJECTED
+  CONVERTED_TO_PO
+  CANCELLED
+}
+
+model PurchaseRequest {
+  id              String                @id @default(cuid())
+  reference       String                @unique
+  companyId       String
+  requesterUserId String
+  department      String?
+  costCenterId    String?
+  totalAmount     Decimal               @db.Decimal(14, 2)
+  reason          String
+  status          PurchaseRequestStatus @default(SUBMITTED)
+  /// The budget (if any) this request reserved committed spend against at creation time - stored
+  /// explicitly, not re-resolved later, so releasing the reservation on rejection/cancellation
+  /// always targets the exact budget it came from even if the company's budget configuration has
+  /// since changed (a new, more specific budget added; the original one edited or removed).
+  budgetId             String?
+  budgetReservedAmount Decimal?              @db.Decimal(14, 2)
+  createdAt            DateTime              @default(now())
+
+  company        Company               @relation("BuyerPurchaseRequests", fields: [companyId], references: [id], onDelete: Cascade)
+  requester      User                  @relation("PurchaseRequestRequester", fields: [requesterUserId], references: [id])
+  items          PurchaseRequestItem[]
+  approvalSteps  ApprovalStep[]
+  purchaseOrders PurchaseOrder[]
+  attachments    Document[]
+
+  @@index([companyId])
+  @@index([status])
+  /// Supports the paginated `GET /api/companies/[companyId]/purchase-requests` query (Phase 16).
+  @@index([companyId, createdAt])
+}
+
+model PurchaseRequestItem {
+  id           String  @id @default(cuid())
+  requestId    String
+  productId    String
+  productName  String
+  supplierId   String
+  supplierName String
+  quantity     Int
+  unitPrice    Decimal @db.Decimal(14, 2)
+
+  request PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id])
+
+  @@index([requestId])
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model ApprovalStep {
+  id             String         @id @default(cuid())
+  requestId      String
+  stepOrder      Int
+  approverRole   Role
+  approverUserId String?
+  status         ApprovalStatus @default(PENDING)
+  decidedAt      DateTime?
+  comment        String?
+
+  request  PurchaseRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  approver User?           @relation(fields: [approverUserId], references: [id])
+
+  @@unique([requestId, stepOrder])
+}
+
+/// A configurable spend-based approval rule (section 12/23) - which roles, in order, must
+/// approve a purchase request whose total falls in [minAmount, maxAmount]. Admin-editable per
+/// company; `createApprovalRule` (ported from procurement.service.ts) rejects a new rule whose
+/// range overlaps an existing one, or that names a role lacking PURCHASE_REQUEST_APPROVE.
+model ApprovalRule {
+  id                    String   @id @default(cuid())
+  companyId             String
+  minAmount             Decimal  @db.Decimal(14, 2)
+  maxAmount             Decimal? @db.Decimal(14, 2)
+  requiredApproverRoles Role[]
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+model PurchaseOrder {
+  id                String   @id @default(cuid())
+  reference         String   @unique
+  companyId         String
+  supplierId        String
+  purchaseRequestId String?
+  department        String?
+  costCenterId      String?
+  subtotal          Decimal  @db.Decimal(14, 2)
+  tax               Decimal  @db.Decimal(14, 2)
+  deliveryFee       Decimal  @db.Decimal(14, 2)
+  total             Decimal  @db.Decimal(14, 2)
+  paymentTerms      String
+  deliveryLocation  String
+  authorizedByName  String
+  orderId           String?  @unique
+  createdAt         DateTime @default(now())
+
+  company         Company             @relation("BuyerPurchaseOrders", fields: [companyId], references: [id], onDelete: Cascade)
+  supplier        SupplierProfile     @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  purchaseRequest PurchaseRequest?    @relation(fields: [purchaseRequestId], references: [id])
+  items           PurchaseOrderItem[]
+  order           Order?              @relation(fields: [orderId], references: [id])
+
+  @@index([companyId])
+  @@index([supplierId])
+}
+
+model PurchaseOrderItem {
+  id              String  @id @default(cuid())
+  purchaseOrderId String
+  productId       String
+  productName     String
+  quantity        Int
+  unitPrice       Decimal @db.Decimal(14, 2)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id])
+
+  @@index([purchaseOrderId])
+}
+
+/// A reusable named list of products (section 11.0) - "Order again" re-fetches current
+/// price/stock at apply time, so this model deliberately holds no prices.
+model PurchaseTemplate {
+  id              String   @id @default(cuid())
+  companyId       String
+  name            String
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  company   Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User                   @relation(fields: [createdByUserId], references: [id])
+  items     PurchaseTemplateItem[]
+
+  @@index([companyId])
+}
+
+model PurchaseTemplateItem {
+  id          String @id @default(cuid())
+  templateId  String
+  productId   String
+  productName String
+  quantity    Int
+
+  template PurchaseTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+}
+
+enum RecurringFrequency {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  CUSTOM
+}
+
+/// A standing order (section 11.2/section 36's background-job note) - `runDue` always submits a
+/// real PurchaseRequest through the normal approval pipeline, never bypassing it.
+model RecurringPurchase {
+  id                 String             @id @default(cuid())
+  companyId          String
+  name               String
+  frequency          RecurringFrequency
+  customIntervalDays Int?
+  requesterUserId    String
+  department         String?
+  costCenterId       String?
+  active             Boolean            @default(true)
+  nextRunAt          DateTime
+  lastRunAt          DateTime?
+  createdAt          DateTime           @default(now())
+
+  company                   Company                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  requester                 User                    @relation(fields: [requesterUserId], references: [id])
+  items                     RecurringPurchaseItem[]
+  createdPurchaseRequestIds RecurringPurchaseRun[]
+
+  @@index([companyId])
+  @@index([active, nextRunAt])
+}
+
+model RecurringPurchaseItem {
+  id          String @id @default(cuid())
+  recurringId String
+  productId   String
+  productName String
+  quantity    Int
+
+  recurring RecurringPurchase @relation(fields: [recurringId], references: [id], onDelete: Cascade)
+
+  @@index([recurringId])
+}
+
+/// One execution of a RecurringPurchase - links to the PurchaseRequest it produced, so "last ran
+/// on..." can deep-link to what was actually created instead of just a bare timestamp.
+/// `occurrenceAt` is the schedule's own `nextRunAt` value *at the moment it became due* (not the
+/// wall-clock time the sweep happened to run) - the `@@unique` on it with `recurringId` is what
+/// makes "one schedule occurrence -> one generated purchase request" a real database guarantee
+/// (section 22), not just an application-level assumption: two overlapping sweep runs racing the
+/// same due schedule can both attempt to insert a row for the same occurrence, but only one
+/// insert can ever succeed.
+model RecurringPurchaseRun {
+  id                String   @id @default(cuid())
+  recurringId       String
+  purchaseRequestId String?
+  occurrenceAt      DateTime
+  status            RecurringRunStatus @default(SUCCEEDED)
+  failureReason     String?
+  ranAt             DateTime @default(now())
+
+  recurring RecurringPurchase @relation(fields: [recurringId], references: [id], onDelete: Cascade)
+
+  @@unique([recurringId, occurrenceAt])
+  @@index([recurringId])
+}
+
+enum RecurringRunStatus {
+  SUCCEEDED
+  FAILED
+  SKIPPED
+}
+
+// =========================================================================
+// COMMERCE
+// =========================================================================
+
+model Cart {
+  id        String   @id @default(cuid())
+  companyId String   @unique
+  updatedAt DateTime @updatedAt
+
+  company Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  items   CartItem[]
+}
+
+model CartItem {
+  id         String  @id @default(cuid())
+  cartId     String
+  productId  String
+  supplierId String
+  quantity   Int
+  unitPrice  Decimal @db.Decimal(14, 2)
+
+  cart    Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([cartId, productId])
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  PARTIALLY_DELIVERED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model Order {
+  id                   String        @id @default(cuid())
+  reference            String        @unique
+  companyId            String
+  supplierId           String
+  purchaseOrderId      String?       @unique
+  department           String?
+  costCenterId         String?
+  subtotal             Decimal       @db.Decimal(14, 2)
+  tax                  Decimal       @db.Decimal(14, 2)
+  deliveryFee          Decimal       @db.Decimal(14, 2)
+  total                Decimal       @db.Decimal(14, 2)
+  status               OrderStatus   @default(PENDING)
+  paymentStatus        PaymentStatus @default(PENDING)
+  deliveryLocation     String
+  expectedDeliveryDate DateTime?
+  createdAt            DateTime      @default(now())
+
+  company       Company              @relation("BuyerOrders", fields: [companyId], references: [id], onDelete: Cascade)
+  supplier      SupplierProfile      @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  purchaseOrder PurchaseOrder?
+  items         OrderItem[]
+  timeline      OrderTimelineEvent[]
+  shipments     Shipment[]
+  invoices      Invoice[]
+  payments      Payment[]
+  disputes      Dispute[]
+
+  @@index([companyId])
+  @@index([supplierId])
+  @@index([status])
+  @@index([paymentStatus])
+  /// Supports the paginated `GET /api/companies/[companyId]/orders` query (Phase 16) -
+  /// `WHERE companyId = ? ORDER BY createdAt DESC LIMIT ?` - without this, Postgres can use the
+  /// single-column companyId index for the filter but still needs a separate sort pass over
+  /// every matching row.
+  @@index([companyId, createdAt])
+  /// Same reasoning, for the paginated `GET /api/suppliers/[supplierId]/orders` query.
+  @@index([supplierId, createdAt])
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  productId   String
+  productName String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(14, 2)
+
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id])
+  deliveries Delivery[]
+
+  @@index([orderId])
+}
+
+/// One order-status change, driving the order-tracking timeline (section 28).
+model OrderTimelineEvent {
+  id         String   @id @default(cuid())
+  orderId    String
+  status     String
+  label      String
+  occurredAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+enum ShipmentStatus {
+  PREPARING
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+}
+
+model Shipment {
+  id             String         @id @default(cuid())
+  orderId        String
+  trackingNumber String
+  driverName     String?
+  status         ShipmentStatus @default(PREPARING)
+  dispatchedAt   DateTime?
+
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  deliveries Delivery[]
+
+  @@index([orderId])
+}
+
+/// Supports partial deliveries (section 29): `deliveredQty` may be less than the order line's
+/// ordered quantity, with further Delivery rows added for the remainder.
+model Delivery {
+  id                 String   @id @default(cuid())
+  orderId            String
+  shipmentId         String
+  orderItemId        String
+  orderedQty         Int
+  deliveredQty       Int
+  proofOfDeliveryUrl String?
+  notes              String?
+  deliveredAt        DateTime @default(now())
+
+  shipment  Shipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  AWAITING_EVIDENCE
+  RESOLVED_REFUND
+  RESOLVED_REJECTED
+  CLOSED
+}
+
+model Dispute {
+  id             String        @id @default(cuid())
+  orderId        String
+  companyId      String
+  supplierId     String
+  reason         String
+  description    String
+  evidenceUrls   String[]
+  status         DisputeStatus @default(OPEN)
+  resolutionNote String?
+  createdAt      DateTime      @default(now())
+  resolvedAt     DateTime?
+
+  order    Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  company  Company         @relation("BuyerDisputes", fields: [companyId], references: [id], onDelete: Cascade)
+  supplier SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([supplierId])
+  @@index([status])
+}
+
+// =========================================================================
+// FINANCE
+// =========================================================================
+
+enum InvoiceStatus {
+  DRAFT
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+model Invoice {
+  id                     String        @id @default(cuid())
+  reference              String        @unique
+  companyId              String
+  supplierId             String
+  orderId                String?
+  purchaseOrderReference String?
+  subtotal               Decimal       @db.Decimal(14, 2)
+  tax                    Decimal       @db.Decimal(14, 2)
+  total                  Decimal       @db.Decimal(14, 2)
+  amountPaid             Decimal       @default(0) @db.Decimal(14, 2)
+  status                 InvoiceStatus @default(DRAFT)
+  dueDate                DateTime
+  issuedAt               DateTime      @default(now())
+
+  company     Company         @relation("BuyerInvoices", fields: [companyId], references: [id], onDelete: Cascade)
+  supplier    SupplierProfile @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  order       Order?          @relation(fields: [orderId], references: [id])
+  items       InvoiceItem[]
+  payments    Payment[]
+  creditNotes CreditNote[]
+
+  @@index([companyId])
+  @@index([supplierId])
+  @@index([status])
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(14, 2)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+enum PaymentMethod {
+  CARD
+  BANK_TRANSFER
+  MTN_MOMO
+  TELECEL_CASH
+  AIRTELTIGO_MONEY
+  WALLET
+  CREDIT_TERMS
+}
+
+/// The server-authoritative record of a payment attempt. `amount` is always computed server-side
+/// from the invoice/order being paid - never trusted from the client (section 11/section 15).
+/// `idempotencyKey` prevents a retried request (or a duplicate webhook delivery) from creating a
+/// second Payment for the same client-initiated attempt.
+model Payment {
+  id             String        @id @default(cuid())
+  companyId      String
+  supplierId     String?
+  invoiceId      String?
+  orderId        String?
+  amount         Decimal       @db.Decimal(14, 2)
+  method         PaymentMethod
+  status         PaymentStatus @default(PENDING)
+  reference      String        @unique
+  idempotencyKey String?       @unique
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  company      Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invoice      Invoice?             @relation(fields: [invoiceId], references: [id])
+  order        Order?               @relation(fields: [orderId], references: [id])
+  transactions PaymentTransaction[]
+
+  @@index([companyId])
+  @@index([invoiceId])
+  @@index([status])
+}
+
+/// One provider-side event against a Payment (authorized, captured, failed, webhook received, ...)
+/// - an append-only ledger so a Payment's current `status` is always reconstructable/auditable
+/// from its transaction history, not just a single mutable field.
+model PaymentTransaction {
+  id                String   @id @default(cuid())
+  paymentId         String
+  provider          String
+  providerReference String?
+  /// The provider's own event-level identifier (distinct from `providerReference`, which
+  /// identifies the *payment*, not the *event* - the same payment can in principle receive more
+  /// than one webhook over its lifetime). Only inbound webhooks set this; a charge()-initiated
+  /// row leaves it null - Postgres allows any number of nulls in a unique index, so those never
+  /// collide with each other or with a real eventId. Existing to close a replay gap: without an
+  /// event-level identity, a captured webhook replayed after the payment's status had already
+  /// moved on for an unrelated reason could reprocess and flip state back, since the payment's
+  /// current status is no longer a reliable "have I seen this exact event before" check.
+  providerEventId String?
+  event           String
+  amount          Decimal  @db.Decimal(14, 2)
+  rawPayload      Json?
+  createdAt       DateTime @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerReference])
+  @@unique([provider, providerEventId])
+  @@index([paymentId])
+}
+
+model CreditNote {
+  id        String   @id @default(cuid())
+  invoiceId String
+  amount    Decimal  @db.Decimal(14, 2)
+  reason    String
+  createdAt DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+// =========================================================================
+// PLATFORM
+// =========================================================================
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String
+  type       String
+  title      String
+  body       String
+  entityId   String?
+  entityHref String?
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  /// Supports the cursor-paginated `GET /api/notifications` query (Phase 16) -
+  /// `WHERE userId = ? AND (createdAt, id) < (?, ?) ORDER BY createdAt DESC, id DESC LIMIT ?`.
+  /// Includes `id` as a third column (Phase 18, section 14) so Postgres can serve the query's
+  /// full `createdAt DESC, id DESC` sort order directly from the index - real `EXPLAIN ANALYZE`
+  /// evidence against a 1000-row fixture showed the prior two-column version needed an
+  /// `Incremental Sort` on top of its index scan; with `id` included, that step disappears
+  /// entirely (0.242ms -> 0.039ms measured). Replaces the old `(userId, createdAt)` index rather
+  /// than sitting alongside it - any query the two-column version could serve, this one serves
+  /// equally well, so keeping both would only add write-time index-maintenance cost for no
+  /// further read benefit.
+  @@index([userId, createdAt, id])
+}
+
+/// Sensitive-action audit trail (section 20/48/62) - actor, company, action, entity, timestamp,
+/// and safe metadata only. Never store secrets, payment credentials, passwords, or full payment
+/// card data here (section 20's explicit rule).
+model AuditLog {
+  id            String   @id @default(cuid())
+  actorId       String?
+  actorName     String
+  companyId     String?
+  action        String
+  entityType    String
+  entityId      String
+  previousValue Json?
+  newValue      Json?
+  ipAddress     String?
+  timestamp     DateTime @default(now())
+
+  actor   User?    @relation("AuditActor", fields: [actorId], references: [id])
+  company Company? @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, timestamp])
+  @@index([entityType, entityId])
+  // Backs the platform-wide audit log's cursor pagination (Phase 17, section 12) -
+  // `ORDER BY timestamp DESC, id DESC` across every company, not scoped to one companyId the way
+  // the index above is.
+  @@index([timestamp, id])
+}
+
+enum DocumentOwnerType {
+  RFQ
+  PURCHASE_REQUEST
+  ORDER
+  INVOICE
+  SUPPLIER
+  DISPUTE
+}
+
+/// Metadata for a securely-stored file (invoice PDF, PO attachment, supplier certificate, dispute
+/// evidence, ...) - section 18. The actual bytes live in object storage (S3-compatible), never
+/// on this row; `storageKey` is an opaque handle the storage layer resolves to a private,
+/// time-limited signed URL only after the caller's authorization has been checked.
+model Document {
+  id                String            @id @default(cuid())
+  ownerType         DocumentOwnerType
+  rfqId             String?
+  purchaseRequestId String?
+  fileName          String
+  mimeType          String
+  sizeBytes         Int
+  storageKey        String            @unique
+  uploadedByUserId  String?
+  createdAt         DateTime          @default(now())
+
+  rfq             RFQ?             @relation(fields: [rfqId], references: [id])
+  purchaseRequest PurchaseRequest? @relation(fields: [purchaseRequestId], references: [id])
+
+  @@index([ownerType])
+}
+
+enum WebhookStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+/// An outbound event this platform needs to (re)deliver to an external system, or an inbound
+/// provider callback awaiting verification - section 14/16's idempotent retry architecture.
+model Webhook {
+  id            String        @id @default(cuid())
+  direction     String
+  eventType     String
+  targetUrl     String?
+  payload       Json
+  status        WebhookStatus @default(PENDING)
+  attempts      Int           @default(0)
+  lastAttemptAt DateTime?
+  createdAt     DateTime      @default(now())
+
+  @@index([status])
+}
+
+/// A programmatic API credential (section 21/25) - the plaintext key is shown to the caller
+/// exactly once at creation time and never stored; only its hash is persisted, the same
+/// principle as User.passwordHash.
+model ApiKey {
+  id         String    @id @default(cuid())
+  companyId  String
+  name       String
+  keyHash    String    @unique
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
