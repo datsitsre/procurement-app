@@ -34,6 +34,8 @@ export interface SystemStatus {
   api: 'healthy';
 }
 
+export type OverviewSection = 'companies' | 'suppliers' | 'users' | 'approvals' | 'activity';
+
 export interface PlatformOverview {
   role: Role;
   companies?: CountBreakdown;
@@ -41,6 +43,10 @@ export interface PlatformOverview {
   users?: CountBreakdown;
   approvals?: ApprovalsOverview;
   activity?: AuditEntry[];
+  /** Sections the caller's role permits but which failed to load this time - see
+   *  server/services/platformOverview.service.ts's own comment. A section missing from the
+   *  response AND missing from this list means "not part of your role", not an error. */
+  failedSections: OverviewSection[];
   systemStatus: SystemStatus;
 }
 

@@ -1,18 +1,25 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import { Check, Copy, Pencil, Plus, Users } from 'lucide-react';
-import { useActiveCompany, useActiveMembership, useWorkspace } from '@/hooks/useAuth';
+import { useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { Check, Copy, MoreHorizontal, Pencil, Plus, Search, Users } from 'lucide-react';
+import { useActiveCompany, useActiveMembership, useAuth, useWorkspace } from '@/hooks/useAuth';
 import { companyService, type TeamMember } from '@/services/company.service';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { ConfirmationDialog } from '@/components/ui/ConfirmationDialog';
+import { DropdownMenu, DropdownMenuItem } from '@/components/ui/DropdownMenu';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
+import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { SkeletonText } from '@/components/ui/Skeleton';
+import { useToast } from '@/components/ui/Toast';
 import { BUYER_ROLES, RoleLabels, SUPPLIER_ROLES, type Role } from '@/config/rbac';
 import { resizeImageToDataUrl } from '@/utils/image';
 import type { Department } from '@/types/company';
@@ -38,10 +45,27 @@ export default function TeamPage() {
 }
 
 function TeamMemberSection({ companyId, callerRole }: { companyId: string; callerRole: Role }) {
+  const { session } = useAuth();
   const { data: members, error: loadError, reload } = useAsyncData<TeamMember[]>(companyId, () =>
     companyService.listTeamMembers(companyId, callerRole),
   );
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const workspace = useWorkspace();
+  const assignableRoles = workspace === 'supplier' ? SUPPLIER_ROLES : BUYER_ROLES;
+
+  const filtered = useMemo(() => {
+    if (!members) return [];
+    const q = search.trim().toLowerCase();
+    return members.filter(({ membership, user }) => {
+      if (roleFilter !== 'all' && membership.role !== roleFilter) return false;
+      if (statusFilter !== 'all' && membership.status !== statusFilter) return false;
+      if (q && !user.name.toLowerCase().includes(q) && !user.email.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [members, search, roleFilter, statusFilter]);
 
   if (loadError) {
     return (
@@ -56,6 +80,33 @@ function TeamMemberSection({ companyId, callerRole }: { companyId: string; calle
     <div className="flex flex-col gap-6">
       <AddTeamMemberForm companyId={companyId} callerRole={callerRole} onAdded={reload} />
 
+      {members && members.length > 0 && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex-1 sm:max-w-xs">
+            <Input
+              placeholder="Search users..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              leadingIcon={<Search className="h-4 w-4" aria-hidden="true" />}
+            />
+          </div>
+          <Select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="sm:w-44">
+            <option value="all">All roles</option>
+            {assignableRoles.map((r) => (
+              <option key={r} value={r}>
+                {RoleLabels[r]}
+              </option>
+            ))}
+          </Select>
+          <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="sm:w-40">
+            <option value="all">All statuses</option>
+            <option value="ACTIVE">Active</option>
+            <option value="SUSPENDED">Suspended</option>
+            <option value="INVITED">Invited</option>
+          </Select>
+        </div>
+      )}
+
       <Card>
         {members === null ? (
           <div className="p-5">
@@ -63,9 +114,11 @@ function TeamMemberSection({ companyId, callerRole }: { companyId: string; calle
           </div>
         ) : members.length === 0 ? (
           <EmptyState icon={Users} title="No team members" description="Invite colleagues to this company." className="border-0" />
+        ) : filtered.length === 0 ? (
+          <EmptyState icon={Search} title="No users match" description="Try a different search or filter." className="border-0" />
         ) : (
           <ul className="divide-y divide-border">
-            {members.map(({ membership, user }) =>
+            {filtered.map(({ membership, user }) =>
               editingUserId === user.id ? (
                 <li key={membership.id} className="px-5 py-4">
                   <EditTeamMemberForm
@@ -80,33 +133,157 @@ function TeamMemberSection({ companyId, callerRole }: { companyId: string; calle
                   />
                 </li>
               ) : (
-                <li key={membership.id} className="flex items-center justify-between gap-4 px-5 py-3">
-                  <div className="flex items-center gap-3">
-                    <Avatar name={user.name} imageUrl={user.avatarUrl} />
-                    <div>
-                      <p className="text-sm font-medium">{user.name}</p>
-                      <p className="text-caption">{user.email}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {membership.department && <span className="text-caption">{membership.department}</span>}
-                    <Badge tone="info">{RoleLabels[membership.role]}</Badge>
-                    <button
-                      type="button"
-                      onClick={() => setEditingUserId(user.id)}
-                      aria-label={`Edit ${user.name}`}
-                      className="text-text-tertiary hover:text-text-primary"
-                    >
-                      <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                    </button>
-                  </div>
-                </li>
+                <MemberRow
+                  key={membership.id}
+                  companyId={companyId}
+                  member={{ membership, user }}
+                  isSelf={user.id === session?.user.id}
+                  onEdit={() => setEditingUserId(user.id)}
+                  onChanged={reload}
+                />
               ),
             )}
           </ul>
         )}
       </Card>
     </div>
+  );
+}
+
+function MemberRow({
+  companyId,
+  member,
+  isSelf,
+  onEdit,
+  onChanged,
+}: {
+  companyId: string;
+  member: TeamMember;
+  isSelf: boolean;
+  onEdit: () => void;
+  onChanged: () => void;
+}) {
+  const { membership, user } = member;
+  const toast = useToast();
+  const router = useRouter();
+  const [confirming, setConfirming] = useState<'suspend' | 'activate' | 'offboard' | null>(null);
+  const [resetResult, setResetResult] = useState<{ token: string; expiresAt: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function handleConfirm() {
+    if (!confirming) return;
+    const result =
+      confirming === 'suspend'
+        ? await companyService.suspendTeamMember(companyId, user.id)
+        : confirming === 'activate'
+          ? await companyService.activateTeamMember(companyId, user.id)
+          : await companyService.offboardTeamMember(companyId, user.id);
+    setConfirming(null);
+    if (!result.ok) {
+      toast.show(result.error.message, 'error');
+      return;
+    }
+    toast.show(
+      confirming === 'suspend' ? `${user.name} suspended.` : confirming === 'activate' ? `${user.name} reactivated.` : `${user.name} offboarded.`,
+      'success',
+    );
+    onChanged();
+  }
+
+  async function handleResetPassword() {
+    const result = await companyService.requestTeamMemberPasswordReset(companyId, user.id);
+    if (!result.ok) {
+      toast.show(result.error.message, 'error');
+      return;
+    }
+    setResetResult(result.data);
+  }
+
+  async function copyToken() {
+    if (!resetResult) return;
+    await navigator.clipboard.writeText(resetResult.token).catch(() => undefined);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <li className="flex flex-col gap-3 px-5 py-3">
+      <div className="flex items-center justify-between gap-4">
+        <Link href={`/team/${user.id}`} className="flex items-center gap-3 hover:opacity-80">
+          <Avatar name={user.name} imageUrl={user.avatarUrl} />
+          <div>
+            <p className="text-sm font-medium">{user.name}</p>
+            <p className="text-caption">{user.email}</p>
+          </div>
+        </Link>
+        <div className="flex items-center gap-3">
+          {membership.department && <span className="hidden text-caption sm:inline">{membership.department}</span>}
+          <Badge tone="info">{RoleLabels[membership.role]}</Badge>
+          <StatusBadge domain="membership" status={membership.status} />
+          <DropdownMenu
+            trigger={
+              <button type="button" aria-label={`Actions for ${user.name}`} className="text-text-tertiary hover:text-text-primary">
+                <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+              </button>
+            }
+          >
+            <DropdownMenuItem onClick={() => router.push(`/team/${user.id}`)}>View</DropdownMenuItem>
+            <DropdownMenuItem onClick={onEdit}>
+              <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={handleResetPassword}>Reset password</DropdownMenuItem>
+            {!isSelf && membership.status === 'ACTIVE' && (
+              <DropdownMenuItem destructive onClick={() => setConfirming('suspend')}>
+                Suspend
+              </DropdownMenuItem>
+            )}
+            {!isSelf && membership.status !== 'ACTIVE' && (
+              <DropdownMenuItem onClick={() => setConfirming('activate')}>Activate</DropdownMenuItem>
+            )}
+            {!isSelf && membership.status !== 'SUSPENDED' && (
+              <DropdownMenuItem destructive onClick={() => setConfirming('offboard')}>
+                Offboard
+              </DropdownMenuItem>
+            )}
+          </DropdownMenu>
+        </div>
+      </div>
+
+      {resetResult && (
+        <div className="flex flex-col gap-2 rounded-md border border-warning-border bg-warning-bg p-3 text-sm">
+          <p className="font-medium text-warning">Password reset requested for {user.email} - share this link/token with them now.</p>
+          <p className="text-warning">It won&rsquo;t be shown again after you leave this page. They&rsquo;ll set a new password themselves.</p>
+          <div className="flex items-center gap-2">
+            <code className="overflow-x-auto rounded bg-surface px-2 py-1 font-mono text-xs">{resetResult.token}</code>
+            <Button size="sm" variant="outline" onClick={copyToken}>
+              {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+              {copied ? 'Copied' : 'Copy'}
+            </Button>
+          </div>
+          <Button size="sm" variant="ghost" className="w-fit" onClick={() => setResetResult(null)}>
+            Dismiss
+          </Button>
+        </div>
+      )}
+
+      <ConfirmationDialog
+        open={confirming !== null}
+        onClose={() => setConfirming(null)}
+        onConfirm={handleConfirm}
+        title={
+          confirming === 'suspend' ? 'Suspend this user?' : confirming === 'activate' ? 'Activate this user?' : 'Offboard this user?'
+        }
+        description={
+          confirming === 'suspend'
+            ? `${user.name} will keep their account but lose access to this company's workspace until reactivated.`
+            : confirming === 'activate'
+              ? `${user.name} will regain their previous access to this company's workspace.`
+              : `This will remove ${user.name}'s active access to this organization. Historical activity and records will be preserved.`
+        }
+        confirmLabel={confirming === 'suspend' ? 'Suspend user' : confirming === 'activate' ? 'Activate user' : 'Offboard user'}
+        destructive={confirming === 'suspend' || confirming === 'offboard'}
+      />
+    </li>
   );
 }
 
@@ -117,7 +294,7 @@ function TeamMemberSection({ companyId, callerRole }: { companyId: string; calle
  *  value is always kept selectable even if it's since been removed from the company's own list
  *  (an old/legacy department name), so editing a member never silently drops what they already
  *  had set. */
-function DepartmentSelect({
+export function DepartmentSelect({
   id,
   companyId,
   value,
@@ -291,7 +468,7 @@ function AddTeamMemberForm({ companyId, callerRole, onAdded }: { companyId: stri
   );
 }
 
-function EditTeamMemberForm({
+export function EditTeamMemberForm({
   companyId,
   callerRole,
   member,

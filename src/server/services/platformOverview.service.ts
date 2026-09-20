@@ -81,6 +81,12 @@ export interface PlatformOverview {
    *  GET /api/audit-log already uses (platform-scoped for PLATFORM_MANAGER, unfiltered for Super
    *  Admin/legacy Admin) - present for PLATFORM_AUDIT_VIEW holders (both platform roles). */
   activity?: AuditEntry[];
+  /** Names of sections the caller *is* permitted to see but whose query failed this load (Part
+   *  A1) - lets the UI show "we couldn't load this right now, try again" instead of silently
+   *  rendering the exact same "not part of your role" state a genuine permission gap gets. A
+   *  section absent from the response AND absent from this list means the caller's role simply
+   *  doesn't include it. */
+  failedSections: OverviewSection[];
   systemStatus: SystemStatus;
 }
 
@@ -143,29 +149,35 @@ async function getRecentActivity(role: Role): Promise<AuditEntry[]> {
   return result.ok ? result.data.items : [];
 }
 
+export type OverviewSection = 'companies' | 'suppliers' | 'users' | 'approvals' | 'activity';
+
 /** Runs one section's query, but a failure here never takes down the other, independent
- *  sections in the same response (Phase 10 - "one forbidden/failed request must not fail the
- *  whole dashboard"). Logged server-side; the client sees that section simply absent, the same
- *  shape a permission-denied section already has - an acceptable trade-off over a richer
- *  error-vs-omitted distinction, given every section here is a cheap, independent read. */
-async function safely<T>(fn: () => Promise<T>): Promise<T | undefined> {
+ *  sections in the same response (Part A1/Phase 10 - "one forbidden/failed request must not fail
+ *  the whole dashboard", and "do not make an error look like not permitted"). On failure, the
+ *  section itself comes back `undefined` (same as a permission the caller lacks) but its name is
+ *  also recorded in `failedSections` - the one bit of information the client needs to tell
+ *  "your role doesn't include this" apart from "this genuinely failed, try again", without
+ *  restructuring every section's own shape into a discriminated union. */
+async function safely<T>(section: OverviewSection, failedSections: Set<OverviewSection>, fn: () => Promise<T>): Promise<T | undefined> {
   try {
     return await fn();
   } catch (err) {
-    console.error('[platformOverview] section query failed', err);
+    console.error(`[platformOverview] section "${section}" query failed`, err);
+    failedSections.add(section);
     return undefined;
   }
 }
 
 export async function getPlatformOverview(actor: { role: Role }): Promise<PlatformOverview> {
   const { role } = actor;
+  const failedSections = new Set<OverviewSection>();
 
   const [companies, suppliers, users, approvals, activity, health] = await Promise.all([
-    hasPermission(role, Permission.PLATFORM_COMPANIES_VIEW) ? safely(getCompanyBreakdown) : Promise.resolve(undefined),
-    hasPermission(role, Permission.PLATFORM_CATALOG_MODERATE) ? safely(getSupplierBreakdown) : Promise.resolve(undefined),
-    hasPermission(role, Permission.PLATFORM_USERS_MANAGE) ? safely(getUserBreakdown) : Promise.resolve(undefined),
-    hasPermission(role, Permission.PLATFORM_REGISTRATION_APPROVE) ? safely(getPendingApprovals) : Promise.resolve(undefined),
-    hasPermission(role, Permission.PLATFORM_AUDIT_VIEW) ? safely(() => getRecentActivity(role)) : Promise.resolve(undefined),
+    hasPermission(role, Permission.PLATFORM_COMPANIES_VIEW) ? safely('companies', failedSections, getCompanyBreakdown) : Promise.resolve(undefined),
+    hasPermission(role, Permission.PLATFORM_CATALOG_MODERATE) ? safely('suppliers', failedSections, getSupplierBreakdown) : Promise.resolve(undefined),
+    hasPermission(role, Permission.PLATFORM_USERS_MANAGE) ? safely('users', failedSections, getUserBreakdown) : Promise.resolve(undefined),
+    hasPermission(role, Permission.PLATFORM_REGISTRATION_APPROVE) ? safely('approvals', failedSections, getPendingApprovals) : Promise.resolve(undefined),
+    hasPermission(role, Permission.PLATFORM_AUDIT_VIEW) ? safely('activity', failedSections, () => getRecentActivity(role)) : Promise.resolve(undefined),
     checkDependencies(),
   ]);
 
@@ -176,6 +188,7 @@ export async function getPlatformOverview(actor: { role: Role }): Promise<Platfo
     users,
     approvals,
     activity,
+    failedSections: [...failedSections],
     systemStatus: { database: health.checks.database === 'ok' ? 'healthy' : 'unavailable', api: 'healthy' },
   };
 }

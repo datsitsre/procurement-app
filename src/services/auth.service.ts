@@ -46,6 +46,9 @@ export interface AuthService {
   logout(): Promise<void>;
   getSession(): Promise<ServiceResult<Session>>;
   switchCompany(companyId: UUID): Promise<ServiceResult<Session>>;
+  /** Completes a password reset with a token from a reset link - public/unauthenticated, since
+   *  the person hasn't signed in yet. POST /api/auth/reset-password. */
+  completePasswordReset(token: string, newPassword: string): Promise<ServiceResult<{ ok: true }>>;
   /** Edits the caller's own account - name/phone/avatar. Never another user's, since the server
    *  resolves whose account this is from the session cookie, not any id this call could send. */
   updateProfile(patch: UserProfilePatch): Promise<ServiceResult<User>>;
@@ -253,6 +256,10 @@ class ApiAuthService implements AuthService {
 
   async logout(): Promise<void> {
     await postJson('/api/auth/logout');
+  }
+
+  async completePasswordReset(token: string, newPassword: string): Promise<ServiceResult<{ ok: true }>> {
+    return postJson<{ ok: true }>('/api/auth/reset-password', { token, newPassword });
   }
 
   async getSession(): Promise<ServiceResult<Session>> {

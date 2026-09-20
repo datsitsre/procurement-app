@@ -122,7 +122,7 @@ function AdminDashboard() {
                 ]}
               />
             ) : (
-              <LockedCard title="Companies" icon={Lock} />
+              <LockedCard title="Companies" icon={Lock} failed={overview.failedSections.includes('companies')} onRetry={reloadOverview} />
             )}
 
             {overview.suppliers ? (
@@ -137,7 +137,7 @@ function AdminDashboard() {
                 ]}
               />
             ) : (
-              <LockedCard title="Suppliers" icon={Lock} />
+              <LockedCard title="Suppliers" icon={Lock} failed={overview.failedSections.includes('suppliers')} onRetry={reloadOverview} />
             )}
 
             {overview.users ? (
@@ -152,7 +152,7 @@ function AdminDashboard() {
                 ]}
               />
             ) : (
-              <LockedCard title="Platform users" icon={Lock} />
+              <LockedCard title="Platform users" icon={Lock} failed={overview.failedSections.includes('users')} onRetry={reloadOverview} />
             )}
 
             {overview.approvals ? (
@@ -172,18 +172,23 @@ function AdminDashboard() {
                 </Badge>
               </Link>
             ) : (
-              <LockedCard title="Pending approvals" icon={Lock} />
+              <LockedCard title="Pending approvals" icon={Lock} failed={overview.failedSections.includes('approvals')} onRetry={reloadOverview} />
             )}
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            <OrganizationStatusCard companies={overview.companies} />
+            <OrganizationStatusCard companies={overview.companies} failed={overview.failedSections.includes('companies')} onRetry={reloadOverview} />
             <SystemStatusCard database={overview.systemStatus.database} api={overview.systemStatus.api} />
           </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
-            <PendingApprovalsCard approvals={overview.approvals} />
-            <RecentActivityCard activity={overview.activity} hasAccess={overview.activity !== undefined} />
+            <PendingApprovalsCard approvals={overview.approvals} failed={overview.failedSections.includes('approvals')} onRetry={reloadOverview} />
+            <RecentActivityCard
+              activity={overview.activity}
+              hasAccess={overview.activity !== undefined}
+              failed={overview.failedSections.includes('activity')}
+              onRetry={reloadOverview}
+            />
           </div>
         </>
       )}
@@ -324,16 +329,36 @@ function BreakdownCard({
   );
 }
 
-/** A summary card a role lacks the permission for - shown as an honest "not part of your role"
- *  state, never a broken/forbidden-looking card and never a fabricated zero (section 8/10). */
-function LockedCard({ title, icon: Icon }: { title: string; icon: LucideIcon }) {
+/** A card whose data isn't showing - for one of two genuinely different reasons that must never
+ *  look the same (Part A1: "do not make an error look like not permitted"):
+ *  - `failed`: the caller's role DOES include this section, but the query failed this load -
+ *    shown as a real error state with a retry action.
+ *  - otherwise: the caller's role simply doesn't include this section - an honest "not part of
+ *    your role" state, never a broken/forbidden-looking card and never a fabricated zero. */
+function LockedCard({ title, icon: Icon, failed, onRetry }: { title: string; icon: LucideIcon; failed?: boolean; onRetry?: () => void }) {
   return (
-    <div className="flex flex-col justify-between gap-3 rounded-lg border border-dashed border-border bg-surface p-5 text-text-tertiary">
-      <span className="flex items-center gap-2 text-metadata">
+    <div
+      className={cn(
+        'flex flex-col justify-between gap-3 rounded-lg border p-5',
+        failed ? 'border-danger-border bg-danger-bg text-danger' : 'border-dashed border-border bg-surface text-text-tertiary',
+      )}
+    >
+      <span className="flex items-center gap-2 text-metadata" style={failed ? { color: 'inherit' } : undefined}>
         <Icon className="h-4 w-4" aria-hidden="true" />
         {title}
       </span>
-      <p className="text-caption">Not available right now.</p>
+      {failed ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-caption">We couldn&rsquo;t load this information right now.</p>
+          {onRetry && (
+            <Button size="sm" variant="outline" onClick={onRetry} className="w-fit">
+              Retry
+            </Button>
+          )}
+        </div>
+      ) : (
+        <p className="text-caption">You don&rsquo;t have permission to view this section.</p>
+      )}
     </div>
   );
 }
@@ -341,12 +366,26 @@ function LockedCard({ title, icon: Icon }: { title: string; icon: LucideIcon }) 
 /** A lightweight, dependency-free active/suspended breakdown (section 4) - a single proportional
  *  two-segment bar, the same "a handful of proportional divs" philosophy BarChart.tsx already
  *  established for this app rather than pulling in a charting library for a donut. */
-function OrganizationStatusCard({ companies }: { companies: CountBreakdown | undefined }) {
+function OrganizationStatusCard({ companies, failed, onRetry }: { companies: CountBreakdown | undefined; failed: boolean; onRetry: () => void }) {
   if (!companies) {
     return (
-      <div className="flex flex-col justify-center gap-2 rounded-lg border border-dashed border-border bg-surface p-5 text-text-tertiary">
-        <p className="text-h3 text-text-tertiary">Organization status</p>
-        <p className="text-caption">Not available right now.</p>
+      <div
+        className={cn(
+          'flex flex-col justify-center gap-2 rounded-lg border p-5',
+          failed ? 'border-danger-border bg-danger-bg text-danger' : 'border-dashed border-border bg-surface text-text-tertiary',
+        )}
+      >
+        <p className={cn('text-h3', !failed && 'text-text-tertiary')}>Organization status</p>
+        {failed ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-caption">We couldn&rsquo;t load this information right now.</p>
+            <Button size="sm" variant="outline" onClick={onRetry} className="w-fit">
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <p className="text-caption">You don&rsquo;t have permission to view this section.</p>
+        )}
       </div>
     );
   }
@@ -428,12 +467,34 @@ function SystemStatusRow({ icon: Icon, label, status }: { icon: LucideIcon; labe
  *  full (section 6) - reuses that page's own data (CompanyMembership.status === PENDING_APPROVAL)
  *  via the shared overview endpoint; approving/rejecting stays on /admin/approvals rather than a
  *  second action surface here. */
-function PendingApprovalsCard({ approvals }: { approvals: PlatformOverview['approvals'] }) {
+function PendingApprovalsCard({
+  approvals,
+  failed,
+  onRetry,
+}: {
+  approvals: PlatformOverview['approvals'];
+  failed: boolean;
+  onRetry: () => void;
+}) {
   if (!approvals) {
     return (
-      <div className="flex flex-col justify-center gap-2 rounded-lg border border-dashed border-border bg-surface p-5 text-text-tertiary">
-        <p className="text-h3 text-text-tertiary">Pending approvals</p>
-        <p className="text-caption">Not available right now.</p>
+      <div
+        className={cn(
+          'flex flex-col justify-center gap-2 rounded-lg border p-5',
+          failed ? 'border-danger-border bg-danger-bg text-danger' : 'border-dashed border-border bg-surface text-text-tertiary',
+        )}
+      >
+        <p className={cn('text-h3', !failed && 'text-text-tertiary')}>Pending approvals</p>
+        {failed ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-caption">We couldn&rsquo;t load this information right now.</p>
+            <Button size="sm" variant="outline" onClick={onRetry} className="w-fit">
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <p className="text-caption">You don&rsquo;t have permission to view this section.</p>
+        )}
       </div>
     );
   }
@@ -490,7 +551,17 @@ function PendingApprovalsCard({ approvals }: { approvals: PlatformOverview['appr
 /** The dashboard's compact activity feed (section 5) - sourced from the exact same AuditLog
  *  rows/scope GET /api/audit-log already serves, formatted with the exact same describeActivity
  *  helper /admin/activity uses. Never a second activity system. */
-function RecentActivityCard({ activity, hasAccess }: { activity: PlatformOverview['activity']; hasAccess: boolean }) {
+function RecentActivityCard({
+  activity,
+  hasAccess,
+  failed,
+  onRetry,
+}: {
+  activity: PlatformOverview['activity'];
+  hasAccess: boolean;
+  failed: boolean;
+  onRetry: () => void;
+}) {
   return (
     <div className="rounded-lg border border-border bg-surface p-5">
       <div className="mb-3 flex items-center justify-between">
@@ -500,7 +571,16 @@ function RecentActivityCard({ activity, hasAccess }: { activity: PlatformOvervie
         </Link>
       </div>
       {!hasAccess ? (
-        <p className="text-caption text-text-tertiary">Not available right now.</p>
+        failed ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-caption text-danger">We couldn&rsquo;t load this information right now.</p>
+            <Button size="sm" variant="outline" onClick={onRetry} className="w-fit">
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <p className="text-caption text-text-tertiary">You don&rsquo;t have permission to view this section.</p>
+        )
       ) : !activity ? (
         <EmptyState icon={ShieldCheck} title="No activity yet" description="Recent platform actions will show up here once they happen." />
       ) : activity.length === 0 ? (

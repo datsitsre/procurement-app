@@ -39,6 +39,10 @@ export interface ActivityDescription {
 const ACTION_DESCRIPTIONS: Record<string, Omit<ActivityDescription, 'label'> & { label: string }> = {
   TEAM_MEMBER_ADDED: { label: 'added a team member', icon: UserPlus, category: 'user' },
   TEAM_MEMBER_ROLE_CHANGED: { label: "changed a team member's role", icon: UserCog, category: 'role' },
+  TEAM_MEMBER_SUSPENDED: { label: 'suspended a team member', icon: UserX, category: 'user' },
+  TEAM_MEMBER_ACTIVATED: { label: 'reactivated a team member', icon: UserCheck, category: 'user' },
+  TEAM_MEMBER_OFFBOARDED: { label: 'offboarded a team member', icon: UserX, category: 'user' },
+  TEAM_MEMBER_PASSWORD_RESET_REQUESTED: { label: "requested a team member's password reset", icon: RefreshCw, category: 'user' },
   PLATFORM_ROLE_CHANGED: { label: "changed a platform user's role", icon: UserCog, category: 'role' },
   REGISTRATION_APPROVED: { label: 'approved a registration', icon: UserCheck, category: 'approval' },
   REGISTRATION_REJECTED: { label: 'rejected a registration', icon: UserX, category: 'approval' },

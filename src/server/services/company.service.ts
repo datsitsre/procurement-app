@@ -404,6 +404,152 @@ export async function updateTeamMember(
   return ok({ membership: toMembershipDto(updatedMembership), user: toUserDto(updatedUser) });
 }
 
+/** True when `userId` is the company's only remaining ACTIVE OWNER - the one governance state no
+ *  action here may ever produce, regardless of who's asking (Part B9/B15A rule 11). Checked
+ *  fresh on every call rather than cached; a company's owner roster changes rarely enough that
+ *  this extra query is never a real cost. */
+async function isLastActiveOwner(companyId: UUID, userId: UUID): Promise<boolean> {
+  const membership = await db.companyMembership.findUnique({ where: { companyId_userId: { companyId, userId } } });
+  if (!membership || membership.role !== 'OWNER' || membership.status !== 'ACTIVE') return false;
+  const activeOwnerCount = await db.companyMembership.count({ where: { companyId, role: 'OWNER', status: 'ACTIVE' } });
+  return activeOwnerCount <= 1;
+}
+
+/** Shared guards for every status-changing action below (suspend/activate/offboard) - defense in
+ *  depth, the same reasoning changePlatformRole's own comment gives for re-deriving every check
+ *  itself rather than trusting the route alone:
+ *  1. No one may suspend/offboard their own membership (Part B9 rules 7/8) - reactivating
+ *     yourself, were you ever suspended by someone else, stays allowed (harmless, and useful if
+ *     a mistaken self-suspend ever became possible some other way).
+ *  2. Only an existing OWNER may suspend/offboard another OWNER (Part B15A rule 10 - "ADMIN
+ *     cannot improperly remove or demote the controlling OWNER"), mirroring updateTeamMember's
+ *     own OWNER_ROLE_RESTRICTED exactly.
+ *  3. The company's last remaining ACTIVE OWNER can never be suspended/offboarded by anyone,
+ *     including another OWNER (Part B15A rule 11) - there is no existing "last owner" guard
+ *     anywhere in this file to reuse (confirmed by inspection), so this is new. */
+async function assertCanChangeMemberStanding(
+  companyId: UUID,
+  userId: UUID,
+  targetRole: Role,
+  actor: { userId: UUID; role: Role },
+  action: 'SUSPEND' | 'OFFBOARD',
+): Promise<{ code: string; message: string } | null> {
+  if (actor.userId === userId) {
+    return {
+      code: action === 'SUSPEND' ? 'SELF_SUSPEND_DENIED' : 'SELF_OFFBOARD_DENIED',
+      message: action === 'SUSPEND' ? 'You cannot suspend your own account.' : 'You cannot offboard your own account.',
+    };
+  }
+  if (targetRole === 'OWNER' && actor.role !== 'OWNER') {
+    return { code: 'OWNER_ROLE_RESTRICTED', message: 'Only an existing owner can suspend or offboard another owner.' };
+  }
+  if (await isLastActiveOwner(companyId, userId)) {
+    return { code: 'LAST_OWNER_PROTECTED', message: 'This is the only remaining owner - promote another owner first.' };
+  }
+  return null;
+}
+
+/** Suspends or reactivates a company's own team member (Part B7) - reuses the exact
+ *  CompanyMembership.status field/enum every other membership-lifecycle transition in this app
+ *  already uses (platformUsers.service.ts's setMembershipStatus, the Company suspend/activate
+ *  work), never a second status field. The atomic conditional `updateMany` (not read-then-write)
+ *  is the same workflow-state-race pattern used throughout this codebase. Enforcement of what
+ *  "suspended" means for this person's own access lives centrally in resolveTenant
+ *  (server/auth/context.ts) - a non-ACTIVE CompanyMembership already resolves an empty, fail-
+ *  closed tenant, so no further changes were needed anywhere else for this to actually block
+ *  their access. */
+export async function setTeamMemberStatus(
+  companyId: UUID,
+  userId: UUID,
+  status: 'SUSPENDED' | 'ACTIVE',
+  actor: { userId: UUID; role: Role },
+): Promise<ServiceResult<TeamMember>> {
+  const membership = await db.companyMembership.findUnique({ where: { companyId_userId: { companyId, userId } } });
+  if (!membership) return fail('NOT_FOUND', 'That team member could not be found.');
+
+  if (status === 'SUSPENDED') {
+    const denial = await assertCanChangeMemberStanding(companyId, userId, membership.role as Role, actor, 'SUSPEND');
+    if (denial) return fail(denial.code, denial.message);
+  }
+
+  const fromStatus = status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
+  const { count } = await db.companyMembership.updateMany({ where: { companyId, userId, status: fromStatus }, data: { status } });
+  if (count === 0) {
+    return fail('CONFLICT', `This person isn't currently ${fromStatus === 'ACTIVE' ? 'active' : 'suspended'} - their status may have already changed.`);
+  }
+
+  const updated = await db.companyMembership.findUniqueOrThrow({ where: { id: membership.id }, include: { user: true } });
+  await recordTeamAudit(
+    companyId,
+    actor.userId,
+    status === 'ACTIVE' ? 'TEAM_MEMBER_ACTIVATED' : 'TEAM_MEMBER_SUSPENDED',
+    userId,
+    { status },
+    { status: fromStatus },
+  );
+  return ok({ membership: toMembershipDto(updated), user: toUserDto(updated.user) });
+}
+
+/** Offboards a company's own team member (Part B8). Deliberately reuses the exact same
+ *  CompanyMembership.status transition setTeamMemberStatus already makes (-> SUSPENDED) rather
+ *  than inventing a dedicated OFFBOARDED/REMOVED enum value - MembershipStatus has no such value
+ *  today, and SUSPENDED already satisfies every functional requirement an offboard needs (blocks
+ *  ordinary company operations server-side via resolveTenant, is reversible via activation,
+ *  leaves the User record and every historical business record - orders, invoices, audit
+ *  entries - completely untouched, since none of those are deleted or altered here). The one
+ *  real difference from an ordinary suspension is intent, which is captured in the audit trail
+ *  (TEAM_MEMBER_OFFBOARDED, not TEAM_MEMBER_SUSPENDED) and the UI's own confirmation copy, not in
+ *  the data model. A genuinely distinct terminal status (so an offboarded person could never be
+ *  silently reactivated the same way a suspension is) would require a schema migration - this is
+ *  a real, reported gap, not a silent workaround; see this phase's final report. */
+export async function offboardTeamMember(
+  companyId: UUID,
+  userId: UUID,
+  actor: { userId: UUID; role: Role },
+): Promise<ServiceResult<TeamMember>> {
+  const membership = await db.companyMembership.findUnique({ where: { companyId_userId: { companyId, userId } } });
+  if (!membership) return fail('NOT_FOUND', 'That team member could not be found.');
+  if (membership.status === 'SUSPENDED') {
+    return fail('CONFLICT', 'This person has already been offboarded or suspended.');
+  }
+
+  const denial = await assertCanChangeMemberStanding(companyId, userId, membership.role as Role, actor, 'OFFBOARD');
+  if (denial) return fail(denial.code, denial.message);
+
+  const { count } = await db.companyMembership.updateMany({ where: { companyId, userId, status: { not: 'SUSPENDED' } }, data: { status: 'SUSPENDED' } });
+  if (count === 0) return fail('CONFLICT', 'This person has already been offboarded or suspended.');
+
+  const updated = await db.companyMembership.findUniqueOrThrow({ where: { id: membership.id }, include: { user: true } });
+  await recordTeamAudit(companyId, actor.userId, 'TEAM_MEMBER_OFFBOARDED', userId, { status: 'SUSPENDED' }, { status: membership.status });
+  return ok({ membership: toMembershipDto(updated), user: toUserDto(updated.user) });
+}
+
+/** Triggers a password reset for a team member on the caller's own company (Part B6). The
+ *  tenant-scoping (does `userId` actually belong to `companyId`?) happens here, exactly the same
+ *  `companyId_userId` compound-key lookup every other team-member action in this file uses - the
+ *  actual token issuance is delegated to passwordReset.service.ts, which knows nothing about
+ *  companies or tenants at all (it only ever trusts a `userId` its caller has already verified).
+ *  Never returns or logs the member's existing password - there is nothing to return, since
+ *  nothing here ever reads it. */
+export async function requestTeamMemberPasswordReset(
+  companyId: UUID,
+  userId: UUID,
+  actor: { userId: UUID; role: Role },
+): Promise<ServiceResult<{ token: string; expiresAt: string }>> {
+  const membership = await db.companyMembership.findUnique({ where: { companyId_userId: { companyId, userId } } });
+  if (!membership) return fail('NOT_FOUND', 'That team member could not be found.');
+
+  const { requestPasswordReset } = await import('./passwordReset.service');
+  const result = await requestPasswordReset(userId);
+  if (!result.ok) return result;
+
+  // Metadata deliberately carries no token value, hashed or otherwise - only the fact that a
+  // reset was requested and when it expires (Part B12: "never store... reset token... in audit
+  // metadata").
+  await recordTeamAudit(companyId, actor.userId, 'TEAM_MEMBER_PASSWORD_RESET_REQUESTED', userId, { expiresAt: result.data.expiresAt });
+  return ok(result.data);
+}
+
 export async function listDepartments(companyId: UUID): Promise<ServiceResult<Department[]>> {
   const departments = await db.department.findMany({ where: { companyId } });
   return ok(departments.map(toDepartmentDto));

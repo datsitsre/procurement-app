@@ -139,6 +139,18 @@ export interface CompanyService {
    *  the Team page's "Edit" action, for someone already on the list. */
   updateTeamMember(companyId: UUID, userId: UUID, patch: TeamMemberPatch, callerRole: Role): Promise<ServiceResult<TeamMember>>;
 
+  /** Suspends a team member on the caller's own company (Company User Management follow-up) -
+   *  POST /api/companies/[companyId]/team/[userId]/suspend, USERS_MANAGE. */
+  suspendTeamMember(companyId: UUID, userId: UUID): Promise<ServiceResult<TeamMember>>;
+  /** Reactivates a suspended (or offboarded) team member - POST .../activate. */
+  activateTeamMember(companyId: UUID, userId: UUID): Promise<ServiceResult<TeamMember>>;
+  /** Offboards a team member - removes their active access while preserving the User record and
+   *  every historical business record - POST .../offboard. */
+  offboardTeamMember(companyId: UUID, userId: UUID): Promise<ServiceResult<TeamMember>>;
+  /** Triggers a password reset for a team member - returns the raw reset token/link once, for the
+   *  admin to share out of band (this app has no email delivery) - POST .../reset-password. */
+  requestTeamMemberPasswordReset(companyId: UUID, userId: UUID): Promise<ServiceResult<{ token: string; expiresAt: string }>>;
+
   /** Company profile fields (section 10) - name, registration/tax numbers, industry, contact
    *  details. Requires SETTINGS_MANAGE and that `caller` actually belongs to this company. */
   updateCompanyProfile(companyId: UUID, patch: CompanyProfilePatch, callerRole: Role, caller: TenantContext): Promise<ServiceResult<Company>>;
@@ -217,6 +229,22 @@ class ApiCompanyService implements CompanyService {
 
   async updateTeamMember(companyId: UUID, userId: UUID, patch: TeamMemberPatch): Promise<ServiceResult<TeamMember>> {
     return apiRequest<TeamMember>(`/api/companies/${companyId}/team/${userId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  }
+
+  async suspendTeamMember(companyId: UUID, userId: UUID): Promise<ServiceResult<TeamMember>> {
+    return apiRequest<TeamMember>(`/api/companies/${companyId}/team/${userId}/suspend`, { method: 'POST' });
+  }
+
+  async activateTeamMember(companyId: UUID, userId: UUID): Promise<ServiceResult<TeamMember>> {
+    return apiRequest<TeamMember>(`/api/companies/${companyId}/team/${userId}/activate`, { method: 'POST' });
+  }
+
+  async offboardTeamMember(companyId: UUID, userId: UUID): Promise<ServiceResult<TeamMember>> {
+    return apiRequest<TeamMember>(`/api/companies/${companyId}/team/${userId}/offboard`, { method: 'POST' });
+  }
+
+  async requestTeamMemberPasswordReset(companyId: UUID, userId: UUID): Promise<ServiceResult<{ token: string; expiresAt: string }>> {
+    return apiRequest<{ token: string; expiresAt: string }>(`/api/companies/${companyId}/team/${userId}/reset-password`, { method: 'POST' });
   }
 
   async updateCompanyProfile(companyId: UUID, patch: CompanyProfilePatch): Promise<ServiceResult<Company>> {
