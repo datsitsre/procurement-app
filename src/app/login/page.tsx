@@ -32,12 +32,6 @@ const WORKSPACE_OPTIONS: { value: Workspace; label: string }[] = [
   { value: 'platform', label: 'Platform admin' },
 ];
 
-const DEMO_ACCOUNTS: Record<Workspace, { email: string; label: string }> = {
-  buyer: { email: 'john.doe@acmetech.example', label: 'company user' },
-  supplier: { email: 'adwoa.mensah@abctech.example', label: 'supplier' },
-  platform: { email: 'grace.owusu@platform.example', label: 'platform admin' },
-};
-
 export default function LoginPage() {
   const router = useRouter();
   const { session, login, switchCompany } = useAuth();
@@ -225,12 +219,6 @@ export default function LoginPage() {
                   Sign in
                 </Button>
               </form>
-
-              <p className="mt-4 text-caption">
-                Demo {DEMO_ACCOUNTS[workspace].label} account:{' '}
-                <code className="rounded bg-neutral-bg px-1 py-0.5">{DEMO_ACCOUNTS[workspace].email}</code> / password{' '}
-                <code className="rounded bg-neutral-bg px-1 py-0.5">password123</code>
-              </p>
             </>
           )}
         </div>

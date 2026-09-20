@@ -70,7 +70,22 @@ export const POST = withErrorHandling("/api/auth/login", async (request: NextReq
     ipAddress: ip,
   });
 
-  const response = NextResponse.json(payload);
+  // `buildSessionPayload` only ever includes ACTIVE memberships in `companies` - a correctly
+  // authenticated login with zero active memberships (PENDING_APPROVAL, REJECTED, SUSPENDED)
+  // still succeeds (this is not a credential failure), but the client has no way to explain
+  // *why* there's nothing to sign into without this. Only the caller's own, already-verified
+  // account's status is ever revealed here - never another user's, never which company.
+  const responseBody: typeof payload & { membershipStatus?: string | null } = payload;
+  if (payload.companies.length === 0) {
+    const mostRecentMembership = await db.companyMembership.findFirst({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      select: { status: true },
+    });
+    responseBody.membershipStatus = mostRecentMembership?.status ?? null;
+  }
+
+  const response = NextResponse.json(responseBody);
   setSessionCookie(response, token, expiresAt);
   complete(200, undefined, user.id);
   return response;

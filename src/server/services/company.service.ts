@@ -27,6 +27,57 @@ export interface CompanyProfilePatch {
   description?: string;
 }
 
+/** One row of the platform-wide company directory (Phase 26 follow-up - closes the
+ *  "/admin/companies reads from a frontend-only localStorage mock" gap). Deliberately narrow:
+ *  exactly the fields the Companies page displays, never credit limit/available (real financial
+ *  figures), tax id, registration number, email, or anything else that isn't already shown
+ *  there - "a directory," not "every company's full profile." */
+export interface PlatformCompanyRow {
+  id: UUID;
+  name: string;
+  country: string;
+  currency: string;
+  creditTerms: string;
+  memberCount: number;
+  createdAt: string;
+}
+
+/** Every real buyer company on the platform (Phase 26 follow-up) - gated by the route to
+ *  `PLATFORM_TRANSACTIONS_ACCESS` (PLATFORM_SUPER_ADMIN/legacy PLATFORM_ADMIN only), the same
+ *  permission every other cross-company business-data listing already requires
+ *  (`/api/orders`, `/api/payments`, `/api/disputes`, `/api/analytics`) - a full company roster is
+ *  exactly the kind of "another company's business data" that permission exists to gate, even
+ *  though no single order/invoice/payment is involved. `isBuyer: true` excludes both supplier
+ *  companies and platform-type companies (Platform Headquarters included) - this is a directory
+ *  of the platform's actual customers, not every row in the Company table. */
+export async function listAllCompanies(): Promise<ServiceResult<PlatformCompanyRow[]>> {
+  const companies = await db.company.findMany({
+    where: { isBuyer: true },
+    select: {
+      id: true,
+      name: true,
+      country: true,
+      currency: true,
+      creditTerms: true,
+      createdAt: true,
+      _count: { select: { memberships: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return ok(
+    companies.map((c) => ({
+      id: c.id,
+      name: c.name,
+      country: c.country,
+      currency: c.currency,
+      creditTerms: c.creditTerms,
+      memberCount: c._count.memberships,
+      createdAt: c.createdAt.toISOString(),
+    })),
+  );
+}
+
 export async function getCompanyProfile(companyId: UUID): Promise<ServiceResult<Company>> {
   const company = await db.company.findUnique({ where: { id: companyId }, include: { addresses: true, parentGroup: true } });
   if (!company) return fail('NOT_FOUND', 'That company could not be found.');

@@ -24,6 +24,14 @@ export interface RegisterInput {
   password: string;
 }
 
+/** What `POST /api/auth/register` actually returns (Phase 26) - a brand-new registration is
+ *  never immediately active, so unlike login/switchCompany there is no `Session` to hand back
+ *  here; the caller must show a pending-approval state, not navigate into the app. */
+export interface RegistrationResult {
+  registrationStatus: 'PENDING_APPROVAL';
+  message: string;
+}
+
 export interface UserProfilePatch {
   name?: string;
   phone?: string;
@@ -34,7 +42,7 @@ export interface UserProfilePatch {
 
 export interface AuthService {
   login(email: string, password: string): Promise<ServiceResult<Session>>;
-  register(input: RegisterInput): Promise<ServiceResult<Session>>;
+  register(input: RegisterInput): Promise<ServiceResult<RegistrationResult>>;
   logout(): Promise<void>;
   getSession(): Promise<ServiceResult<Session>>;
   switchCompany(companyId: UUID): Promise<ServiceResult<Session>>;
@@ -132,6 +140,13 @@ interface ServerSessionPayload {
   memberships: CompanyUser[];
   activeCompanyId: string | null;
   companies: Company[];
+  /** Set only when `companies` is empty - the status of the account's most recent membership
+   *  (e.g. 'PENDING_APPROVAL', 'REJECTED', 'SUSPENDED'), so login can explain *why* there's no
+   *  usable workspace instead of a generic "not linked to any company" message. `null` means the
+   *  account genuinely has no membership at all. Never reveals which company or any other
+   *  account's data - just this caller's own, already-authenticated-with-a-correct-password,
+   *  membership status. */
+  membershipStatus?: string | null;
 }
 
 /** Mirrors a server session response into the local runtime cache (see RUNTIME_DATA_STORAGE_KEY's
@@ -140,6 +155,23 @@ interface ServerSessionPayload {
 const demoCompanyIds = new Set(demoCompanies.map((c) => c.id));
 const demoUserIds = new Set(demoUsers.map((u) => u.id));
 const demoMembershipIds = new Set(demoCompanyUsers.map((m) => m.id));
+
+/** A tailored explanation for why a correctly-authenticated login still has no usable workspace
+ *  - the account's own membership status, not a generic dead end. `buildSessionPayload` (server)
+ *  only ever includes ACTIVE memberships in `companies`, so this is the one place that status
+ *  reaches the client at all. */
+function membershipStatusMessage(status: string | null | undefined): string {
+  switch (status) {
+    case 'PENDING_APPROVAL':
+      return 'Your registration is still awaiting approval from a platform administrator. You can sign back in once it has been reviewed.';
+    case 'REJECTED':
+      return 'Your registration was not approved. Contact your platform administrator if you believe this is a mistake.';
+    case 'SUSPENDED':
+      return 'Your account has been suspended. Contact your company administrator or platform support.';
+    default:
+      return 'This account is not linked to any company yet.';
+  }
+}
 
 function mirrorIntoRuntimeCache(payload: ServerSessionPayload): Session | null {
   if (!payload.activeCompanyId) return null;
@@ -208,16 +240,15 @@ class ApiAuthService implements AuthService {
     const result = await postJson<ServerSessionPayload>('/api/auth/login', { email, password });
     if (!result.ok) return result;
     const session = mirrorIntoRuntimeCache(result.data);
-    if (!session) return fail('NO_COMPANY', 'This account is not linked to any company yet.');
+    if (!session) return fail('NO_COMPANY', membershipStatusMessage(result.data.membershipStatus));
     return ok(session);
   }
 
-  async register(input: RegisterInput): Promise<ServiceResult<Session>> {
-    const result = await postJson<ServerSessionPayload>('/api/auth/register', input);
-    if (!result.ok) return result;
-    const session = mirrorIntoRuntimeCache(result.data);
-    if (!session) return fail('REGISTRATION_FAILED', 'Registration failed. Please try again.');
-    return ok(session);
+  async register(input: RegisterInput): Promise<ServiceResult<RegistrationResult>> {
+    // Unlike login/switchCompany, a brand-new registration is never immediately active (Phase
+    // 26's PENDING_APPROVAL gate) - there's no Session to mirror into the runtime cache here,
+    // just a pending-approval acknowledgement to hand back as-is.
+    return postJson<RegistrationResult>('/api/auth/register', input);
   }
 
   async logout(): Promise<void> {

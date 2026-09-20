@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Menu } from 'lucide-react';
 import { cn } from '@/utils/cn';
+import { useAuth } from '@/hooks/useAuth';
 import type { NavItem } from '@/config/navigation';
 
 export interface BottomNavProps {
@@ -12,13 +13,19 @@ export interface BottomNavProps {
 }
 
 /** Mobile-only tab bar (section 8/44) - a deliberately short list (home + the 3 most-used
- *  sections), with a "More" tab linking to the full nav for everything else. */
+ *  sections), with a "More" tab linking to the full nav for everything else. Filtered by
+ *  permission the same way Sidebar is (section 10) - a role that lacks a tab's permission
+ *  (EMPLOYEE/BUYER never hold analytics.read, for instance) never sees a shortcut to a page it
+ *  can't use. */
 export function BottomNav({ items, moreHref }: BottomNavProps) {
   const pathname = usePathname();
+  const { can } = useAuth();
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-30 flex h-(--bottom-nav-height) border-t border-border bg-surface lg:hidden print:hidden">
-      {items.map((item) => {
+      {items
+        .filter((item) => !item.permission || can(item.permission))
+        .map((item) => {
         const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
         const Icon = item.icon;
         return (

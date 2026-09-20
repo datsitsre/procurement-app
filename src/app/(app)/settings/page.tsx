@@ -25,32 +25,49 @@ export default function SettingsPage() {
 
       <ProfileCard />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Company profile</CardTitle>
-          {can(Permission.SETTINGS_MANAGE) && (
-            <Link href="/settings/company">
-              <Button variant="outline" size="sm">
-                Manage company
-              </Button>
-            </Link>
-          )}
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-            <Field label="Company name" value={company?.name} />
-            <Field label="Country" value={company?.country} />
-            <Field label="Currency" value={company?.currency} />
-            {workspace === 'buyer' && <Field label="Payment terms" value={company?.creditTerms.replace('_', ' ')} />}
-            {workspace === 'buyer' && company?.creditLimit !== undefined && (
-              <Field label="Credit limit" value={formatMoney(company.creditLimit, company.currency)} />
+      {workspace === 'platform' ? (
+        // Platform Headquarters is not an ordinary buyer/supplier company (section 11/13) - this
+        // card deliberately never shows company-shaped fields (payment terms, credit limit, ...)
+        // that would only be meaningful for a real transacting company.
+        <Card>
+          <CardHeader>
+            <CardTitle>Platform administration</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <Field label="Organization" value={company?.name} />
+              <Field label="Role" value={membership && RoleLabels[membership.role]} />
+            </dl>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Company profile</CardTitle>
+            {can(Permission.SETTINGS_MANAGE) && (
+              <Link href="/settings/company">
+                <Button variant="outline" size="sm">
+                  Manage company
+                </Button>
+              </Link>
             )}
-            {workspace === 'buyer' && company?.creditAvailable !== undefined && (
-              <Field label="Credit available" value={formatMoney(company.creditAvailable, company.currency)} />
-            )}
-          </dl>
-        </CardContent>
-      </Card>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+              <Field label="Company name" value={company?.name} />
+              <Field label="Country" value={company?.country} />
+              <Field label="Currency" value={company?.currency} />
+              {workspace === 'buyer' && <Field label="Payment terms" value={company?.creditTerms.replace('_', ' ')} />}
+              {workspace === 'buyer' && company?.creditLimit !== undefined && (
+                <Field label="Credit limit" value={formatMoney(company.creditLimit, company.currency)} />
+              )}
+              {workspace === 'buyer' && company?.creditAvailable !== undefined && (
+                <Field label="Credit available" value={formatMoney(company.creditAvailable, company.currency)} />
+              )}
+            </dl>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

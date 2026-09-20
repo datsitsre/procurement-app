@@ -8,17 +8,21 @@ import {
   activeMembershipOf,
   activeWorkspaceOf,
   type RegisterInput,
+  type RegistrationResult,
   type Session,
   type UserProfilePatch,
 } from '@/services/auth.service';
 import { hasPermission, type Permission } from '@/config/rbac';
-import type { ServiceError, TenantContext } from '@/types/common';
+import type { ServiceError, ServiceResult, TenantContext } from '@/types/common';
 
 interface AuthContextValue {
   session: Session | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<ServiceError | null>;
-  register: (input: RegisterInput) => Promise<ServiceError | null>;
+  /** Unlike login, a successful call never signs anyone in - a brand-new registration is always
+   *  PENDING_APPROVAL (Phase 26), so the caller gets the full result back to show a pending-
+   *  approval state, not just a success/failure signal. */
+  register: (input: RegisterInput) => Promise<ServiceResult<RegistrationResult>>;
   logout: () => Promise<void>;
   switchCompany: (companyId: string) => Promise<ServiceError | null>;
   updateProfile: (patch: UserProfilePatch) => Promise<ServiceError | null>;
@@ -53,12 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(async (input: RegisterInput) => {
-    const result = await authService.register(input);
-    if (result.ok) {
-      setSession(result.data);
-      return null;
-    }
-    return result.error;
+    return authService.register(input);
   }, []);
 
   const logout = useCallback(async () => {

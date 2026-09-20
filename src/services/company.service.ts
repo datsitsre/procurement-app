@@ -55,7 +55,25 @@ export interface CompanyProfilePatch {
   description?: string;
 }
 
+/** One row of the platform-wide company directory - see server/services/company.service.ts's
+ *  own PlatformCompanyRow for exactly which fields this is and isn't. */
+export interface PlatformCompanyRow {
+  id: UUID;
+  name: string;
+  country: string;
+  currency: string;
+  creditTerms: string;
+  memberCount: number;
+  createdAt: string;
+}
+
 export interface CompanyService {
+  /** Every real buyer company on the platform (Phase 26 follow-up) - PLATFORM_SUPER_ADMIN/legacy
+   *  PLATFORM_ADMIN only, per the real `GET /api/admin/companies` route's own permission gate.
+   *  Replaces the prior `allCompanies()` localStorage-mock read the Companies page used to use,
+   *  which could show stale/incomplete browser-local data instead of the real production roster. */
+  listAllCompanies(): Promise<ServiceResult<PlatformCompanyRow[]>>;
+
   listTeamMembers(companyId: UUID, callerRole: Role): Promise<ServiceResult<TeamMember[]>>;
   addTeamMember(companyId: UUID, input: NewTeamMemberInput, callerRole: Role): Promise<ServiceResult<AddedTeamMember>>;
   /** Edits an existing member's role/department, and optionally their own account's name/avatar -
@@ -102,6 +120,10 @@ export interface CompanyService {
  * changes.
  */
 class ApiCompanyService implements CompanyService {
+  async listAllCompanies(): Promise<ServiceResult<PlatformCompanyRow[]>> {
+    return apiRequest<PlatformCompanyRow[]>('/api/admin/companies');
+  }
+
   async listTeamMembers(companyId: UUID): Promise<ServiceResult<TeamMember[]>> {
     return apiRequest<TeamMember[]>(`/api/companies/${companyId}/team`);
   }

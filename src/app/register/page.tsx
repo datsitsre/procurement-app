@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/Button';
@@ -17,7 +16,6 @@ const countryOptions: { value: CountryCode; label: string; currency: CurrencyCod
 ];
 
 export default function RegisterPage() {
-  const router = useRouter();
   const { register } = useAuth();
 
   const [companyName, setCompanyName] = useState('');
@@ -28,6 +26,10 @@ export default function RegisterPage() {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Set on a successful registration - a brand-new account is never immediately active (Phase
+  // 26's PENDING_APPROVAL gate), so this page shows the approval-pending message in place
+  // rather than navigating into a dashboard the account has no working access to yet.
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -36,16 +38,42 @@ export default function RegisterPage() {
     setFieldErrors({});
 
     const currency = countryOptions.find((c) => c.value === country)!.currency;
-    const err = await register({ companyName, country, currency, fullName, email, password });
+    const result = await register({ companyName, country, currency, fullName, email, password });
     setSubmitting(false);
 
-    if (err) {
-      setError(err.message);
-      setFieldErrors(err.fieldErrors ?? {});
+    if (!result.ok) {
+      setError(result.error.message);
+      setFieldErrors(result.error.fieldErrors ?? {});
       return;
     }
 
-    router.push('/dashboard');
+    setPendingMessage(result.data.message);
+  }
+
+  if (pendingMessage) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4 py-10">
+        <div className="w-full max-w-md">
+          <div className="mb-8 flex items-center justify-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
+              P
+            </span>
+            <span className="text-h3">Procurement</span>
+          </div>
+
+          <div className="rounded-lg border border-border bg-surface p-6 text-center shadow-sm">
+            <h1 className="text-h2 mb-2">Registration submitted</h1>
+            <p className="text-body text-text-secondary">{pendingMessage}</p>
+          </div>
+
+          <p className="mt-6 text-center text-caption">
+            <Link href="/login" className="font-medium text-accent hover:underline">
+              Back to sign in
+            </Link>
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (
