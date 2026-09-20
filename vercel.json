@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "prisma migrate deploy && pnpm run build",
   "crons": [
     { "path": "/api/cron/invoice-due-sweep", "schedule": "0 2 * * *" },
     { "path": "/api/cron/low-stock-sweep", "schedule": "0 2 * * *" },
