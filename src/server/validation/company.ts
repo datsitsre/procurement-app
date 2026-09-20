@@ -21,6 +21,57 @@ export const NewPlatformCompanySchema = z.object({
   creditTerms: z.enum(['PREPAID', 'NET_7', 'NET_15', 'NET_30', 'NET_60']).optional(),
 });
 
+/** Loose but real phone-number validation (Add Company wizard) - digits, spaces, `+`, `-`,
+ *  parentheses only, matching the free-text international formats already used throughout this
+ *  app's own seed/demo data (e.g. "+233 30 123 4567") rather than a strict single-country format. */
+const PHONE_REGEX = /^[+()\d][\d\s\-()]{5,49}$/;
+
+/** The Super Admin Add Company wizard's full payload - a superset of NewPlatformCompanySchema
+ *  above with several of that schema's optional fields now required (legalName,
+ *  registrationNumber, email, phone, website, businessRole, addressLine1), matching the wizard's
+ *  own required-field list exactly. Deliberately its own schema rather than `.extend()`ing
+ *  NewPlatformCompanySchema, since optionality differs field-by-field, not just additively. */
+export const AddCompanyWizardSchema = z.object({
+  // Step 1 - Company
+  name: z.string().trim().min(1, 'Give the company a name').max(200),
+  legalName: z.string().trim().min(1, 'Enter the legal/registered name').max(200),
+  registrationNumber: z.string().trim().min(1, 'Enter the company registration number').max(100),
+  companyType: z.enum(['LIMITED_LIABILITY', 'SOLE_PROPRIETORSHIP', 'PARTNERSHIP', 'PUBLIC_LIMITED', 'NGO', 'GOVERNMENT', 'OTHER']),
+  email: z.string().trim().min(1, 'Enter the main email').max(254).email('Enter a valid email address'),
+  phone: z.string().trim().min(1, 'Enter the main phone number').max(50).regex(PHONE_REGEX, 'Enter a valid phone number'),
+  website: z.string().trim().min(1, 'Enter a website').max(300).url('Enter a valid website URL (include https://)'),
+  businessRole: z.enum(['BUYER', 'SUPPLIER', 'BUYER_AND_SUPPLIER']),
+
+  // Step 2 - Address (deliberately no city/region - see Address model's own schema comment)
+  addressLine1: z.string().trim().min(1, 'Enter an address').max(300),
+  country: z.enum(['GH', 'NG', 'KE', 'ZA', 'CI']),
+
+  // Step 3 - Commercial
+  currency: z.enum(['GHS', 'NGN', 'KES', 'ZAR', 'XOF', 'USD']),
+  creditTerms: z.enum(['PREPAID', 'NET_7', 'NET_15', 'NET_30', 'NET_60']).optional(),
+  defaultPaymentMethod: z.enum(['CARD', 'BANK_TRANSFER', 'MTN_MOMO', 'TELECEL_CASH', 'AIRTELTIGO_MONEY', 'WALLET', 'CREDIT_TERMS']).optional(),
+
+  // Step 4 - Banking (optional, sensitive - see Company.bankName's own schema comment)
+  bankName: z.string().trim().max(200).optional(),
+  bankAccountName: z.string().trim().max(200).optional(),
+  bankAccountNumber: z.string().trim().max(50).optional(),
+
+  // Step 5 - Initial administrator (optional - a company can still be created without one)
+  initialAdministrator: z
+    .object({
+      name: z.string().trim().min(1, "Enter the administrator's name").max(200),
+      email: z.string().trim().min(1, 'Enter an email address').max(254).email('Enter a valid email address'),
+      phone: z.string().trim().max(50).regex(PHONE_REGEX, 'Enter a valid phone number').optional().or(z.literal('')),
+      role: z.enum(['OWNER', 'ADMIN']),
+    })
+    .optional(),
+
+  // Carried over from the pre-wizard schema, still optional
+  taxId: z.string().trim().max(100).optional(),
+  industry: z.string().trim().max(100).optional(),
+  description: z.string().trim().max(2000).optional(),
+});
+
 /** A platform administrator editing an existing company's own profile metadata (Phase 28,
  *  section 6) - the same field set CompanyProfilePatchSchema already allows a company's own
  *  OWNER/ADMIN to edit about themselves, reused here rather than inventing a parallel shape.
@@ -99,6 +150,14 @@ export const NewTeamMemberSchema = z.object({
   // service even gets to look.
   name: z.string().trim().max(200).optional(),
   role: z.nativeEnum(Role),
+  department: z.string().trim().max(200).optional(),
+});
+
+export const NewInvitationSchema = z.object({
+  email: z.string().trim().min(1, 'Enter an email address').max(254).email('Enter a valid email address'),
+  role: z.nativeEnum(Role),
+  name: z.string().trim().max(200).optional(),
+  phone: z.string().trim().max(50).optional(),
   department: z.string().trim().max(200).optional(),
 });
 

@@ -12,6 +12,8 @@ import {
   ClipboardList,
   RefreshCw,
   Award,
+  Mail,
+  MailX,
   Activity as ActivityIcon,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -43,6 +45,11 @@ const ACTION_DESCRIPTIONS: Record<string, Omit<ActivityDescription, 'label'> & {
   TEAM_MEMBER_ACTIVATED: { label: 'reactivated a team member', icon: UserCheck, category: 'user' },
   TEAM_MEMBER_OFFBOARDED: { label: 'offboarded a team member', icon: UserX, category: 'user' },
   TEAM_MEMBER_PASSWORD_RESET_REQUESTED: { label: "requested a team member's password reset", icon: RefreshCw, category: 'user' },
+  TEAM_MEMBER_INVITED: { label: 'invited a team member', icon: Mail, category: 'user' },
+  TEAM_MEMBER_INVITATION_RESENT: { label: 'resent a team member invitation', icon: RefreshCw, category: 'user' },
+  TEAM_MEMBER_INVITATION_REVOKED: { label: 'revoked a team member invitation', icon: MailX, category: 'user' },
+  TEAM_MEMBER_INVITATION_ACCEPTED: { label: 'accepted a team invitation', icon: UserCheck, category: 'user' },
+  PLATFORM_USER_INVITED: { label: 'invited a platform user', icon: Mail, category: 'user' },
   PLATFORM_ROLE_CHANGED: { label: "changed a platform user's role", icon: UserCog, category: 'role' },
   REGISTRATION_APPROVED: { label: 'approved a registration', icon: UserCheck, category: 'approval' },
   REGISTRATION_REJECTED: { label: 'rejected a registration', icon: UserX, category: 'approval' },

@@ -7,6 +7,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { AdminGuard } from '@/features/admin/AdminGuard';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { companyService, type NewPlatformCompanyInput, type PlatformCompanyRow } from '@/services/company.service';
+import { AddCompanyWizard } from '@/features/admin/AddCompanyWizard';
 import { Permission } from '@/config/rbac';
 import { Button } from '@/components/ui/Button';
 import { Dialog } from '@/components/ui/Dialog';
@@ -199,12 +200,10 @@ function CompaniesDirectory() {
         </>
       )}
 
-      <CompanyFormDialog
+      <AddCompanyWizard
         open={creating}
-        mode="create"
         onClose={() => setCreating(false)}
-        onSaved={() => {
-          setCreating(false);
+        onCreated={() => {
           reload();
         }}
       />

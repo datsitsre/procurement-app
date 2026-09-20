@@ -82,20 +82,33 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Companies created by the Add Company wizard tests may have generated real invitations, and
+  // some of those may have been accepted by a brand-new User (created during acceptance, not
+  // one of this file's own fixture users) - both need cleaning up, and CompanyInvitation's own
+  // `invitedById` FK is RESTRICT (not cascade), so it must be cleared before SUPER_ADMIN_USER_ID
+  // itself can be deleted below.
+  const wizardInvitations = await db.companyInvitation.findMany({ where: { companyId: { in: createdCompanyIds } }, select: { acceptedUserId: true } });
+  const acceptedUserIds = wizardInvitations.map((i) => i.acceptedUserId).filter((id): id is string => !!id);
+
   await db.auditLog.deleteMany({
     where: {
       OR: [
         { entityType: 'Company', entityId: 'LIST', actorId: { in: [SUPER_ADMIN_USER_ID, LEGACY_ADMIN_USER_ID] } },
         { entityType: 'Company', entityId: { in: createdCompanyIds } },
         { entityType: 'CompanyMembers' },
+        { entityType: 'CompanyInvitation' },
+        { actorId: { in: acceptedUserIds } },
       ],
     },
   });
   await db.companyMembership.deleteMany({ where: { companyId: { in: [MANAGER_COMPANY_ID, SUPER_ADMIN_COMPANY_ID, LEGACY_ADMIN_COMPANY_ID, BUYER_COMPANY_ID] } } });
-  await db.user.deleteMany({ where: { id: { in: [MANAGER_USER_ID, SUPER_ADMIN_USER_ID, LEGACY_ADMIN_USER_ID, BUYER_USER_ID] } } });
+  // Removes the wizard-created invitations (and, via cascade, nothing else) before the inviting
+  // user or the companies themselves are deleted.
+  await db.companyInvitation.deleteMany({ where: { companyId: { in: createdCompanyIds } } });
   await db.company.deleteMany({
     where: { id: { in: [MANAGER_COMPANY_ID, SUPER_ADMIN_COMPANY_ID, LEGACY_ADMIN_COMPANY_ID, BUYER_COMPANY_ID, PLATFORM_TYPE_COMPANY_ID, SUPPLIER_TYPE_COMPANY_ID, ...createdCompanyIds] } },
   });
+  await db.user.deleteMany({ where: { id: { in: [MANAGER_USER_ID, SUPER_ADMIN_USER_ID, LEGACY_ADMIN_USER_ID, BUYER_USER_ID, ...acceptedUserIds] } } });
 });
 
 describe('GET /api/admin/companies', () => {
@@ -172,36 +185,279 @@ describe('GET /api/admin/companies', () => {
   });
 });
 
-describe('POST /api/admin/companies (Phase 28 - platform company creation)', () => {
-  const newCompanyBody = { name: `Test Platform-Created Co ${Date.now()}`, country: 'GH', currency: 'GHS' };
+describe('POST /api/admin/companies (Add Company wizard)', () => {
+  function wizardBody(overrides: Record<string, unknown> = {}) {
+    return {
+      name: `Test Wizard Co ${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      legalName: 'Test Wizard Co Ltd.',
+      registrationNumber: `REG-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      companyType: 'LIMITED_LIABILITY',
+      email: 'contact@wizardco.example',
+      phone: '+233 30 123 4567',
+      website: 'https://wizardco.example',
+      businessRole: 'BUYER',
+      addressLine1: '14 Independence Avenue',
+      country: 'GH',
+      currency: 'GHS',
+      ...overrides,
+    };
+  }
 
-  it('PLATFORM_SUPER_ADMIN can create a new buyer company', async () => {
-    const response = await createCompanyRoute(postReq(superAdminToken, newCompanyBody));
+  it('1. PLATFORM_SUPER_ADMIN can create a company', async () => {
+    const body = wizardBody();
+    const response = await createCompanyRoute(postReq(superAdminToken, body));
     expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body.name).toBe(newCompanyBody.name);
-    expect(body.isBuyer).toBe(true);
-    expect(body.isSupplier).toBe(false);
-    createdCompanyIds.push(body.id);
+    const responseBody = await response.json();
+    expect(responseBody.name).toBe(body.name);
+    createdCompanyIds.push(responseBody.id);
 
-    const audit = await db.auditLog.findFirst({ where: { action: 'PLATFORM_COMPANY_CREATED', entityId: body.id } });
+    const audit = await db.auditLog.findFirst({ where: { action: 'PLATFORM_COMPANY_CREATED', entityId: responseBody.id } });
     expect(audit).not.toBeNull();
     expect(audit?.actorId).toBe(SUPER_ADMIN_USER_ID);
   });
 
-  it('PLATFORM_MANAGER cannot create a company', async () => {
-    const response = await createCompanyRoute(postReq(managerToken, { name: 'Should Not Be Created', country: 'GH', currency: 'GHS' }));
+  it('2. legacy PLATFORM_ADMIN can create a company if the existing permission allows', async () => {
+    const response = await createCompanyRoute(postReq(legacyAdminToken, wizardBody()));
+    expect(response.status).toBe(200);
+    const responseBody = await response.json();
+    createdCompanyIds.push(responseBody.id);
+  });
+
+  it('3. PLATFORM_MANAGER is denied', async () => {
+    const response = await createCompanyRoute(postReq(managerToken, wizardBody()));
     expect(response.status).toBe(403);
   });
 
-  it('an ordinary company user cannot create a company', async () => {
-    const response = await createCompanyRoute(postReq(buyerToken, { name: 'Should Not Be Created', country: 'GH', currency: 'GHS' }));
+  it('4. an ordinary company user is denied', async () => {
+    const response = await createCompanyRoute(postReq(buyerToken, wizardBody()));
     expect(response.status).toBe(403);
   });
 
-  it('rejects malformed input (missing required fields)', async () => {
-    const response = await createCompanyRoute(postReq(superAdminToken, { name: '' }));
+  it('5. required fields are validated (missing legalName/registrationNumber/etc.)', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, { name: 'Missing Fields Co', country: 'GH', currency: 'GHS' }));
     expect(response.status).toBe(422);
+  });
+
+  it('6. an invalid email is rejected', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ email: 'not-an-email' })));
+    expect(response.status).toBe(422);
+  });
+
+  it('7. an invalid website URL is rejected', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ website: 'not-a-url' })));
+    expect(response.status).toBe(422);
+  });
+
+  it('8. an invalid business role is rejected', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ businessRole: 'PLATFORM_SUPER_ADMIN' })));
+    expect(response.status).toBe(422);
+  });
+
+  it('9. Buyer sets isBuyer=true/isSupplier=false', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ businessRole: 'BUYER' })));
+    const body = await response.json();
+    createdCompanyIds.push(body.id);
+    expect(body.isBuyer).toBe(true);
+    expect(body.isSupplier).toBe(false);
+  });
+
+  it('10. Supplier sets isBuyer=false/isSupplier=true', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ businessRole: 'SUPPLIER' })));
+    const body = await response.json();
+    createdCompanyIds.push(body.id);
+    expect(body.isBuyer).toBe(false);
+    expect(body.isSupplier).toBe(true);
+  });
+
+  it('11. Buyer + Supplier sets both true', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ businessRole: 'BUYER_AND_SUPPLIER' })));
+    const body = await response.json();
+    createdCompanyIds.push(body.id);
+    expect(body.isBuyer).toBe(true);
+    expect(body.isSupplier).toBe(true);
+  });
+
+  it('12. the initial administrator role is validated (rejects a non-OWNER/ADMIN role)', async () => {
+    const response = await createCompanyRoute(
+      postReq(superAdminToken, wizardBody({ initialAdministrator: { name: 'Bad Role', email: `bad-role-${Date.now()}@example.test`, role: 'EMPLOYEE' } })),
+    );
+    expect(response.status).toBe(422);
+  });
+
+  it('13 & 14. City/Region are not required - only Address Line 1 and Country', async () => {
+    const body = wizardBody();
+    const response = await createCompanyRoute(postReq(superAdminToken, body));
+    expect(response.status).toBe(200);
+    const responseBody = await response.json();
+    createdCompanyIds.push(responseBody.id);
+    const address = await db.address.findFirst({ where: { companyId: responseBody.id } });
+    expect(address).not.toBeNull();
+    expect(address?.line1).toBe(body.addressLine1);
+    expect(address?.city).toBeNull();
+    expect(address?.region).toBeNull();
+  });
+
+  it('15 & 16. no Branches or Departments are created', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, wizardBody()));
+    const body = await response.json();
+    createdCompanyIds.push(body.id);
+    const branchCount = await db.branch.count({ where: { companyId: body.id } });
+    const departmentCount = await db.department.count({ where: { companyId: body.id } });
+    expect(branchCount).toBe(0);
+    expect(departmentCount).toBe(0);
+  });
+
+  it('17. company creation is audited with safe, non-sensitive fields only', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ bankAccountNumber: '1234567890' })));
+    const body = await response.json();
+    createdCompanyIds.push(body.id);
+    const audit = await db.auditLog.findFirst({ where: { action: 'PLATFORM_COMPANY_CREATED', entityId: body.id } });
+    expect(audit).not.toBeNull();
+    expect(JSON.stringify(audit?.newValue)).not.toMatch(/1234567890/);
+    expect(JSON.stringify(audit)).not.toMatch(/bankAccountNumber/i);
+  });
+
+  it('18. a duplicate registration number is handled safely (409, not a silent duplicate)', async () => {
+    const regNumber = `DUPLICATE-REG-${Date.now()}`;
+    const first = await createCompanyRoute(postReq(superAdminToken, wizardBody({ registrationNumber: regNumber })));
+    expect(first.status).toBe(200);
+    const firstBody = await first.json();
+    createdCompanyIds.push(firstBody.id);
+
+    const second = await createCompanyRoute(postReq(superAdminToken, wizardBody({ registrationNumber: regNumber })));
+    expect(second.status).toBe(409);
+  });
+
+  describe('Initial administrator', () => {
+    it('19, 22, 25, 26, 27, 28. invitation is created correctly, with the intended role, a secure single-use expiring token that activates the right membership', async () => {
+      const adminEmail = `initial-admin-${Date.now()}@example.test`;
+      const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ initialAdministrator: { name: 'Initial Owner', email: adminEmail, role: 'OWNER' } })));
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      createdCompanyIds.push(body.id);
+
+      expect(body.invitation).toBeDefined();
+      expect(body.invitation.email).toBe(adminEmail);
+      expect(body.invitation.role).toBe('OWNER');
+      expect(typeof body.invitation.token).toBe('string');
+
+      const invitationRow = await db.companyInvitation.findFirst({ where: { companyId: body.id, email: adminEmail } });
+      expect(invitationRow).not.toBeNull();
+      expect(invitationRow!.tokenHash).not.toBe(body.invitation.token); // 25 - never stored raw
+      expect(invitationRow!.expiresAt.getTime()).toBeGreaterThan(Date.now()); // 27 - expires in the future
+
+      const { POST: acceptRoute } = await import('@/app/api/invitations/accept/route');
+      const acceptResponse = await acceptRoute(
+        new NextRequest('http://localhost/api/invitations/accept', {
+          method: 'POST',
+          headers: new Headers({ origin: 'http://localhost', 'content-type': 'application/json' }),
+          body: JSON.stringify({ token: body.invitation.token, password: 'a-strong-password-99' }),
+        }),
+      );
+      expect(acceptResponse.status).toBe(200);
+      const acceptBody = await acceptResponse.json();
+
+      const membership = await db.companyMembership.findUnique({ where: { companyId_userId: { companyId: body.id, userId: acceptBody.userId } } });
+      expect(membership?.status).toBe('ACTIVE'); // 28
+      expect(membership?.role).toBe('OWNER');
+
+      // 26 - single-use: replaying the same token must fail.
+      const replay = await acceptRoute(
+        new NextRequest('http://localhost/api/invitations/accept', {
+          method: 'POST',
+          headers: new Headers({ origin: 'http://localhost', 'content-type': 'application/json' }),
+          body: JSON.stringify({ token: body.invitation.token, password: 'another-password-1' }),
+        }),
+      );
+      expect(replay.status).toBe(422);
+    });
+
+    it('20, 21, 29. an existing user can be associated without creating a duplicate, and other/multi-company memberships remain intact', async () => {
+      const existingEmail = `existing-for-new-co-${Date.now()}@example.test`;
+      await db.user.create({ data: { email: existingEmail, name: 'Existing Person', passwordHash: 'x' } });
+      const existingUser = await db.user.findUniqueOrThrow({ where: { email: existingEmail } });
+      // A real, pre-existing membership at an unrelated company - must remain untouched.
+      const unrelatedCoId = `test-unrelated-co-${Date.now()}`;
+      await db.company.create({ data: { id: unrelatedCoId, name: 'Unrelated Co', country: 'GH', currency: 'GHS', isBuyer: true } });
+      await db.companyMembership.create({ data: { companyId: unrelatedCoId, userId: existingUser.id, role: 'BUYER', status: 'ACTIVE', joinedAt: new Date() } });
+
+      const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ initialAdministrator: { name: 'Existing Person', email: existingEmail, role: 'ADMIN' } })));
+      const body = await response.json();
+      createdCompanyIds.push(body.id);
+
+      const { POST: acceptRoute } = await import('@/app/api/invitations/accept/route');
+      const acceptResponse = await acceptRoute(
+        new NextRequest('http://localhost/api/invitations/accept', {
+          method: 'POST',
+          headers: new Headers({ origin: 'http://localhost', 'content-type': 'application/json' }),
+          body: JSON.stringify({ token: body.invitation.token }),
+        }),
+      );
+      expect(acceptResponse.status).toBe(200);
+      const acceptBody = await acceptResponse.json();
+      expect(acceptBody.userId).toBe(existingUser.id); // no duplicate User
+
+      const userCount = await db.user.count({ where: { email: existingEmail } });
+      expect(userCount).toBe(1);
+
+      const unrelatedMembership = await db.companyMembership.findUnique({ where: { companyId_userId: { companyId: unrelatedCoId, userId: existingUser.id } } });
+      expect(unrelatedMembership?.status).toBe('ACTIVE'); // untouched
+      expect(unrelatedMembership?.role).toBe('BUYER');
+
+      await db.companyMembership.deleteMany({ where: { companyId: unrelatedCoId } });
+      await db.company.delete({ where: { id: unrelatedCoId } });
+      await db.user.delete({ where: { id: existingUser.id } });
+    });
+
+    it('23. a platform role cannot be assigned as the initial administrator', async () => {
+      const response = await createCompanyRoute(
+        postReq(superAdminToken, wizardBody({ initialAdministrator: { name: 'Should Fail', email: `platform-attempt-${Date.now()}@example.test`, role: 'PLATFORM_SUPER_ADMIN' } })),
+      );
+      expect(response.status).toBe(422);
+    });
+
+    it('24. no plaintext password is ever created/stored for a brand-new initial administrator', async () => {
+      const adminEmail = `no-plaintext-${Date.now()}@example.test`;
+      const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ initialAdministrator: { name: 'No Plaintext', email: adminEmail, role: 'OWNER' } })));
+      const body = await response.json();
+      createdCompanyIds.push(body.id);
+      expect(JSON.stringify(body)).not.toMatch(/passwordHash/i);
+      expect(body).not.toHaveProperty('password');
+    });
+  });
+
+  describe('Banking', () => {
+    it('30 & 31. bank information is persisted only where supported and not exposed in the response', async () => {
+      const response = await createCompanyRoute(
+        postReq(superAdminToken, wizardBody({ bankName: 'Test Bank', bankAccountName: 'Test Wizard Co Ltd.', bankAccountNumber: '9988776655' })),
+      );
+      const body = await response.json();
+      createdCompanyIds.push(body.id);
+      expect(JSON.stringify(body)).not.toMatch(/9988776655/);
+
+      const stored = await db.company.findUnique({ where: { id: body.id } });
+      expect(stored?.bankName).toBe('Test Bank');
+      expect(stored?.bankAccountNumber).toBe('9988776655');
+    });
+
+    it('32. bank details never appear in audit metadata', async () => {
+      const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ bankAccountNumber: '5544332211' })));
+      const body = await response.json();
+      createdCompanyIds.push(body.id);
+      const audit = await db.auditLog.findFirst({ where: { action: 'PLATFORM_COMPANY_CREATED', entityId: body.id } });
+      expect(JSON.stringify(audit)).not.toMatch(/5544332211/);
+    });
+
+    it("33. bank details never appear in the company directory (list) response", async () => {
+      const response = await createCompanyRoute(postReq(superAdminToken, wizardBody({ bankAccountNumber: '1122334455' })));
+      const body = await response.json();
+      createdCompanyIds.push(body.id);
+
+      const listResponse = await adminCompaniesRoute(req(superAdminToken));
+      const listBody: Record<string, unknown>[] = await listResponse.json();
+      expect(JSON.stringify(listBody)).not.toMatch(/1122334455/);
+      expect(JSON.stringify(listBody)).not.toMatch(/bankAccountNumber/i);
+    });
   });
 });
 

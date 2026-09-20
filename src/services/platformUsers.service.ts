@@ -1,6 +1,7 @@
 import { apiRequest } from './base';
 import type { Role } from '@/config/rbac';
 import type { ServiceResult, UUID } from '@/types/common';
+import type { CreatedInvitation } from './company.service';
 
 export interface PlatformUserRow {
   userId: UUID;
@@ -102,6 +103,16 @@ export const platformUsersService = {
     return apiRequest<{ userId: UUID; companyId: UUID; role: Role }>(`/api/admin/platform/users/${userId}/role`, {
       method: 'PATCH',
       body: JSON.stringify({ companyId, role }),
+    });
+  },
+
+  /** Invites a new platform account (Part X - Add Platform User) - never a company role.
+   *  POST /api/admin/platform/users/invite, PLATFORM_ROLES_MANAGE. Returns the raw invitation
+   *  link/token once, the same "no email delivery, show once" pattern the rest of the app uses. */
+  invitePlatformUser(input: { email: string; name: string; role: 'PLATFORM_MANAGER' | 'PLATFORM_SUPER_ADMIN' }) {
+    return apiRequest<CreatedInvitation>('/api/admin/platform/users/invite', {
+      method: 'POST',
+      body: JSON.stringify(input),
     });
   },
 };

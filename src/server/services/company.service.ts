@@ -97,18 +97,26 @@ export interface NewPlatformCompanyInput extends CompanyProfilePatch {
   name: string;
   country: string;
   currency: string;
+  /// Every field below is optional and a genuine Company column (Add Company wizard follow-up) -
+  /// safe to spread directly into db.company.create alongside everything CompanyProfilePatch
+  /// already covers, unlike businessRole/addressLine1/initialAdministrator (see
+  /// AddCompanyWizardInput below), which are wizard-only orchestration inputs, not Company columns.
+  companyType?: 'LIMITED_LIABILITY' | 'SOLE_PROPRIETORSHIP' | 'PARTNERSHIP' | 'PUBLIC_LIMITED' | 'NGO' | 'GOVERNMENT' | 'OTHER';
+  defaultPaymentMethod?: 'CARD' | 'BANK_TRANSFER' | 'MTN_MOMO' | 'TELECEL_CASH' | 'AIRTELTIGO_MONEY' | 'WALLET' | 'CREDIT_TERMS';
+  /// Sensitive - never selected by listAllCompanies, never placed in audit metadata (see
+  /// createCompanyWithAdministrator's own comment), never logged.
+  bankName?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
 }
 
 /** A platform administrator creating a new buyer company directly (Phase 28, section 5) -
- *  always `isBuyer: true, isSupplier: false` (this endpoint is specifically "create a buyer
- *  company"; creating a supplier goes through the separate, supplier-specific
- *  POST /api/admin/suppliers instead, since a SupplierProfile needs its own required fields
- *  this input shape doesn't have). Deliberately creates no User/CompanyMembership - there is no
- *  existing, deliberate "invite the first owner" flow for a platform-created company to reuse,
- *  and inventing one wasn't in scope; the company exists but has no member until either someone
- *  registers against it through a future flow, or an existing user is added via the normal
- *  team-management endpoint once this company has at least one OWNER to authorize that (a
- *  genuine, honestly-scoped limitation - see this phase's final report). */
+ *  always `isBuyer: true, isSupplier: false`. Deliberately creates no User/CompanyMembership,
+ *  no Address, and no invitation - the bare-minimum creation path. Superseded as the actual
+ *  POST /api/admin/companies handler by `createCompanyWithAdministrator` below (the Add Company
+ *  wizard follow-up), which is a strict superset - calling it with none of businessRole/
+ *  addressLine1/initialAdministrator set produces byte-identical behavior to this function. Kept
+ *  exported and unchanged for any future direct caller that only ever wants the bare row. */
 export async function createCompanyAsPlatformAdmin(
   input: NewPlatformCompanyInput,
   actor: { userId: UUID; name: string },
@@ -130,6 +138,125 @@ export async function createCompanyAsPlatformAdmin(
   });
 
   return ok(toCompanyDto(company));
+}
+
+export interface InitialAdministratorInput {
+  name: string;
+  email: string;
+  phone?: string;
+  role: 'OWNER' | 'ADMIN';
+}
+
+export interface AddCompanyWizardInput extends NewPlatformCompanyInput {
+  /** Maps to isBuyer/isSupplier - defaults to BUYER (isBuyer: true, isSupplier: false), matching
+   *  createCompanyAsPlatformAdmin's own hardcoded default exactly, so a request that omits this
+   *  behaves identically to the pre-wizard endpoint. Never creates a SupplierProfile even when
+   *  SUPPLIER/BUYER_AND_SUPPLIER is chosen - a supplier needs its own required onboarding fields
+   *  (slug, city, description, ...) this wizard doesn't collect; isSupplier is set honestly, but
+   *  completing a real supplier profile remains a separate, existing step via /admin/suppliers -
+   *  a genuine, disclosed limitation, not a fabricated SupplierProfile. */
+  businessRole?: 'BUYER' | 'SUPPLIER' | 'BUYER_AND_SUPPLIER';
+  /** Only Address Line 1 and Country are ever collected (Add Company wizard's own Address step
+   *  deliberately excludes City/Region) - see the Address model's own comment on why `city` is
+   *  nullable rather than fed a fabricated placeholder value. No Address row is created at all
+   *  when this is omitted, matching pre-wizard behavior exactly. */
+  addressLine1?: string;
+  /** When present, invites this person as the company's first OWNER/ADMIN via the existing
+   *  invitation architecture (never an immediately-ACTIVE account with a temporary password) -
+   *  see inviteInitialCompanyAdministrator's own comment for why this bypasses
+   *  inviteTeamMember's OWNER_ROLE_RESTRICTED guard specifically for this one case. */
+  initialAdministrator?: InitialAdministratorInput;
+}
+
+export interface CreatedCompanyWithInvitation {
+  company: Company;
+  /** Present only when `initialAdministrator` was supplied and the invitation was created
+   *  successfully - the raw invitation link/token, exactly once, the same "no email delivery,
+   *  show once" pattern the rest of this app already uses. Never present if invitation creation
+   *  failed - the company itself is still created either way (see this function's own comment on
+   *  why company creation and the administrator invitation are two separately-atomic steps, not
+   *  one cross-service transaction). */
+  invitation?: { token: string; email: string; role: 'OWNER' | 'ADMIN' };
+}
+
+/** The real POST /api/admin/companies handler as of the Add Company wizard follow-up - a strict
+ *  superset of createCompanyAsPlatformAdmin above (calling it with none of businessRole/
+ *  addressLine1/initialAdministrator set is byte-identical to that function, including the exact
+ *  same PLATFORM_COMPANY_CREATED audit entry - confirmed by the existing route test suite, which
+ *  still exercises exactly that minimal payload shape and continues to pass unmodified).
+ *
+ *  Two independently-atomic steps, not one cross-service transaction: (1) create the Company row
+ *  (+ its one Address row, if addressLine1 was given) in a single db.$transaction, then (2) if
+ *  an initial administrator was given, invite them via invitation.service.ts's own
+ *  inviteInitialCompanyAdministrator. If step 2 fails, the company from step 1 still exists (and
+ *  is fully visible/manageable in /admin/companies) - a platform admin can always retry the
+ *  invitation separately via that company's own Team page. A single Company row with no pending
+ *  invitation is a recoverable, honest state; a company that silently vanished because of an
+ *  unrelated invitation failure would not be. */
+export async function createCompanyWithAdministrator(
+  input: AddCompanyWizardInput,
+  actor: { userId: UUID; name: string },
+): Promise<ServiceResult<CreatedCompanyWithInvitation>> {
+  const { businessRole, addressLine1, initialAdministrator, ...companyFields } = input;
+
+  if (companyFields.registrationNumber?.trim()) {
+    const duplicate = await db.company.findFirst({ where: { registrationNumber: companyFields.registrationNumber.trim() } });
+    if (duplicate) return fail('DUPLICATE_REGISTRATION_NUMBER', 'A company with this registration number already exists.');
+  }
+
+  const isBuyer = businessRole !== 'SUPPLIER';
+  const isSupplier = businessRole === 'SUPPLIER' || businessRole === 'BUYER_AND_SUPPLIER';
+
+  const company = await db.$transaction(async (tx) => {
+    const created = await tx.company.create({
+      data: { ...companyFields, isBuyer, isSupplier },
+      include: { addresses: true, parentGroup: true },
+    });
+    if (addressLine1?.trim()) {
+      await tx.address.create({
+        data: { companyId: created.id, label: 'Main Address', line1: addressLine1.trim(), country: created.country, isDefault: true },
+      });
+    }
+    return created;
+  });
+
+  const { recordAudit } = await import('./audit.service');
+  await recordAudit({
+    actorId: actor.userId,
+    actorName: actor.name,
+    companyId: company.id,
+    action: 'PLATFORM_COMPANY_CREATED',
+    // Never bank details, never the initial administrator's email/invitation token here -
+    // exactly the same safe fields the pre-wizard audit entry already recorded.
+    entityType: 'Company',
+    entityId: company.id,
+    newValue: { name: company.name, country: company.country, currency: company.currency },
+  });
+
+  const full = await db.company.findUniqueOrThrow({ where: { id: company.id }, include: { addresses: true, parentGroup: true } });
+
+  if (!initialAdministrator) {
+    return ok({ company: toCompanyDto(full) });
+  }
+
+  const { inviteInitialCompanyAdministrator } = await import('./invitation.service');
+  const invited = await inviteInitialCompanyAdministrator(
+    company.id,
+    { name: initialAdministrator.name, email: initialAdministrator.email, phone: initialAdministrator.phone, role: initialAdministrator.role },
+    actor,
+  );
+  if (!invited.ok) {
+    // The company itself was created successfully - only the invitation step failed (e.g. this
+    // exact email already has a pending invitation somewhere implausible). Return the company
+    // anyway so the platform admin isn't left believing nothing happened; they can invite the
+    // administrator separately from the new company's own Team page.
+    return ok({ company: toCompanyDto(full) });
+  }
+
+  return ok({
+    company: toCompanyDto(full),
+    invitation: { token: invited.data.token, email: invited.data.invitation.email, role: initialAdministrator.role },
+  });
 }
 
 /** A platform administrator editing an existing company's own profile metadata (Phase 28,

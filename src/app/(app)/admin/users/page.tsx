@@ -2,13 +2,16 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Search, Users } from 'lucide-react';
+import { Check, Copy, Plus, Search, Users } from 'lucide-react';
+import { useAuth, useActiveMembership } from '@/hooks/useAuth';
 import { AdminGuard } from '@/features/admin/AdminGuard';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { platformUsersService, type UserDirectoryRow } from '@/services/platformUsers.service';
+import { Permission } from '@/config/rbac';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Dialog } from '@/components/ui/Dialog';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -84,9 +87,12 @@ export default function AdminUsersPage() {
 }
 
 function UsersDirectory() {
+  const { can } = useAuth();
+  const canAddPlatformUser = can(Permission.PLATFORM_ROLES_MANAGE);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
   const [sort, setSort] = useState<SortKey>('created');
+  const [addingPlatformUser, setAddingPlatformUser] = useState(false);
   const { data: users, loading, error, reload } = useAsyncData<UserDirectoryRow[]>(
     `admin-users-${search}-${status}-${sort}`,
     () => platformUsersService.listAllUsers({ search: search || undefined, status: status === 'all' ? undefined : status, sort }),
@@ -96,9 +102,17 @@ function UsersDirectory() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-h1">Users</h1>
-        <p className="text-body text-text-secondary">Every registered user across every company and organization.</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-h1">Users</h1>
+          <p className="text-body text-text-secondary">Every registered user across every company and organization.</p>
+        </div>
+        {canAddPlatformUser && (
+          <Button size="sm" onClick={() => setAddingPlatformUser(true)}>
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Add platform user
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -206,6 +220,126 @@ function UsersDirectory() {
           </div>
         </>
       )}
+
+      <AddPlatformUserDialog open={addingPlatformUser} onClose={() => setAddingPlatformUser(false)} onCreated={reload} />
     </div>
+  );
+}
+
+/** Creates a real invitation to a platform-tier role (Part X - Add Platform User), never a
+ *  company or supplier role - reuses the same invitation architecture the company Team page's
+ *  Add User flow uses (invitation.service.ts's shared createInvitation), not a second onboarding
+ *  mechanism. The server independently re-derives and re-checks every rule this dialog only
+ *  reflects for UX (which roles the current actor may offer) - see
+ *  POST /api/admin/platform/users/invite's own comment. */
+function AddPlatformUserDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
+  const membership = useActiveMembership();
+  // Mirrors invitePlatformUser's own server-side rule exactly (UX convenience only - the API
+  // enforces this independently): only a genuine PLATFORM_SUPER_ADMIN may offer that role to
+  // someone else; the legacy PLATFORM_ADMIN may only offer PLATFORM_MANAGER.
+  const canOfferSuperAdmin = membership?.role === 'PLATFORM_SUPER_ADMIN';
+  const availableRoles = canOfferSuperAdmin ? (['PLATFORM_MANAGER', 'PLATFORM_SUPER_ADMIN'] as const) : (['PLATFORM_MANAGER'] as const);
+
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<'PLATFORM_MANAGER' | 'PLATFORM_SUPER_ADMIN'>('PLATFORM_MANAGER');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ email: string; link: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  function reset() {
+    setName('');
+    setEmail('');
+    setRole('PLATFORM_MANAGER');
+    setError(null);
+    setCreated(null);
+  }
+
+  async function handleSubmit() {
+    if (!name.trim() || !email.trim()) {
+      setError('Enter a name and email.');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    const result = await platformUsersService.invitePlatformUser({ email: email.trim(), name: name.trim(), role });
+    setSubmitting(false);
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    setCreated({ email: email.trim(), link: `${origin}/accept-invitation?token=${result.data.token}` });
+    onCreated();
+  }
+
+  async function copyLink() {
+    if (!created) return;
+    await navigator.clipboard.writeText(created.link).catch(() => undefined);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  function handleClose() {
+    reset();
+    onClose();
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      title="Add platform user"
+      size="sm"
+      footer={
+        created ? (
+          <Button size="sm" onClick={handleClose}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button variant="outline" size="sm" onClick={handleClose} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSubmit} loading={submitting}>
+              Send invitation
+            </Button>
+          </>
+        )
+      }
+    >
+      {created ? (
+        <div className="flex flex-col gap-2 rounded-md border border-warning-border bg-warning-bg p-3 text-sm">
+          <p className="font-medium text-warning">Invitation created for {created.email}.</p>
+          <p className="text-warning">Email delivery is not configured - copy this link and share it with them.</p>
+          <p className="text-warning">It won&rsquo;t be shown again after you leave this dialog.</p>
+          <div className="flex items-center gap-2">
+            <code className="overflow-x-auto rounded bg-surface px-2 py-1 font-mono text-xs">{created.link}</code>
+            <Button size="sm" variant="outline" onClick={copyLink}>
+              {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+              {copied ? 'Copied' : 'Copy link'}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {error && (
+            <div role="alert" className="rounded-md border border-danger-border bg-danger-bg px-3 py-2 text-sm text-danger">
+              {error}
+            </div>
+          )}
+          <Input label="Full name" required value={name} onChange={(e) => setName(e.target.value)} />
+          <Input label="Email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Select label="Platform role" value={role} onChange={(e) => setRole(e.target.value as typeof role)}>
+            {availableRoles.map((r) => (
+              <option key={r} value={r}>
+                {r === 'PLATFORM_SUPER_ADMIN' ? 'Super Admin' : 'Platform Manager'}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
+    </Dialog>
   );
 }

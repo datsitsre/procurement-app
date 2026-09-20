@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { Permission } from '@/config/rbac';
 import { requireAuthenticated } from '@/server/auth/require';
-import { createCompanyAsPlatformAdmin, listAllCompanies } from '@/server/services/company.service';
-import { NewPlatformCompanySchema } from '@/server/validation/company';
+import { createCompanyWithAdministrator, listAllCompanies } from '@/server/services/company.service';
+import { AddCompanyWizardSchema } from '@/server/validation/company';
 import { withErrorHandling } from '@/server/errors';
 
 /** The platform-wide company directory (Phase 26 follow-up - closes the gap where
@@ -24,23 +24,31 @@ export const GET = withErrorHandling("/api/admin/companies", async (request: Nex
   return NextResponse.json(result.ok ? result.data : []);
 });
 
-/** Creates a new buyer company as a platform administrator (Phase 28, section 5) - distinct
- *  from a prospective customer's own self-registration (POST /api/auth/register), which always
- *  starts PENDING_APPROVAL. This is a platform admin directly vouching for and creating a
- *  company on someone's behalf - it's immediately usable (isBuyer: true), with no membership of
- *  its own yet (this endpoint deliberately does not create a User/CompanyMembership - see
- *  createCompanyAsPlatformAdmin's own comment on why). */
+/** Creates a new buyer company as a platform administrator (Phase 28, section 5; Add Company
+ *  wizard follow-up) - distinct from a prospective customer's own self-registration
+ *  (POST /api/auth/register), which always starts PENDING_APPROVAL. This is a platform admin
+ *  directly vouching for and creating a company on someone's behalf. `businessRole`/
+ *  `addressLine1`/`initialAdministrator` are all optional (see AddCompanyWizardSchema) - a
+ *  request with none of them produces the exact same Company row and audit entry the pre-wizard
+ *  endpoint always did.
+ *
+ *  The response is the flat Company DTO exactly as before, with one addition: an `invitation`
+ *  key present only when `initialAdministrator` was supplied and the invite succeeded - the raw
+ *  invitation link/token, exactly once (never retrievable again after this response). Kept flat
+ *  rather than `{ company, invitation }` specifically so every existing consumer of this
+ *  endpoint's response shape (the route's own test suite, companyService.createCompany's return
+ *  type) needed zero changes. */
 export const POST = withErrorHandling("/api/admin/companies", async (request: NextRequest) => {
   const access = await requireAuthenticated(request, Permission.PLATFORM_COMPANIES_CREATE);
   if (!access.ok) return access.response;
 
   const body = await request.json().catch(() => null);
-  const parsed = NewPlatformCompanySchema.safeParse(body);
+  const parsed = AddCompanyWizardSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid request.', fieldErrors: parsed.error.flatten().fieldErrors }, { status: 422 });
   }
 
-  const result = await createCompanyAsPlatformAdmin(parsed.data, { userId: access.auth.userId, name: access.auth.userName });
-  if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: 422 });
-  return NextResponse.json(result.data);
+  const result = await createCompanyWithAdministrator(parsed.data, { userId: access.auth.userId, name: access.auth.userName });
+  if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: result.error.code === 'DUPLICATE_REGISTRATION_NUMBER' ? 409 : 422 });
+  return NextResponse.json({ ...result.data.company, invitation: result.data.invitation });
 });

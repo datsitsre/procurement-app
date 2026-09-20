@@ -29,3 +29,11 @@ export const CompletePasswordResetSchema = z.object({
   token: z.string().trim().min(1, 'A reset token is required'),
   newPassword: z.string().min(8, 'Password must be at least 8 characters').max(200),
 });
+
+export const AcceptInvitationSchema = z.object({
+  token: z.string().trim().min(1, 'An invitation token is required'),
+  // Only required when accepting creates a brand-new account - the service itself checks that
+  // once it knows whether an account already exists for the invitation's email.
+  password: z.string().min(8, 'Password must be at least 8 characters').max(200).optional(),
+  name: z.string().trim().max(200).optional(),
+});

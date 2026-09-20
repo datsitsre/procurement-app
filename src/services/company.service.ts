@@ -24,6 +24,37 @@ export interface NewTeamMemberInput {
   department?: string;
 }
 
+export type InvitationStatus = 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED';
+
+export interface InvitationSummary {
+  id: UUID;
+  email: string;
+  role: Role;
+  name?: string;
+  department?: string;
+  companyId: UUID;
+  companyName: string;
+  invitedByName: string;
+  createdAt: string;
+  expiresAt: string;
+  status: InvitationStatus;
+}
+
+export interface NewInvitationInput {
+  email: string;
+  role: Role;
+  name?: string;
+  phone?: string;
+  department?: string;
+}
+
+export interface CreatedInvitation {
+  invitation: InvitationSummary;
+  /** The raw invitation link/token - present exactly once, in this response only. This app has
+   *  no email delivery, so the inviter shares it out of band. */
+  token: string;
+}
+
 export interface TeamMemberPatch {
   role?: Role;
   department?: string;
@@ -94,6 +125,31 @@ export interface NewPlatformCompanyInput {
   creditTerms?: 'PREPAID' | 'NET_7' | 'NET_15' | 'NET_30' | 'NET_60';
 }
 
+/** The Super Admin Add Company wizard's full payload (mirrors AddCompanyWizardSchema on the
+ *  server exactly). */
+export interface AddCompanyWizardInput extends NewPlatformCompanyInput {
+  companyType: 'LIMITED_LIABILITY' | 'SOLE_PROPRIETORSHIP' | 'PARTNERSHIP' | 'PUBLIC_LIMITED' | 'NGO' | 'GOVERNMENT' | 'OTHER';
+  businessRole: 'BUYER' | 'SUPPLIER' | 'BUYER_AND_SUPPLIER';
+  addressLine1: string;
+  defaultPaymentMethod?: 'CARD' | 'BANK_TRANSFER' | 'MTN_MOMO' | 'TELECEL_CASH' | 'AIRTELTIGO_MONEY' | 'WALLET' | 'CREDIT_TERMS';
+  bankName?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  initialAdministrator?: {
+    name: string;
+    email: string;
+    phone?: string;
+    role: 'OWNER' | 'ADMIN';
+  };
+}
+
+export interface CreatedCompanyResult extends Company {
+  /** Present only when `initialAdministrator` was supplied and the invite succeeded - the raw
+   *  invitation link/token, exactly once. This app has no email delivery, so the wizard shows
+   *  this once for the Super Admin to copy and share out of band. */
+  invitation?: { token: string; email: string; role: 'OWNER' | 'ADMIN' };
+}
+
 export interface CompanyService {
   /** Every real buyer company on the platform (Phase 26 follow-up) - PLATFORM_SUPER_ADMIN/legacy
    *  PLATFORM_ADMIN only, per the real `GET /api/admin/companies` route's own permission gate
@@ -105,6 +161,11 @@ export interface CompanyService {
   /** Creates a new buyer company as a platform administrator (Phase 28) -
    *  POST /api/admin/companies, PLATFORM_COMPANIES_CREATE. */
   createCompany(input: NewPlatformCompanyInput): Promise<ServiceResult<Company>>;
+
+  /** The full Add Company wizard - same endpoint as createCompany above (POST /api/admin/companies
+   *  accepts a strict superset of fields), but typed for the wizard's complete payload and
+   *  response (including the one-time initial-administrator invitation link, if requested). */
+  createCompanyWithAdministrator(input: AddCompanyWizardInput): Promise<ServiceResult<CreatedCompanyResult>>;
 
   /** Edits an existing company's profile as a platform administrator (Phase 28) -
    *  PATCH /api/admin/companies/[companyId], PLATFORM_COMPANIES_UPDATE. Distinct from
@@ -150,6 +211,17 @@ export interface CompanyService {
   /** Triggers a password reset for a team member - returns the raw reset token/link once, for the
    *  admin to share out of band (this app has no email delivery) - POST .../reset-password. */
   requestTeamMemberPasswordReset(companyId: UUID, userId: UUID): Promise<ServiceResult<{ token: string; expiresAt: string }>>;
+
+  /** Invites someone to the caller's own company (Real Invitation + Onboarding phase) - the
+   *  primary "Add User" action, replacing immediate account creation. Returns the raw invitation
+   *  link/token once. POST /api/companies/[companyId]/team/invite. */
+  inviteTeamMember(companyId: UUID, input: NewInvitationInput): Promise<ServiceResult<CreatedInvitation>>;
+  /** This company's own not-yet-accepted invitations - GET .../team/invitations. */
+  listPendingInvitations(companyId: UUID): Promise<ServiceResult<InvitationSummary[]>>;
+  /** Regenerates an invitation's token, invalidating the previous link - POST .../resend. */
+  resendInvitation(companyId: UUID, invitationId: UUID): Promise<ServiceResult<CreatedInvitation>>;
+  /** Revokes a pending invitation - POST .../revoke. */
+  revokeInvitation(companyId: UUID, invitationId: UUID): Promise<ServiceResult<InvitationSummary>>;
 
   /** Company profile fields (section 10) - name, registration/tax numbers, industry, contact
    *  details. Requires SETTINGS_MANAGE and that `caller` actually belongs to this company. */
@@ -199,6 +271,10 @@ class ApiCompanyService implements CompanyService {
     return apiRequest<Company>('/api/admin/companies', { method: 'POST', body: JSON.stringify(input) });
   }
 
+  async createCompanyWithAdministrator(input: AddCompanyWizardInput): Promise<ServiceResult<CreatedCompanyResult>> {
+    return apiRequest<CreatedCompanyResult>('/api/admin/companies', { method: 'POST', body: JSON.stringify(input) });
+  }
+
   async updateCompanyAsPlatformAdmin(companyId: UUID, patch: Partial<NewPlatformCompanyInput>): Promise<ServiceResult<Company>> {
     return apiRequest<Company>(`/api/admin/companies/${companyId}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
@@ -245,6 +321,22 @@ class ApiCompanyService implements CompanyService {
 
   async requestTeamMemberPasswordReset(companyId: UUID, userId: UUID): Promise<ServiceResult<{ token: string; expiresAt: string }>> {
     return apiRequest<{ token: string; expiresAt: string }>(`/api/companies/${companyId}/team/${userId}/reset-password`, { method: 'POST' });
+  }
+
+  async inviteTeamMember(companyId: UUID, input: NewInvitationInput): Promise<ServiceResult<CreatedInvitation>> {
+    return apiRequest<CreatedInvitation>(`/api/companies/${companyId}/team/invite`, { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async listPendingInvitations(companyId: UUID): Promise<ServiceResult<InvitationSummary[]>> {
+    return apiRequest<InvitationSummary[]>(`/api/companies/${companyId}/team/invitations`);
+  }
+
+  async resendInvitation(companyId: UUID, invitationId: UUID): Promise<ServiceResult<CreatedInvitation>> {
+    return apiRequest<CreatedInvitation>(`/api/companies/${companyId}/team/invitations/${invitationId}/resend`, { method: 'POST' });
+  }
+
+  async revokeInvitation(companyId: UUID, invitationId: UUID): Promise<ServiceResult<InvitationSummary>> {
+    return apiRequest<InvitationSummary>(`/api/companies/${companyId}/team/invitations/${invitationId}/revoke`, { method: 'POST' });
   }
 
   async updateCompanyProfile(companyId: UUID, patch: CompanyProfilePatch): Promise<ServiceResult<Company>> {

@@ -72,6 +72,20 @@ enum CreditTerm {
   NET_60
 }
 
+/// A company's legal structure (Add Company wizard's Company step). Confirmed by inspection that
+/// no such concept - fixed list or freetext - existed anywhere in this app before now; this is a
+/// small, deliberately controlled list, not an attempt to enumerate every legal structure in
+/// every jurisdiction this platform might ever operate in.
+enum CompanyType {
+  LIMITED_LIABILITY
+  SOLE_PROPRIETORSHIP
+  PARTNERSHIP
+  PUBLIC_LIMITED
+  NGO
+  GOVERNMENT
+  OTHER
+}
+
 /// A company's own operational status (Phase 28 follow-up - Company Organization Management),
 /// distinct from CompanyMembership.status (one person's membership) and from
 /// SupplierVerificationStatus (a supplier's own onboarding/quality-control decision, unchanged).
@@ -108,6 +122,8 @@ model User {
   createdRecurring        RecurringPurchase[]
   sentNegotiationMessages NegotiationMessage[]
   decidedApprovalSteps    ApprovalStep[]
+  sentInvitations         CompanyInvitation[] @relation("InvitationsSent")
+  acceptedInvitations     CompanyInvitation[] @relation("InvitationsAccepted")
 
   @@index([email])
 }
@@ -170,6 +186,24 @@ model Company {
   /// Existing companies default to ACTIVE (additive migration - no existing row's meaning
   /// changes). See CompanyStatus's own doc comment for enforcement details.
   status             CompanyStatus @default(ACTIVE)
+  /// Legal structure, collected by the Super Admin Add Company wizard - a small, controlled list
+  /// (never a free-for-all), nullable because every company created before this field existed
+  /// has no value for it. Never a fixed dropdown existed anywhere in the app before this - see
+  /// CompanyType's own doc comment.
+  companyType          CompanyType?
+  /// A company's own preferred way to pay (Add Company wizard's Commercial step) - deliberately
+  /// reuses the existing transactional PaymentMethod enum (the same one checkout/invoice payment
+  /// already uses) rather than inventing a parallel vocabulary; this field is only ever a stored
+  /// preference, never itself a charge.
+  defaultPaymentMethod PaymentMethod?
+  /// Banking details (Add Company wizard's Banking step) - treated as sensitive throughout the
+  /// app: never included in audit metadata, never logged, never shown in list/directory views
+  /// (see company.service.ts's listAllCompanies, which deliberately never selects these columns,
+  /// and toCompanyDto's own comment). Genuinely new - no banking field existed anywhere in this
+  /// schema before (confirmed by inspection).
+  bankName             String?
+  bankAccountName      String?
+  bankAccountNumber    String?
   parentGroupId      String?
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
@@ -198,9 +232,49 @@ model Company {
   disputesAsBuyer       Dispute[]           @relation("BuyerDisputes")
   auditEntries          AuditLog[]
   apiKeys               ApiKey[]
+  invitations           CompanyInvitation[]
 
   @@index([isSupplier])
   @@index([isBuyer])
+}
+
+/// A pending offer of membership in `company` at `role`, sent to `email` (Real Company User
+/// Invitation + Onboarding phase). Deliberately its own model, not a reuse of PasswordResetToken
+/// or CompanyMembership: `User.passwordHash` is required (not nullable - see that model's own
+/// comment), so a brand-new invitee has no User row at all until they actually accept and set a
+/// password, and `CompanyMembership.userId` is a required FK, so it cannot exist before that
+/// User does either. This same model is reused for platform-role invitations (Part X) - a
+/// "platform user" is just a CompanyMembership at the platform-type Company with a PLATFORM_*
+/// role, so no second, parallel invitation model was needed for that case.
+///
+/// Only `tokenHash` (SHA-256 of the raw token) is ever stored - the raw token exists only in the
+/// generated invitation URL, shown once to the inviter (this app has no email delivery; see
+/// server/services/invitation.service.ts's own comment) or emailed if that's ever added later.
+/// `acceptedAt`/`revokedAt`/`expiresAt` together define validity - a token is usable only while
+/// all three of "not yet accepted," "not revoked," and "not yet expired" hold; see
+/// invitation.service.ts's `resolveInvitationStatus` for the single place this is decided.
+model CompanyInvitation {
+  id             String    @id @default(cuid())
+  companyId      String
+  email          String
+  role           Role
+  name           String?
+  phone          String?
+  department     String?
+  invitedById    String
+  tokenHash      String    @unique
+  createdAt      DateTime  @default(now())
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  revokedAt      DateTime?
+  acceptedUserId String?
+
+  company      Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invitedBy    User    @relation("InvitationsSent", fields: [invitedById], references: [id])
+  acceptedUser User?   @relation("InvitationsAccepted", fields: [acceptedUserId], references: [id])
+
+  @@index([companyId])
+  @@index([email])
 }
 
 model CompanyGroup {
@@ -236,7 +310,11 @@ model Address {
   label      String
   line1      String
   line2      String?
-  city       String
+  /// Nullable (was required) - the Super Admin Add Company wizard deliberately does not collect
+  /// City/Region (only Address Line 1 and Country), and forcing a placeholder value here would
+  /// be exactly the "invented fake value" the wizard's own brief forbids. Every existing address
+  /// already has a real city, so this is a pure loosening - no existing row's meaning changes.
+  city       String?
   region     String?
   country    String
   postalCode String?

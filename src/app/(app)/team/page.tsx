@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Check, Copy, MoreHorizontal, Pencil, Plus, Search, Users } from 'lucide-react';
 import { useActiveCompany, useActiveMembership, useAuth, useWorkspace } from '@/hooks/useAuth';
-import { companyService, type TeamMember } from '@/services/company.service';
+import { companyService, type TeamMember, type InvitationSummary } from '@/services/company.service';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
@@ -18,10 +18,11 @@ import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { SkeletonText } from '@/components/ui/Skeleton';
+import { Skeleton, SkeletonText } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
 import { BUYER_ROLES, RoleLabels, SUPPLIER_ROLES, type Role } from '@/config/rbac';
 import { resizeImageToDataUrl } from '@/utils/image';
+import { formatDate } from '@/utils/format';
 import type { Department } from '@/types/company';
 
 export default function TeamPage() {
@@ -53,6 +54,7 @@ function TeamMemberSection({ companyId, callerRole }: { companyId: string; calle
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [invitationsRefreshKey, setInvitationsRefreshKey] = useState(0);
   const workspace = useWorkspace();
   const assignableRoles = workspace === 'supplier' ? SUPPLIER_ROLES : BUYER_ROLES;
 
@@ -78,7 +80,9 @@ function TeamMemberSection({ companyId, callerRole }: { companyId: string; calle
 
   return (
     <div className="flex flex-col gap-6">
-      <AddTeamMemberForm companyId={companyId} callerRole={callerRole} onAdded={reload} />
+      <AddTeamMemberForm companyId={companyId} onAdded={() => setInvitationsRefreshKey((k) => k + 1)} />
+
+      <PendingInvitationsSection companyId={companyId} refreshKey={invitationsRefreshKey} />
 
       {members && members.length > 0 && (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -102,12 +106,14 @@ function TeamMemberSection({ companyId, callerRole }: { companyId: string; calle
             <option value="all">All statuses</option>
             <option value="ACTIVE">Active</option>
             <option value="SUSPENDED">Suspended</option>
-            <option value="INVITED">Invited</option>
           </Select>
         </div>
       )}
 
       <Card>
+        <CardHeader>
+          <CardTitle>Active users</CardTitle>
+        </CardHeader>
         {members === null ? (
           <div className="p-5">
             <SkeletonText lines={4} />
@@ -330,25 +336,31 @@ export function DepartmentSelect({
   );
 }
 
-function AddTeamMemberForm({ companyId, callerRole, onAdded }: { companyId: string; callerRole: Role; onAdded: () => void }) {
+/** Add User now creates a real invitation rather than an immediately-ACTIVE account (Real
+ *  Company User Invitation + Onboarding phase) - addTeamMember() itself is untouched (still
+ *  exported from company.service.ts for any other legitimate direct-creation caller), but the
+ *  Team page's primary Add User action now calls inviteTeamMember() instead. This app still has
+ *  no email delivery, so the generated invitation link is shown to the inviter exactly once,
+ *  the same "copy and share out of band" pattern the old temporary-password banner used. */
+function AddTeamMemberForm({ companyId, onAdded }: { companyId: string; onAdded: () => void }) {
   const workspace = useWorkspace();
   const assignableRoles = workspace === 'supplier' ? SUPPLIER_ROLES : BUYER_ROLES;
 
   const [expanded, setExpanded] = useState(false);
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
   const [role, setRole] = useState<Role>(assignableRoles[assignableRoles.length - 1]);
   const [department, setDepartment] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Shown once, right after a brand-new account is created for this email - see
-  // company.service.ts's addTeamMember for why this can't be retrieved again afterward.
-  const [temporaryPassword, setTemporaryPassword] = useState<{ email: string; password: string } | null>(null);
+  const [createdInvitation, setCreatedInvitation] = useState<{ email: string; link: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
   function reset() {
     setEmail('');
     setName('');
+    setPhone('');
     setDepartment('');
     setRole(assignableRoles[assignableRoles.length - 1]);
   }
@@ -356,27 +368,27 @@ function AddTeamMemberForm({ companyId, callerRole, onAdded }: { companyId: stri
   async function submit() {
     setSubmitting(true);
     setError(null);
-    const result = await companyService.addTeamMember(
-      companyId,
-      { email: email.trim(), name: name.trim() || undefined, role, department: department.trim() || undefined },
-      callerRole,
-    );
+    const result = await companyService.inviteTeamMember(companyId, {
+      email: email.trim(),
+      name: name.trim() || undefined,
+      phone: phone.trim() || undefined,
+      role,
+      department: department.trim() || undefined,
+    });
     setSubmitting(false);
     if (!result.ok) {
       setError(result.error.message);
       return;
     }
-    if (result.data.temporaryPassword) {
-      setTemporaryPassword({ email: result.data.user.email, password: result.data.temporaryPassword });
-    }
+    setCreatedInvitation({ email: result.data.invitation.email, link: invitationLink(result.data.token) });
     reset();
     setExpanded(false);
     onAdded();
   }
 
-  async function copyPassword() {
-    if (!temporaryPassword) return;
-    await navigator.clipboard.writeText(temporaryPassword.password).catch(() => undefined);
+  async function copyLink() {
+    if (!createdInvitation) return;
+    await navigator.clipboard.writeText(createdInvitation.link).catch(() => undefined);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -393,21 +405,20 @@ function AddTeamMemberForm({ companyId, callerRole, onAdded }: { companyId: stri
         )}
       </CardHeader>
 
-      {temporaryPassword && (
+      {createdInvitation && (
         <CardContent className="border-t border-border">
           <div className="flex flex-col gap-2 rounded-md border border-warning-border bg-warning-bg p-3 text-sm">
-            <p className="font-medium text-warning">
-              Account created for {temporaryPassword.email} - share this temporary password with them now.
-            </p>
+            <p className="font-medium text-warning">Invitation created for {createdInvitation.email}.</p>
+            <p className="text-warning">Email delivery is not configured - copy this link and share it with them.</p>
             <p className="text-warning">It won&rsquo;t be shown again after you leave this page.</p>
             <div className="flex items-center gap-2">
-              <code className="rounded bg-surface px-2 py-1 font-mono text-sm">{temporaryPassword.password}</code>
-              <Button size="sm" variant="outline" onClick={copyPassword}>
+              <code className="overflow-x-auto rounded bg-surface px-2 py-1 font-mono text-xs">{createdInvitation.link}</code>
+              <Button size="sm" variant="outline" onClick={copyLink}>
                 {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
-                {copied ? 'Copied' : 'Copy'}
+                {copied ? 'Copied' : 'Copy link'}
               </Button>
             </div>
-            <Button size="sm" variant="ghost" className="w-fit" onClick={() => setTemporaryPassword(null)}>
+            <Button size="sm" variant="ghost" className="w-fit" onClick={() => setCreatedInvitation(null)}>
               Dismiss
             </Button>
           </div>
@@ -424,14 +435,10 @@ function AddTeamMemberForm({ companyId, callerRole, onAdded }: { companyId: stri
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
-            <Input
-              label="Name (only needed for a brand-new account)"
-              placeholder="Full name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
+            <Input label="Name" placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
+            <Input label="Phone" placeholder="Optional" value={phone} onChange={(e) => setPhone(e.target.value)} />
             <div>
               <label htmlFor="team-member-role" className="mb-1 block text-sm font-medium text-text-primary">
                 Role
@@ -449,8 +456,8 @@ function AddTeamMemberForm({ companyId, callerRole, onAdded }: { companyId: stri
                 ))}
               </select>
             </div>
-            <DepartmentSelect id="team-member-department" companyId={companyId} value={department} onChange={setDepartment} />
           </div>
+          <DepartmentSelect id="team-member-department" companyId={companyId} value={department} onChange={setDepartment} />
 
           {error && <p className="rounded-md border border-danger/30 bg-danger/5 p-3 text-sm text-danger">{error}</p>}
 
@@ -459,11 +466,127 @@ function AddTeamMemberForm({ companyId, callerRole, onAdded }: { companyId: stri
               Cancel
             </Button>
             <Button onClick={submit} loading={submitting} disabled={!email.trim()}>
-              Add to team
+              Send invitation
             </Button>
           </div>
         </CardContent>
       )}
+    </Card>
+  );
+}
+
+function invitationLink(token: string): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  return `${origin}/accept-invitation?token=${token}`;
+}
+
+/** Invitations this company has sent that haven't been accepted yet (Part 10) - a separate
+ *  section from the active roster above, since an invitation has no CompanyMembership row at all
+ *  until it's accepted (see invitation.service.ts's own comment on why). */
+function PendingInvitationsSection({ companyId, refreshKey }: { companyId: string; refreshKey: number }) {
+  const { data: invitations, error, reload } = useAsyncData<InvitationSummary[]>(`invitations-${companyId}-${refreshKey}`, () =>
+    companyService.listPendingInvitations(companyId),
+  );
+  const toast = useToast();
+  const [revoking, setRevoking] = useState<InvitationSummary | null>(null);
+  const [linkPreview, setLinkPreview] = useState<{ email: string; link: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const pending = (invitations ?? []).filter((i) => i.status === 'PENDING' || i.status === 'EXPIRED');
+
+  async function handleResend(invitation: InvitationSummary) {
+    const result = await companyService.resendInvitation(companyId, invitation.id);
+    if (!result.ok) {
+      toast.show(result.error.message, 'error');
+      return;
+    }
+    setLinkPreview({ email: invitation.email, link: invitationLink(result.data.token) });
+    toast.show(`Invitation resent to ${invitation.email}.`, 'success');
+    reload();
+  }
+
+  async function handleRevoke() {
+    if (!revoking) return;
+    const result = await companyService.revokeInvitation(companyId, revoking.id);
+    setRevoking(null);
+    if (!result.ok) {
+      toast.show(result.error.message, 'error');
+      return;
+    }
+    toast.show(`Invitation to ${revoking.email} revoked.`, 'success');
+    reload();
+  }
+
+  async function copyLink() {
+    if (!linkPreview) return;
+    await navigator.clipboard.writeText(linkPreview.link).catch(() => undefined);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  if (error) return null; // Same USERS_MANAGE permission as the roster above - never shown if that already failed.
+  if (invitations === null) return <Skeleton className="h-24" />;
+  if (pending.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Pending invitations</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {linkPreview && (
+          <div className="m-4 flex flex-col gap-2 rounded-md border border-warning-border bg-warning-bg p-3 text-sm">
+            <p className="font-medium text-warning">New invitation link for {linkPreview.email} - the previous link no longer works.</p>
+            <div className="flex items-center gap-2">
+              <code className="overflow-x-auto rounded bg-surface px-2 py-1 font-mono text-xs">{linkPreview.link}</code>
+              <Button size="sm" variant="outline" onClick={copyLink}>
+                {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                {copied ? 'Copied' : 'Copy link'}
+              </Button>
+            </div>
+            <Button size="sm" variant="ghost" className="w-fit" onClick={() => setLinkPreview(null)}>
+              Dismiss
+            </Button>
+          </div>
+        )}
+        <ul className="divide-y divide-border">
+          {pending.map((invitation) => (
+            <li key={invitation.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+              <div>
+                <p className="text-sm font-medium">{invitation.email}</p>
+                <p className="text-caption">
+                  {RoleLabels[invitation.role]} · Invited by {invitation.invitedByName} · {formatDate(invitation.createdAt)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <StatusBadge domain="membership" status={invitation.status === 'EXPIRED' ? 'REJECTED' : 'PENDING_APPROVAL'} />
+                <DropdownMenu
+                  trigger={
+                    <button type="button" aria-label={`Actions for invitation to ${invitation.email}`} className="text-text-tertiary hover:text-text-primary">
+                      <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  }
+                >
+                  <DropdownMenuItem onClick={() => handleResend(invitation)}>Resend</DropdownMenuItem>
+                  <DropdownMenuItem destructive onClick={() => setRevoking(invitation)}>
+                    Revoke
+                  </DropdownMenuItem>
+                </DropdownMenu>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+
+      <ConfirmationDialog
+        open={revoking !== null}
+        onClose={() => setRevoking(null)}
+        onConfirm={handleRevoke}
+        title="Revoke invitation?"
+        description="This invitation will no longer be usable."
+        confirmLabel="Revoke invitation"
+        destructive
+      />
     </Card>
   );
 }

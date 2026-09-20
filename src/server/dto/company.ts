@@ -34,7 +34,11 @@ export function toCompanyDto(company: PrismaCompany & { addresses?: PrismaAddres
       label: a.label,
       line1: a.line1,
       line2: a.line2 ?? undefined,
-      city: a.city,
+      // Nullable in the database (the Add Company wizard deliberately doesn't collect it) but
+      // kept as a required string on the DTO boundary, matching every existing consumer of this
+      // shape (checkout address pickers, etc.) - '' reads as "not provided", never a fabricated
+      // real-looking city name.
+      city: a.city ?? '',
       region: a.region ?? undefined,
       country: a.country as Company['country'],
       postalCode: a.postalCode ?? undefined,
