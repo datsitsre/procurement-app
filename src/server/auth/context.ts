@@ -27,43 +27,71 @@ export interface AuthContext {
    *  platform account. Session-shaped API responses (session/switch-company) need this raw id,
    *  not the collapsed tenant view. */
   activeCompanyId: string | null;
+  /** True only when the caller's own *buyer* company (never a supplier - see resolveTenant's own
+   *  comment) has Company.status === SUSPENDED (Phase 28 follow-up - Company Organization
+   *  Management). `tenant` is already fail-closed (`{}`) in this case, exactly like a non-ACTIVE
+   *  membership - every route is already blocked via the existing ownsRecord mismatch path with
+   *  no further changes needed. This flag exists only so requireCompanyAccess (the shared layer
+   *  most company-scoped routes already call through) can return a clear, specific 403 instead
+   *  of the generic "not found" a stale/foreign tenant id gets - see its own comment. */
+  companySuspended: boolean;
 }
 
-async function resolveTenant(activeCompanyId: string | null, userId: string): Promise<{ tenant: TenantContext; role: Role | undefined }> {
-  if (!activeCompanyId) return { tenant: {}, role: undefined };
+async function resolveTenant(
+  activeCompanyId: string | null,
+  userId: string,
+): Promise<{ tenant: TenantContext; role: Role | undefined; companySuspended: boolean }> {
+  if (!activeCompanyId) return { tenant: {}, role: undefined, companySuspended: false };
 
   const membership = await db.companyMembership.findUnique({
     where: { companyId_userId: { companyId: activeCompanyId, userId } },
   });
   // The session names a company the caller is no longer (or never was) a member of - treat as
   // "no tenant" rather than trusting the stale id, the same fail-closed behavior ownsRecord uses.
-  if (!membership || membership.status !== 'ACTIVE') return { tenant: {}, role: undefined };
+  if (!membership || membership.status !== 'ACTIVE') return { tenant: {}, role: undefined, companySuspended: false };
 
   // Only the exceptional, system-wide roles receive the ownsRecord() tenant-isolation bypass -
   // PLATFORM_MANAGER is a real platform role (it holds PLATFORM_SETTINGS_MANAGE etc.) but is
   // deliberately NOT in this list, so it can never read/write another company's transactional
   // data no matter what route it calls. See rbac.ts's CROSS_TENANT_ROLES for the single source
-  // of truth this mirrors.
+  // of truth this mirrors. A platform admin's own session never reaches the suspension check
+  // below - it belongs to their own platform-type company, resolved here, not the company they
+  // might be administering (which they reach via the isPlatformAdmin bypass on a *different*
+  // company's records, never through their own tenant resolution).
   if (CROSS_TENANT_ROLES.includes(membership.role as Role)) {
-    return { tenant: { isPlatformAdmin: true }, role: membership.role as Role };
+    return { tenant: { isPlatformAdmin: true }, role: membership.role as Role, companySuspended: false };
   }
   if (PLATFORM_ROLES.includes(membership.role as Role)) {
     // A platform role that isn't cross-tenant (PLATFORM_MANAGER) - no companyId/supplierId,
     // no isPlatformAdmin bypass. Route-level permission checks (PLATFORM_SETTINGS_MANAGE, etc.)
     // are this role's entire authorization story.
-    return { tenant: {}, role: membership.role as Role };
+    return { tenant: {}, role: membership.role as Role, companySuspended: false };
   }
 
   const company = await db.company.findUnique({
     where: { id: activeCompanyId },
-    select: { isSupplier: true, supplierProfile: { select: { id: true } } },
+    select: { isSupplier: true, status: true, supplierProfile: { select: { id: true } } },
   });
 
   if (company?.isSupplier && company.supplierProfile) {
-    return { tenant: { supplierId: company.supplierProfile.id }, role: membership.role as Role };
+    // Suppliers keep their own, pre-existing lifecycle (SupplierProfile.verification) -
+    // Company.status suspension deliberately never applies here (section 10's own instruction:
+    // "supplier lifecycle remains based on the existing supplier verification/suspension
+    // implementation"). The admin suspend/activate routes themselves also refuse to act on a
+    // supplier-type company - see their own comment.
+    return { tenant: { supplierId: company.supplierProfile.id }, role: membership.role as Role, companySuspended: false };
   }
 
-  return { tenant: { companyId: activeCompanyId }, role: membership.role as Role };
+  if (company?.status === 'SUSPENDED') {
+    // Fail closed exactly like a non-ACTIVE membership above - every company-scoped route (both
+    // the shared requireCompanyAccess wrapper and the handful of routes that fetch a record
+    // first and check ownsRecord manually, e.g. orders/[id]) is blocked with no further changes
+    // needed anywhere. `companySuspended: true` lets requireCompanyAccess surface a clearer,
+    // specific message than the generic tenant-mismatch one on top of this.
+    return { tenant: {}, role: undefined, companySuspended: true };
+  }
+
+  return { tenant: { companyId: activeCompanyId }, role: membership.role as Role, companySuspended: false };
 }
 
 /** Resolves the caller's auth context from the request's session cookie, or null if there is no
@@ -76,7 +104,7 @@ export async function getAuthContext(request: NextRequest): Promise<AuthContext 
   const session = await verifySessionToken(token);
   if (!session) return null;
 
-  const { tenant, role } = await resolveTenant(session.activeCompanyId, session.userId);
+  const { tenant, role, companySuspended } = await resolveTenant(session.activeCompanyId, session.userId);
 
   return {
     sessionId: session.sessionId,
@@ -86,6 +114,7 @@ export async function getAuthContext(request: NextRequest): Promise<AuthContext 
     role,
     tenant,
     activeCompanyId: session.activeCompanyId,
+    companySuspended,
   };
 }
 

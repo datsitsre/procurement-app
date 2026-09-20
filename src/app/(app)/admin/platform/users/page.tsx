@@ -6,11 +6,30 @@ import { useAuth, useActiveMembership } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { AdminGuard } from '@/features/admin/AdminGuard';
 import { platformUsersService, type PlatformUserRow } from '@/services/platformUsers.service';
+import { Badge, type BadgeProps } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonTable } from '@/components/ui/Skeleton';
 import { useToast } from '@/components/ui/Toast';
 import { formatDate } from '@/utils/format';
+
+const ROLE_TONE: Record<string, NonNullable<BadgeProps['tone']>> = {
+  PLATFORM_SUPER_ADMIN: 'info',
+  PLATFORM_ADMIN: 'info',
+  PLATFORM_MANAGER: 'neutral',
+};
+const ROLE_LABEL: Record<string, string> = {
+  PLATFORM_SUPER_ADMIN: 'Super Admin',
+  PLATFORM_ADMIN: 'Admin (legacy)',
+  PLATFORM_MANAGER: 'Manager',
+};
+const STATUS_TONE: Record<string, NonNullable<BadgeProps['tone']>> = {
+  PENDING_APPROVAL: 'warning',
+  ACTIVE: 'success',
+  SUSPENDED: 'danger',
+  REJECTED: 'danger',
+  INVITED: 'neutral',
+};
 
 /**
  * Platform user administration (Phase 26) - the platform's own moderation queue: pending
@@ -98,11 +117,12 @@ function PlatformUsersQueue() {
               <p className="text-h3">Pending registrations</p>
               {pending.map((u) => (
                 <div key={key(u)} className="flex flex-col gap-3 rounded-lg border border-warning/30 bg-warning-bg p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
+                  <div className="flex flex-col gap-1.5">
                     <p className="text-sm font-semibold">{u.userName}</p>
                     <p className="text-caption">
                       {u.userEmail} · {u.companyName} · requested {formatDate(u.createdAt)}
                     </p>
+                    <Badge tone="warning" className="w-fit">Pending approval</Badge>
                   </div>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" loading={actingKey === key(u)} onClick={() => decideRegistration(u, 'REJECTED')}>
@@ -124,11 +144,15 @@ function PlatformUsersQueue() {
             ) : (
               others.map((u) => (
                 <div key={key(u)} className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
+                  <div className="flex flex-col gap-1.5">
                     <p className="text-sm font-semibold">{u.userName}</p>
                     <p className="text-caption">
-                      {u.userEmail} · {u.companyName} · {u.role} · {STATUS_LABEL[u.status] ?? u.status}
+                      {u.userEmail} · {u.companyName}
                     </p>
+                    <div className="flex items-center gap-1.5">
+                      {ROLE_TONE[u.role] && <Badge tone={ROLE_TONE[u.role]}>{ROLE_LABEL[u.role] ?? u.role}</Badge>}
+                      <Badge tone={STATUS_TONE[u.status] ?? 'neutral'}>{STATUS_LABEL[u.status] ?? u.status}</Badge>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     {u.status === 'ACTIVE' && (

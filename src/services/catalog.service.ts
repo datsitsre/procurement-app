@@ -2,6 +2,36 @@ import { apiRequest } from './base';
 import type { Role } from '@/config/rbac';
 import type { Page, ServiceResult, TenantContext, UUID } from '@/types/common';
 import type { Category, Product, SupplierProfile, Warehouse } from '@/types/catalog';
+import type { PlatformOrgMember } from './company.service';
+
+/** One row of the platform Suppliers management table - see server/services/catalog.service.ts's
+ *  own PlatformSupplierRow for exactly which fields this is and isn't. */
+export interface PlatformSupplierRow extends SupplierProfile {
+  productCount: number;
+  memberCount: number;
+  joinedAt: string;
+}
+
+export interface NewPlatformSupplierInput {
+  name: string;
+  city: string;
+  country: string;
+  currency: string;
+  description: string;
+  logoUrl?: string;
+  categories?: string[];
+  certifications?: string[];
+}
+
+export interface PlatformSupplierUpdateInput {
+  name?: string;
+  city?: string;
+  country?: string;
+  description?: string;
+  logoUrl?: string;
+  categories?: string[];
+  certifications?: string[];
+}
 
 /** Who performed a mutating action - threaded through from the caller's session so the audit
  *  log records a real name, not a role label. */
@@ -87,6 +117,23 @@ export interface CatalogService {
   /** Every supplier regardless of verification status - the admin verification queue (section
    *  46) reads this, not the buyer-facing `listSuppliers`. */
   listAllSuppliers(): Promise<ServiceResult<SupplierProfile[]>>;
+  /** The richer Platform Suppliers management table (Phase 27) - same suppliers, plus
+   *  productCount/memberCount/joinedAt for display. Separate from `listAllSuppliers` so the
+   *  plain admin verification queue keeps its existing, unchanged shape. */
+  listAllSuppliersForAdmin(): Promise<ServiceResult<PlatformSupplierRow[]>>;
+
+  /** Creates a new supplier as a platform administrator (Phase 28) -
+   *  POST /api/admin/suppliers, PLATFORM_SUPPLIERS_CREATE. */
+  createSupplierAsPlatformAdmin(input: NewPlatformSupplierInput): Promise<ServiceResult<SupplierProfile>>;
+
+  /** Edits an existing supplier's profile as a platform administrator (Phase 28) -
+   *  PATCH /api/admin/suppliers/[supplierId], PLATFORM_SUPPLIERS_UPDATE. Never touches
+   *  verification status - see `verifySupplier` for that. */
+  updateSupplierAsPlatformAdmin(supplierId: UUID, patch: PlatformSupplierUpdateInput): Promise<ServiceResult<SupplierProfile>>;
+
+  /** A specific supplier's own member list, from the platform admin side (Phase 28) -
+   *  GET /api/admin/suppliers/[supplierId]/members, PLATFORM_MEMBERS_VIEW. */
+  listSupplierMembersAsPlatformAdmin(supplierId: UUID): Promise<ServiceResult<PlatformOrgMember[]>>;
   getSupplierBySlug(slug: string): Promise<ServiceResult<SupplierProfile>>;
   getSupplierById(id: string): SupplierProfile | undefined;
   getSupplierByCompanyId(companyId: UUID): SupplierProfile | undefined;
@@ -177,6 +224,24 @@ class ApiCatalogService implements CatalogService {
     const result = await apiRequest<SupplierProfile[]>('/api/suppliers/moderation');
     if (result.ok) cacheSuppliers(result.data);
     return result;
+  }
+
+  async listAllSuppliersForAdmin(): Promise<ServiceResult<PlatformSupplierRow[]>> {
+    const result = await apiRequest<PlatformSupplierRow[]>('/api/admin/suppliers');
+    if (result.ok) cacheSuppliers(result.data);
+    return result;
+  }
+
+  async createSupplierAsPlatformAdmin(input: NewPlatformSupplierInput): Promise<ServiceResult<SupplierProfile>> {
+    return apiRequest<SupplierProfile>('/api/admin/suppliers', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async updateSupplierAsPlatformAdmin(supplierId: UUID, patch: PlatformSupplierUpdateInput): Promise<ServiceResult<SupplierProfile>> {
+    return apiRequest<SupplierProfile>(`/api/admin/suppliers/${supplierId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  }
+
+  async listSupplierMembersAsPlatformAdmin(supplierId: UUID): Promise<ServiceResult<PlatformOrgMember[]>> {
+    return apiRequest<PlatformOrgMember[]>(`/api/admin/suppliers/${supplierId}/members`);
   }
 
   async getSupplierBySlug(slug: string): Promise<ServiceResult<SupplierProfile>> {

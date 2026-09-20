@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import Link from 'next/link';
-import { Building2, ShieldCheck, Package, Wallet, AlertTriangle, Lock } from 'lucide-react';
+import { Building2, ShieldCheck, Wallet, Lock, UserCheck } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useAsyncData } from '@/hooks/useAsyncData';
 import { AdminGuard } from '@/features/admin/AdminGuard';
@@ -11,8 +11,11 @@ import { companyService, type PlatformCompanyRow } from '@/services/company.serv
 import { disputesService } from '@/services/disputes.service';
 import { auditLogService } from '@/services/audit-log.service';
 import { analyticsService } from '@/services/analytics.service';
+import { platformUsersService, type PlatformUserRow } from '@/services/platformUsers.service';
+import { describeActivity } from '@/lib/activityFeed';
 import { Permission } from '@/config/rbac';
 import { StatCard } from '@/components/ui/StatCard';
+import { Button } from '@/components/ui/Button';
 import { BarChart, HorizontalBarList } from '@/components/ui/BarChart';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -31,7 +34,7 @@ export default function AdminDashboardPage() {
 }
 
 function AdminDashboard() {
-  const { session, can } = useAuth();
+  const { can } = useAuth();
   // PLATFORM_MANAGER never receives platform.transactions.access (section 5/17 - the whole
   // point of the role split is that platform operations never implies cross-company transaction
   // visibility). Fetching these two widgets anyway would just turn every PLATFORM_MANAGER's
@@ -50,15 +53,24 @@ function AdminDashboard() {
     hasTransactionsAccess ? 'admin-analytics' : null,
     () => analyticsService.getPlatformAnalytics(),
   );
-  // Just the 5 most recent entries for this preview card - the full history lives at /admin/audit.
+  // Just the 5 most recent entries for this preview card - the full history lives at
+  // /admin/activity (friendly view) and /admin/audit (raw record) - section 16.
   const { data: auditPage, error: auditError, reload: reloadAudit } = useAsyncData<CursorPage<AuditEntry>>('admin-audit', () => auditLogService.listEntries(null, 5));
   const auditEntries = auditPage?.items ?? null;
+  // Real pending-registration count (Phase 27) - GET /api/admin/platform/users, held by both
+  // platform roles (PLATFORM_USERS_MANAGE), unlike the transaction-gated cards above.
+  const { data: platformUsers, error: platformUsersError, reload: reloadPlatformUsers } = useAsyncData<PlatformUserRow[]>(
+    'admin-dashboard-platform-users',
+    () => platformUsersService.listPlatformUsers(),
+  );
+  const pendingApprovals = useMemo(() => platformUsers?.filter((u) => u.status === 'PENDING_APPROVAL').length ?? 0, [platformUsers]);
 
-  const error = suppliersError ?? productsError ?? auditError ?? null;
+  const error = suppliersError ?? productsError ?? auditError ?? platformUsersError ?? null;
   function retryFailed() {
     if (suppliersError) reloadSuppliers();
     if (productsError) reloadProducts();
     if (auditError) reloadAudit();
+    if (platformUsersError) reloadPlatformUsers();
   }
 
   const pendingSuppliers = useMemo(() => suppliers?.filter((s) => s.verification === 'PENDING_VERIFICATION').length ?? 0, [suppliers]);
@@ -73,45 +85,68 @@ function AdminDashboard() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-h1">Good day, {session?.user.name.split(' ')[0]}</h1>
-        <p className="text-body text-text-secondary">Platform overview.</p>
+        <h1 className="text-h1">Platform Command Center</h1>
+        <p className="text-body text-text-secondary">Monitor your procurement platform, organizations, and activity from one place.</p>
       </div>
 
       {error ? (
         <ErrorState title="Couldn't load the platform overview" description={error} secondaryAction={{ label: 'Try again', onClick: retryFailed }} />
       ) : loading ? (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, i) => (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-24" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {hasTransactionsAccess ? (
-            <StatCard label="Buyer companies" value={String(companies?.length ?? 0)} icon={Building2} />
+            <StatCard label="Companies" value={String(companies?.length ?? 0)} icon={Building2} tone="accent" />
           ) : (
-            <StatCard label="Buyer companies" value="—" icon={Lock} />
+            <StatCard label="Companies" value="—" icon={Lock} />
           )}
-          <StatCard label="Suppliers" value={String(suppliers?.length ?? 0)} icon={Building2} />
+          <StatCard label="Suppliers" value={String(suppliers?.length ?? 0)} icon={Building2} tone="accent" />
           <StatCard
-            label="Pending verification"
-            value={String(pendingSuppliers)}
+            label="Pending approvals"
+            value={String(pendingApprovals)}
+            icon={UserCheck}
+            tone={pendingApprovals > 0 ? 'warning' : 'neutral'}
+          />
+          <StatCard
+            label="Awaiting verification"
+            value={String(pendingSuppliers + pendingProducts)}
             icon={ShieldCheck}
-            tone={pendingSuppliers > 0 ? 'warning' : 'neutral'}
+            tone={pendingSuppliers + pendingProducts > 0 ? 'warning' : 'neutral'}
           />
-          <StatCard
-            label="Products to review"
-            value={String(pendingProducts)}
-            icon={Package}
-            tone={pendingProducts > 0 ? 'warning' : 'neutral'}
-          />
-          {hasTransactionsAccess ? (
-            <StatCard label="Open disputes" value={String(openDisputes)} icon={AlertTriangle} tone={openDisputes > 0 ? 'danger' : 'neutral'} />
-          ) : (
-            <StatCard label="Open disputes" value="—" icon={Lock} tone="neutral" />
-          )}
         </div>
       )}
+
+      <div className="rounded-lg border border-border bg-surface p-5">
+        <p className="mb-3 text-h3">Quick actions</p>
+        <div className="flex flex-wrap gap-2">
+          {pendingApprovals > 0 && (
+            <Link href="/admin/approvals">
+              <Button variant="outline" size="sm">
+                Review approvals ({pendingApprovals})
+              </Button>
+            </Link>
+          )}
+          <Link href="/admin/activity">
+            <Button variant="outline" size="sm">
+              View activity
+            </Button>
+          </Link>
+          <Link href="/admin/suppliers">
+            <Button variant="outline" size="sm">
+              Moderate suppliers
+            </Button>
+          </Link>
+          <Link href="/admin/products">
+            <Button variant="outline" size="sm">
+              Moderate products
+            </Button>
+          </Link>
+        </div>
+      </div>
 
       {hasTransactionsAccess ? (
         <>
@@ -188,7 +223,7 @@ function AdminDashboard() {
         <div className="rounded-lg border border-border bg-surface p-5">
           <div className="mb-3 flex items-center justify-between">
             <p className="text-h3">Recent activity</p>
-            <Link href="/admin/audit" className="text-sm font-medium text-accent hover:underline">
+            <Link href="/admin/activity" className="text-sm font-medium text-accent hover:underline">
               View all
             </Link>
           </div>
@@ -198,14 +233,19 @@ function AdminDashboard() {
             <p className="text-caption">No activity recorded yet.</p>
           ) : (
             <ul className="flex flex-col gap-2 text-sm">
-              {auditEntries.slice(0, 5).map((entry) => (
-                <li key={entry.id} className="flex items-center justify-between gap-3">
-                  <span>
-                    <span className="font-medium">{entry.actorName}</span> {entry.action.toLowerCase().replace(/_/g, ' ')}
+              {auditEntries.slice(0, 5).map((entry) => {
+                const { label, icon: Icon } = describeActivity(entry);
+                return (
+                <li key={entry.id} className="flex items-center gap-3">
+                  <Icon className="h-4 w-4 shrink-0 text-text-tertiary" aria-hidden="true" />
+                  <span className="flex-1">
+                    <span className="font-medium">{entry.actorName}</span> {label}
+                    {entry.companyName && <span className="text-text-secondary"> · {entry.companyName}</span>}
                   </span>
                   <span className="text-caption shrink-0">{formatDateTime(entry.timestamp)}</span>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </div>

@@ -15,6 +15,8 @@ import {
   PiggyBank,
   Scale,
   AlertTriangle,
+  Activity,
+  UserCheck,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { Permission } from './rbac';
@@ -25,6 +27,11 @@ export interface NavItem {
   icon: LucideIcon;
   /** Hidden entirely for a role that lacks this permission - not just disabled. */
   permission?: Permission;
+  /** Groups this item under a section header in the sidebar (Phase 27 - Platform Command
+   *  Center). Consecutive items sharing the same `section` render under one heading; items with
+   *  no section render plainly, as every nav did before this field existed. Only `platformNav`
+   *  uses this so far - buyer/supplier navs are unchanged. */
+  section?: string;
 }
 
 /** Full desktop sidebar for the buyer workspace (section 9/69). Mobile shows a subset of
@@ -94,16 +101,33 @@ export const supplierNav: NavItem[] = [
  *  routes themselves (and AdminGuard on every /admin/* page) remain the real boundary. */
 export const platformNav: NavItem[] = [
   { label: 'Overview', href: '/admin', icon: LayoutDashboard },
-  // The company directory is real cross-company business data (every buyer's roster), gated the
-  // same as Orders/Payments/Disputes - see /api/admin/companies's own comment for why this isn't
-  // "just metadata" PLATFORM_MANAGER gets for free.
-  { label: 'Companies', href: '/admin/companies', icon: Building2, permission: 'platform.transactions.access' },
-  { label: 'Suppliers', href: '/admin/suppliers', icon: Building2, permission: 'platform.catalog.moderate' },
-  { label: 'Products', href: '/admin/products', icon: ShoppingCart, permission: 'platform.catalog.moderate' },
-  { label: 'Orders', href: '/admin/orders', icon: Package, permission: 'platform.transactions.access' },
-  { label: 'Payments', href: '/admin/payments', icon: Wallet, permission: 'platform.transactions.access' },
-  { label: 'Disputes', href: '/admin/disputes', icon: FileText, permission: 'platform.transactions.access' },
-  { label: 'Audit log', href: '/admin/audit', icon: ClipboardList, permission: 'platform.audit.view' },
-  { label: 'Platform users', href: '/admin/platform/users', icon: Users, permission: 'platform.users.manage' },
-  { label: 'Settings', href: '/settings', icon: Settings, permission: 'platform.settings.manage' },
+
+  // ORGANIZATION - who's on the platform. Companies is real cross-company business data (every
+  // buyer's roster), gated the same as Orders/Payments/Disputes below - see
+  // /api/admin/companies's own comment for why this isn't "just metadata" PLATFORM_MANAGER gets
+  // for free. Suppliers/Products are onboarding/quality-control data, not transaction data, so
+  // both platform roles see them (matches PLATFORM_CATALOG_MODERATE's own doc comment).
+  { label: 'Companies', href: '/admin/companies', icon: Building2, permission: 'platform.transactions.access', section: 'Organization' },
+  { label: 'Suppliers', href: '/admin/suppliers', icon: Building2, permission: 'platform.catalog.moderate', section: 'Organization' },
+  { label: 'Products', href: '/admin/products', icon: ShoppingCart, permission: 'platform.catalog.moderate', section: 'Organization' },
+
+  // TRANSACTIONS - PLATFORM_SUPER_ADMIN/legacy PLATFORM_ADMIN only, never PLATFORM_MANAGER.
+  { label: 'Orders', href: '/admin/orders', icon: Package, permission: 'platform.transactions.access', section: 'Transactions' },
+  { label: 'Payments', href: '/admin/payments', icon: Wallet, permission: 'platform.transactions.access', section: 'Transactions' },
+  { label: 'Disputes', href: '/admin/disputes', icon: FileText, permission: 'platform.transactions.access', section: 'Transactions' },
+
+  // SECURITY - Activity Center is a friendlier read of the exact same AuditLog rows the raw
+  // Audit Log shows (see /admin/activity's own comment) - never a second audit system.
+  { label: 'Activity', href: '/admin/activity', icon: Activity, permission: 'platform.audit.view', section: 'Security' },
+  { label: 'Audit log', href: '/admin/audit', icon: ClipboardList, permission: 'platform.audit.view', section: 'Security' },
+
+  // ADMINISTRATION - "Users" is the full cross-company user directory (every registered user,
+  // with a detail page); "Platform users" stays the narrower moderation queue (pending
+  // registrations, suspended/rejected accounts, platform-tier roles) - see
+  // platformUsers.service.ts's own top comment for why both coexist rather than one replacing
+  // the other.
+  { label: 'Approvals', href: '/admin/approvals', icon: UserCheck, permission: 'platform.registration.approve', section: 'Administration' },
+  { label: 'Users', href: '/admin/users', icon: Users, permission: 'platform.users.manage', section: 'Administration' },
+  { label: 'Platform users', href: '/admin/platform/users', icon: Users, permission: 'platform.users.manage', section: 'Administration' },
+  { label: 'Settings', href: '/settings', icon: Settings, permission: 'platform.settings.manage', section: 'Administration' },
 ];

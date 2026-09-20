@@ -40,9 +40,13 @@ export function Sidebar({ items, brandLabel = 'Procurement', collapsed, onToggle
         <ul className="flex flex-col gap-0.5">
           {items
             .filter((item) => !item.permission || can(item.permission))
-            .map((item) => {
+            .map((item, index, visible) => {
               const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
               const Icon = item.icon;
+              // A section header prints once, right before the first visible item that carries
+              // it - never for a section a role's permission filter emptied out entirely (Phase
+              // 27's grouped platformNav; buyer/supplier navs never set `section` at all).
+              const showSectionHeader = item.section && item.section !== visible[index - 1]?.section;
               const link = (
                 <Link
                   href={item.href}
@@ -65,7 +69,16 @@ export function Sidebar({ items, brandLabel = 'Procurement', collapsed, onToggle
                   {!collapsed && item.label}
                 </Link>
               );
-              return <li key={item.href}>{collapsed ? <Tooltip content={item.label} side="top">{link}</Tooltip> : link}</li>;
+              return (
+                <li key={item.href}>
+                  {showSectionHeader && !collapsed && (
+                    <p className="mt-3 mb-1 px-3 text-metadata first:mt-0" aria-hidden="true">
+                      {item.section}
+                    </p>
+                  )}
+                  {collapsed ? <Tooltip content={item.label} side="top">{link}</Tooltip> : link}
+                </li>
+              );
             })}
         </ul>
       </nav>

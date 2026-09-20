@@ -20,6 +20,7 @@ export const GET = withErrorHandling("/api/audit-log", async (request: NextReque
 
   const scope = access.auth.role === Role.PLATFORM_MANAGER ? 'platform' : 'all';
   const pagination = parseCursorPagination(request);
-  const result = await listAuditLog(pagination, scope);
+  const companyId = request.nextUrl.searchParams.get('companyId') ?? undefined;
+  const result = await listAuditLog(pagination, scope, companyId);
   return NextResponse.json(result.ok ? result.data : { items: [], nextCursor: null, hasNext: false });
 });

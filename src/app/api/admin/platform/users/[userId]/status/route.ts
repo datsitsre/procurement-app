@@ -18,10 +18,16 @@ export const PATCH = withErrorHandling("/api/admin/platform/users/[userId]/statu
   const parsed = SetMembershipStatusSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: 'Invalid request.' }, { status: 422 });
 
+  if (!access.auth.role) return NextResponse.json({ error: 'No active role.' }, { status: 403 });
+
   const result = await setMembershipStatus(userId, parsed.data.companyId, parsed.data.status, {
     userId: access.auth.userId,
+    role: access.auth.role,
     name: access.auth.userName,
   });
-  if (!result.ok) return NextResponse.json({ error: result.error.message }, { status: result.error.code === 'CONFLICT' ? 409 : 404 });
+  if (!result.ok) {
+    const status = result.error.code === 'CONFLICT' ? 409 : result.error.code === 'NOT_FOUND' ? 404 : result.error.code === 'FORBIDDEN' || result.error.code === 'SELF_STATUS_CHANGE_DENIED' ? 403 : 422;
+    return NextResponse.json({ error: result.error.message }, { status });
+  }
   return NextResponse.json(result.data);
 });

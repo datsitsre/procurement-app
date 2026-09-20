@@ -56,3 +56,44 @@ describe('RBAC separation of duties (regression guard)', () => {
     expect(hasPermission(Role.BUYER, Permission.PURCHASE_ORDER_CREATE)).toBe(false);
   });
 });
+
+describe('Platform organization management permissions (Phase 28)', () => {
+  const ORG_PERMISSIONS = [
+    Permission.PLATFORM_COMPANIES_VIEW,
+    Permission.PLATFORM_COMPANIES_CREATE,
+    Permission.PLATFORM_COMPANIES_UPDATE,
+    Permission.PLATFORM_SUPPLIERS_CREATE,
+    Permission.PLATFORM_SUPPLIERS_UPDATE,
+    Permission.PLATFORM_MEMBERS_VIEW,
+  ];
+
+  it('PLATFORM_SUPER_ADMIN holds every new organization-management permission', () => {
+    for (const permission of ORG_PERMISSIONS) {
+      expect(hasPermission(Role.PLATFORM_SUPER_ADMIN, permission)).toBe(true);
+    }
+  });
+
+  it('legacy PLATFORM_ADMIN remains permission-equivalent to PLATFORM_SUPER_ADMIN for these too', () => {
+    for (const permission of ORG_PERMISSIONS) {
+      expect(hasPermission(Role.PLATFORM_ADMIN, permission)).toBe(hasPermission(Role.PLATFORM_SUPER_ADMIN, permission));
+    }
+  });
+
+  it('PLATFORM_MANAGER holds none of the new organization-management permissions', () => {
+    for (const permission of ORG_PERMISSIONS) {
+      expect(hasPermission(Role.PLATFORM_MANAGER, permission)).toBe(false);
+    }
+  });
+
+  it('PLATFORM_MANAGER retains its existing catalog-moderation permission unchanged', () => {
+    expect(hasPermission(Role.PLATFORM_MANAGER, Permission.PLATFORM_CATALOG_MODERATE)).toBe(true);
+  });
+
+  it('no company-side role holds any platform organization-management permission', () => {
+    for (const role of [Role.OWNER, Role.ADMIN, Role.SUPPLIER_ADMIN]) {
+      for (const permission of ORG_PERMISSIONS) {
+        expect(hasPermission(role, permission)).toBe(false);
+      }
+    }
+  });
+});

@@ -26,9 +26,26 @@ describe('platformNav (section 3/4/5/10 - the platform-manager isolation UI depe
     expect(visible).toContain('Overview');
     expect(visible).toContain('Suppliers');
     expect(visible).toContain('Products');
+    expect(visible).toContain('Activity');
     expect(visible).toContain('Audit log');
+    expect(visible).toContain('Approvals');
     expect(visible).toContain('Platform users');
     expect(visible).toContain('Settings');
+  });
+
+  it('every platformNav item that carries a `section` is grouped correctly (Phase 27 - Command Center nav groups)', () => {
+    const sectionByLabel = Object.fromEntries(platformNav.map((item) => [item.label, item.section]));
+    expect(sectionByLabel['Companies']).toBe('Organization');
+    expect(sectionByLabel['Suppliers']).toBe('Organization');
+    expect(sectionByLabel['Products']).toBe('Organization');
+    expect(sectionByLabel['Orders']).toBe('Transactions');
+    expect(sectionByLabel['Payments']).toBe('Transactions');
+    expect(sectionByLabel['Disputes']).toBe('Transactions');
+    expect(sectionByLabel['Activity']).toBe('Security');
+    expect(sectionByLabel['Audit log']).toBe('Security');
+    expect(sectionByLabel['Approvals']).toBe('Administration');
+    expect(sectionByLabel['Platform users']).toBe('Administration');
+    expect(sectionByLabel['Overview']).toBeUndefined();
   });
 
   it('PLATFORM_SUPER_ADMIN sees every platform nav item, including transaction access', () => {

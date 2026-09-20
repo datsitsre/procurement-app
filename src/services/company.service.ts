@@ -65,14 +65,73 @@ export interface PlatformCompanyRow {
   creditTerms: string;
   memberCount: number;
   createdAt: string;
+  status: 'ACTIVE' | 'SUSPENDED';
+}
+
+/** A platform admin's view of one organization member - see server/dto/company.ts's DTOs for
+ *  confirmation that neither passwordHash nor any token/secret is ever part of this shape. */
+export interface PlatformOrgMember {
+  userId: UUID;
+  name: string;
+  email: string;
+  role: Role;
+  status: string;
+  joinedAt?: string;
+}
+
+export interface NewPlatformCompanyInput {
+  name: string;
+  country: string;
+  currency: string;
+  legalName?: string;
+  registrationNumber?: string;
+  taxId?: string;
+  industry?: string;
+  website?: string;
+  phone?: string;
+  email?: string;
+  description?: string;
+  creditTerms?: 'PREPAID' | 'NET_7' | 'NET_15' | 'NET_30' | 'NET_60';
 }
 
 export interface CompanyService {
   /** Every real buyer company on the platform (Phase 26 follow-up) - PLATFORM_SUPER_ADMIN/legacy
-   *  PLATFORM_ADMIN only, per the real `GET /api/admin/companies` route's own permission gate.
-   *  Replaces the prior `allCompanies()` localStorage-mock read the Companies page used to use,
-   *  which could show stale/incomplete browser-local data instead of the real production roster. */
+   *  PLATFORM_ADMIN only, per the real `GET /api/admin/companies` route's own permission gate
+   *  (PLATFORM_COMPANIES_VIEW as of Phase 28). Replaces the prior `allCompanies()`
+   *  localStorage-mock read the Companies page used to use, which could show stale/incomplete
+   *  browser-local data instead of the real production roster. */
   listAllCompanies(): Promise<ServiceResult<PlatformCompanyRow[]>>;
+
+  /** Creates a new buyer company as a platform administrator (Phase 28) -
+   *  POST /api/admin/companies, PLATFORM_COMPANIES_CREATE. */
+  createCompany(input: NewPlatformCompanyInput): Promise<ServiceResult<Company>>;
+
+  /** Edits an existing company's profile as a platform administrator (Phase 28) -
+   *  PATCH /api/admin/companies/[companyId], PLATFORM_COMPANIES_UPDATE. Distinct from
+   *  `updateCompanyProfile` below (that company's own OWNER/ADMIN editing themselves). */
+  updateCompanyAsPlatformAdmin(companyId: UUID, patch: Partial<NewPlatformCompanyInput>): Promise<ServiceResult<Company>>;
+
+  /** A specific company's own member list, from the platform admin side (Phase 28) -
+   *  GET /api/admin/companies/[companyId]/members, PLATFORM_MEMBERS_VIEW. Never a platform-wide
+   *  directory - scoped to one already-identified company. */
+  listCompanyMembersAsPlatformAdmin(companyId: UUID): Promise<ServiceResult<PlatformOrgMember[]>>;
+
+  /** Suspends a company (Phase 28 follow-up - Company Organization Management) -
+   *  POST /api/admin/companies/[companyId]/suspend, PLATFORM_COMPANIES_SUSPEND. Blocks the
+   *  company's own users from ordinary transactional operations; platform admins keep access. */
+  suspendCompany(companyId: UUID): Promise<ServiceResult<Company>>;
+
+  /** Reactivates a suspended company (Phase 28 follow-up) -
+   *  POST /api/admin/companies/[companyId]/activate, PLATFORM_COMPANIES_ACTIVATE. */
+  activateCompany(companyId: UUID): Promise<ServiceResult<Company>>;
+
+  /** A single company's full profile - GET /api/companies/[companyId] requires no specific
+   *  permission beyond the tenant check (see that route's own code), which PLATFORM_SUPER_ADMIN/
+   *  legacy PLATFORM_ADMIN pass via the same ownsRecord `isPlatformAdmin` bypass their cross-
+   *  company transaction access already relies on - so this already works for a "View company"
+   *  action from the platform Companies page, unlike editing/team/audit-log access on another
+   *  company (all separately permission-gated, and not yet granted to any platform role). */
+  getCompanyProfile(companyId: UUID): Promise<ServiceResult<Company>>;
 
   listTeamMembers(companyId: UUID, callerRole: Role): Promise<ServiceResult<TeamMember[]>>;
   addTeamMember(companyId: UUID, input: NewTeamMemberInput, callerRole: Role): Promise<ServiceResult<AddedTeamMember>>;
@@ -122,6 +181,30 @@ export interface CompanyService {
 class ApiCompanyService implements CompanyService {
   async listAllCompanies(): Promise<ServiceResult<PlatformCompanyRow[]>> {
     return apiRequest<PlatformCompanyRow[]>('/api/admin/companies');
+  }
+
+  async createCompany(input: NewPlatformCompanyInput): Promise<ServiceResult<Company>> {
+    return apiRequest<Company>('/api/admin/companies', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async updateCompanyAsPlatformAdmin(companyId: UUID, patch: Partial<NewPlatformCompanyInput>): Promise<ServiceResult<Company>> {
+    return apiRequest<Company>(`/api/admin/companies/${companyId}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  }
+
+  async listCompanyMembersAsPlatformAdmin(companyId: UUID): Promise<ServiceResult<PlatformOrgMember[]>> {
+    return apiRequest<PlatformOrgMember[]>(`/api/admin/companies/${companyId}/members`);
+  }
+
+  async suspendCompany(companyId: UUID): Promise<ServiceResult<Company>> {
+    return apiRequest<Company>(`/api/admin/companies/${companyId}/suspend`, { method: 'POST' });
+  }
+
+  async activateCompany(companyId: UUID): Promise<ServiceResult<Company>> {
+    return apiRequest<Company>(`/api/admin/companies/${companyId}/activate`, { method: 'POST' });
+  }
+
+  async getCompanyProfile(companyId: UUID): Promise<ServiceResult<Company>> {
+    return apiRequest<Company>(`/api/companies/${companyId}`);
   }
 
   async listTeamMembers(companyId: UUID): Promise<ServiceResult<TeamMember[]>> {

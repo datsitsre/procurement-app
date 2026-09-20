@@ -76,6 +76,21 @@ export const SupplierVerificationStatus = {
 export type SupplierVerificationStatus =
   (typeof SupplierVerificationStatus)[keyof typeof SupplierVerificationStatus];
 
+export const MembershipStatus = {
+  ACTIVE: 'ACTIVE',
+  INVITED: 'INVITED',
+  SUSPENDED: 'SUSPENDED',
+  PENDING_APPROVAL: 'PENDING_APPROVAL',
+  REJECTED: 'REJECTED',
+} as const;
+export type MembershipStatus = (typeof MembershipStatus)[keyof typeof MembershipStatus];
+
+export const CompanyStatus = {
+  ACTIVE: 'ACTIVE',
+  SUSPENDED: 'SUSPENDED',
+} as const;
+export type CompanyStatus = (typeof CompanyStatus)[keyof typeof CompanyStatus];
+
 export const DisputeStatus = {
   OPEN: 'OPEN',
   UNDER_REVIEW: 'UNDER_REVIEW',
@@ -152,6 +167,19 @@ const supplierVerificationTones: Record<SupplierVerificationStatus, StatusTone> 
   REJECTED: 'danger',
 };
 
+const companyTones: Record<CompanyStatus, StatusTone> = {
+  ACTIVE: 'success',
+  SUSPENDED: 'danger',
+};
+
+const membershipTones: Record<MembershipStatus, StatusTone> = {
+  ACTIVE: 'success',
+  INVITED: 'neutral',
+  SUSPENDED: 'danger',
+  PENDING_APPROVAL: 'warning',
+  REJECTED: 'danger',
+};
+
 const disputeTones: Record<DisputeStatus, StatusTone> = {
   OPEN: 'warning',
   UNDER_REVIEW: 'info',
@@ -186,6 +214,8 @@ export const statusToneMaps = {
   invoice: invoiceTones,
   supplierVerification: supplierVerificationTones,
   dispute: disputeTones,
+  company: companyTones,
+  membership: membershipTones,
 } as const;
 
 export type StatusDomain = keyof typeof statusToneMaps;

@@ -133,6 +133,58 @@ export const Permission = {
    *  company's business data to platform staff, and it is granted ONLY to PLATFORM_SUPER_ADMIN
    *  (and the legacy PLATFORM_ADMIN) - never to PLATFORM_MANAGER. */
   PLATFORM_TRANSACTIONS_ACCESS: 'platform.transactions.access',
+
+  // Platform organization management (Phase 28) - deliberately separate from
+  // PLATFORM_TRANSACTIONS_ACCESS: viewing/managing the *directory* of registered organizations
+  // (who exists, their profile metadata) is a distinct capability from viewing their orders/
+  // payments/disputes. Granted ONLY to PLATFORM_SUPER_ADMIN (and legacy PLATFORM_ADMIN) - never
+  // to PLATFORM_MANAGER, matching the same "no cross-company business data" boundary
+  // PLATFORM_TRANSACTIONS_ACCESS already draws. There is deliberately no
+  // PLATFORM_COMPANIES_SUSPEND/PLATFORM_COMPANIES_DELETE permission yet - Company has no status
+  // field to suspend with, and every one of its business-record relations (Order, Invoice,
+  // Payment, PurchaseRequest, PurchaseOrder, RFQ, Budget, ...) cascade-deletes, so neither
+  // capability exists to gate (see ACCESS_CONTROL_IMPLEMENTATION_REPORT.md's Phase 28 section).
+  /** View the platform-wide company directory - GET /api/admin/companies. Replaces
+   *  PLATFORM_TRANSACTIONS_ACCESS as that route's gate (Phase 28) now that a dedicated
+   *  organization-management permission exists; the actual set of roles that pass it is
+   *  unchanged (Super Admin/legacy Admin only). */
+  PLATFORM_COMPANIES_VIEW: 'platform.companies.view',
+  /** Create a new buyer company as a platform administrator (Phase 28) - distinct from a
+   *  prospective customer's own self-registration flow (POST /api/auth/register), which always
+   *  starts PENDING_APPROVAL and is never gated on a permission at all. */
+  PLATFORM_COMPANIES_CREATE: 'platform.companies.create',
+  /** Edit an existing company's own profile metadata as a platform administrator (Phase 28) -
+   *  distinct from PATCH /api/companies/[companyId] (SETTINGS_MANAGE), which is that company's
+   *  own OWNER/ADMIN editing their own profile, not a platform admin editing someone else's. */
+  PLATFORM_COMPANIES_UPDATE: 'platform.companies.update',
+  /** Create a new supplier profile (+ its own platform-created Company row) as a platform
+   *  administrator (Phase 28). Deliberately separate from PLATFORM_CATALOG_MODERATE, which
+   *  governs *moderating already-existing* suppliers/products (verify/reject/suspend), not
+   *  bringing a brand-new one onto the platform - PLATFORM_MANAGER keeps the former, not this. */
+  PLATFORM_SUPPLIERS_CREATE: 'platform.suppliers.create',
+  /** Edit an existing supplier's profile metadata (name, city, description, categories, ...) as
+   *  a platform administrator (Phase 28) - distinct from the verification-status decision
+   *  (VERIFIED/SUSPENDED/REJECTED), which already has its own dedicated route and permission
+   *  (PLATFORM_CATALOG_MODERATE, PATCH /api/suppliers/[supplierId]/verification) and needed no
+   *  change. */
+  PLATFORM_SUPPLIERS_UPDATE: 'platform.suppliers.update',
+  /** View a specific company's or supplier's own member/team list from the platform admin side
+   *  (Phase 28) - GET /api/admin/companies/[companyId]/members and
+   *  GET /api/admin/suppliers/[supplierId]/members. Deliberately its own permission, not
+   *  USERS_MANAGE (a company-role-only permission neither platform role holds) and deliberately
+   *  NOT a platform-wide "list every user at every company" capability - each call is scoped to
+   *  one already-identified organization, never a global directory (see platformUsers.service.ts's
+   *  own comment on why that distinction matters). PLATFORM_MANAGER does not hold this. */
+  PLATFORM_MEMBERS_VIEW: 'platform.members.view',
+  /** Suspend a company - POST /api/admin/companies/[companyId]/suspend (Phase 28 follow-up).
+   *  Super Admin/legacy Admin only, same as every other PLATFORM_COMPANIES_* permission - a
+   *  PLATFORM_MANAGER must never be able to cut off a company's access to the platform. */
+  PLATFORM_COMPANIES_SUSPEND: 'platform.companies.suspend',
+  /** Reactivate a suspended company - POST /api/admin/companies/[companyId]/activate. Kept as
+   *  its own permission (not folded into PLATFORM_COMPANIES_SUSPEND) so a future, narrower role
+   *  could someday hold one without the other - both are granted together today, to the same
+   *  roles, but the vocabulary stays precise either way. */
+  PLATFORM_COMPANIES_ACTIVATE: 'platform.companies.activate',
 } as const;
 export type Permission = (typeof Permission)[keyof typeof Permission];
 
@@ -235,8 +287,11 @@ export const RolePermissions: Record<Role, Permission[]> = {
     Permission.PLATFORM_CATALOG_MODERATE,
     Permission.PLATFORM_AUDIT_VIEW,
   ],
-  // The exceptional, system-wide role - everything PLATFORM_MANAGER has, plus the two
-  // permissions that actually cross a tenant boundary (transactions + role management).
+  // The exceptional, system-wide role - everything PLATFORM_MANAGER has, plus the permissions
+  // that actually cross a tenant boundary (transactions, role management, organization
+  // management). See each PLATFORM_COMPANIES_*/PLATFORM_SUPPLIERS_*/PLATFORM_MEMBERS_VIEW
+  // permission's own doc comment above for why these are deliberately separate from
+  // PLATFORM_TRANSACTIONS_ACCESS rather than reusing it.
   [Role.PLATFORM_SUPER_ADMIN]: [
     Permission.PLATFORM_MANAGE,
     Permission.PLATFORM_SETTINGS_MANAGE,
@@ -246,6 +301,14 @@ export const RolePermissions: Record<Role, Permission[]> = {
     Permission.PLATFORM_AUDIT_VIEW,
     Permission.PLATFORM_ROLES_MANAGE,
     Permission.PLATFORM_TRANSACTIONS_ACCESS,
+    Permission.PLATFORM_COMPANIES_VIEW,
+    Permission.PLATFORM_COMPANIES_CREATE,
+    Permission.PLATFORM_COMPANIES_UPDATE,
+    Permission.PLATFORM_COMPANIES_SUSPEND,
+    Permission.PLATFORM_COMPANIES_ACTIVATE,
+    Permission.PLATFORM_SUPPLIERS_CREATE,
+    Permission.PLATFORM_SUPPLIERS_UPDATE,
+    Permission.PLATFORM_MEMBERS_VIEW,
     Permission.ANALYTICS_READ,
   ],
   // Legacy role - kept permission-equivalent to PLATFORM_SUPER_ADMIN so accounts created before
@@ -260,6 +323,14 @@ export const RolePermissions: Record<Role, Permission[]> = {
     Permission.PLATFORM_AUDIT_VIEW,
     Permission.PLATFORM_ROLES_MANAGE,
     Permission.PLATFORM_TRANSACTIONS_ACCESS,
+    Permission.PLATFORM_COMPANIES_VIEW,
+    Permission.PLATFORM_COMPANIES_CREATE,
+    Permission.PLATFORM_COMPANIES_UPDATE,
+    Permission.PLATFORM_COMPANIES_SUSPEND,
+    Permission.PLATFORM_COMPANIES_ACTIVATE,
+    Permission.PLATFORM_SUPPLIERS_CREATE,
+    Permission.PLATFORM_SUPPLIERS_UPDATE,
+    Permission.PLATFORM_MEMBERS_VIEW,
     Permission.ANALYTICS_READ,
   ],
 };

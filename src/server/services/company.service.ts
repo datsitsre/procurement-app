@@ -25,6 +25,7 @@ export interface CompanyProfilePatch {
   phone?: string;
   email?: string;
   description?: string;
+  creditTerms?: 'PREPAID' | 'NET_7' | 'NET_15' | 'NET_30' | 'NET_60';
 }
 
 /** One row of the platform-wide company directory (Phase 26 follow-up - closes the
@@ -40,6 +41,7 @@ export interface PlatformCompanyRow {
   creditTerms: string;
   memberCount: number;
   createdAt: string;
+  status: 'ACTIVE' | 'SUSPENDED';
 }
 
 /** Every real buyer company on the platform (Phase 26 follow-up) - gated by the route to
@@ -60,6 +62,7 @@ export async function listAllCompanies(): Promise<ServiceResult<PlatformCompanyR
       currency: true,
       creditTerms: true,
       createdAt: true,
+      status: true,
       _count: { select: { memberships: true } },
     },
     orderBy: { createdAt: 'desc' },
@@ -74,6 +77,7 @@ export async function listAllCompanies(): Promise<ServiceResult<PlatformCompanyR
       creditTerms: c.creditTerms,
       memberCount: c._count.memberships,
       createdAt: c.createdAt.toISOString(),
+      status: c.status,
     })),
   );
 }
@@ -87,6 +91,135 @@ export async function getCompanyProfile(companyId: UUID): Promise<ServiceResult<
 export async function updateCompanyProfile(companyId: UUID, patch: CompanyProfilePatch): Promise<ServiceResult<Company>> {
   const company = await db.company.update({ where: { id: companyId }, data: patch, include: { addresses: true, parentGroup: true } });
   return ok(toCompanyDto(company));
+}
+
+export interface NewPlatformCompanyInput extends CompanyProfilePatch {
+  name: string;
+  country: string;
+  currency: string;
+}
+
+/** A platform administrator creating a new buyer company directly (Phase 28, section 5) -
+ *  always `isBuyer: true, isSupplier: false` (this endpoint is specifically "create a buyer
+ *  company"; creating a supplier goes through the separate, supplier-specific
+ *  POST /api/admin/suppliers instead, since a SupplierProfile needs its own required fields
+ *  this input shape doesn't have). Deliberately creates no User/CompanyMembership - there is no
+ *  existing, deliberate "invite the first owner" flow for a platform-created company to reuse,
+ *  and inventing one wasn't in scope; the company exists but has no member until either someone
+ *  registers against it through a future flow, or an existing user is added via the normal
+ *  team-management endpoint once this company has at least one OWNER to authorize that (a
+ *  genuine, honestly-scoped limitation - see this phase's final report). */
+export async function createCompanyAsPlatformAdmin(
+  input: NewPlatformCompanyInput,
+  actor: { userId: UUID; name: string },
+): Promise<ServiceResult<Company>> {
+  const company = await db.company.create({
+    data: { ...input, isBuyer: true, isSupplier: false },
+    include: { addresses: true, parentGroup: true },
+  });
+
+  const { recordAudit } = await import('./audit.service');
+  await recordAudit({
+    actorId: actor.userId,
+    actorName: actor.name,
+    companyId: company.id,
+    action: 'PLATFORM_COMPANY_CREATED',
+    entityType: 'Company',
+    entityId: company.id,
+    newValue: { name: company.name, country: company.country, currency: company.currency },
+  });
+
+  return ok(toCompanyDto(company));
+}
+
+/** A platform administrator editing an existing company's own profile metadata (Phase 28,
+ *  section 6) - the same `updateCompanyProfile` a company's own OWNER/ADMIN uses on themselves,
+ *  wrapped with an explicit audit entry this cross-company edit needs but the self-service path
+ *  doesn't (a company editing its own profile isn't a "cross-company" action to audit). */
+export async function updateCompanyAsPlatformAdmin(
+  companyId: UUID,
+  patch: CompanyProfilePatch,
+  actor: { userId: UUID; name: string },
+): Promise<ServiceResult<Company>> {
+  const before = await db.company.findUnique({ where: { id: companyId } });
+  if (!before) return fail('NOT_FOUND', 'That company could not be found.');
+
+  const result = await updateCompanyProfile(companyId, patch);
+  if (!result.ok) return result;
+
+  const { recordAudit } = await import('./audit.service');
+  await recordAudit({
+    actorId: actor.userId,
+    actorName: actor.name,
+    companyId,
+    action: 'PLATFORM_COMPANY_UPDATED',
+    entityType: 'Company',
+    entityId: companyId,
+    previousValue: { name: before.name, industry: before.industry ?? undefined },
+    newValue: patch,
+  });
+
+  return result;
+}
+
+/** Suspends or reactivates a company (Phase 28 follow-up - Company Organization Management).
+ *  Both directions share this one function - the transition itself (which status is required,
+ *  which status results, which audit action fires) is the only thing that differs.
+ *
+ *  Guards, in order (defense in depth - re-derived here independently of the route's own
+ *  permission gate, the same reasoning platformUsers.service.ts's changePlatformRole gives):
+ *  1. The company must exist and actually be a buyer company - never a supplier (which keeps its
+ *     own, separate verification-based lifecycle - section 10's own instruction) or a
+ *     platform-type company (which has no lifecycle to suspend at all).
+ *  2. The transition must be a real state change - an atomic conditional `updateMany` requiring
+ *     the *current* status, not a plain `update` - so two concurrent suspend calls (or a
+ *     suspend-then-activate race) can't both silently "succeed"; the loser gets a clean
+ *     CONFLICT instead of a lost/duplicate audit entry. The same pattern `decideStep`/
+ *     `acceptQuote`/`setMembershipStatus` already use for their own workflow-state races. */
+async function transitionCompanyStatus(
+  companyId: UUID,
+  direction: 'SUSPEND' | 'ACTIVATE',
+  actor: { userId: UUID; name: string },
+): Promise<ServiceResult<Company>> {
+  const company = await db.company.findUnique({ where: { id: companyId } });
+  if (!company) return fail('NOT_FOUND', 'That company could not be found.');
+  if (!company.isBuyer || company.isSupplier) {
+    return fail('INVALID_COMPANY_TYPE', 'Only buyer companies can be suspended or activated here - suppliers use their own verification status.');
+  }
+
+  const fromStatus = direction === 'SUSPEND' ? 'ACTIVE' : 'SUSPENDED';
+  const toStatus = direction === 'SUSPEND' ? 'SUSPENDED' : 'ACTIVE';
+  const { count } = await db.company.updateMany({ where: { id: companyId, status: fromStatus }, data: { status: toStatus } });
+  if (count === 0) {
+    return fail(
+      'CONFLICT',
+      direction === 'SUSPEND' ? 'This company is already suspended.' : 'This company is already active.',
+    );
+  }
+
+  const updated = await db.company.findUniqueOrThrow({ where: { id: companyId }, include: { addresses: true, parentGroup: true } });
+
+  const { recordAudit } = await import('./audit.service');
+  await recordAudit({
+    actorId: actor.userId,
+    actorName: actor.name,
+    companyId,
+    action: direction === 'SUSPEND' ? 'PLATFORM_COMPANY_SUSPENDED' : 'PLATFORM_COMPANY_ACTIVATED',
+    entityType: 'Company',
+    entityId: companyId,
+    previousValue: { status: fromStatus, name: company.name },
+    newValue: { status: toStatus },
+  });
+
+  return ok(toCompanyDto(updated));
+}
+
+export function suspendCompany(companyId: UUID, actor: { userId: UUID; name: string }): Promise<ServiceResult<Company>> {
+  return transitionCompanyStatus(companyId, 'SUSPEND', actor);
+}
+
+export function activateCompany(companyId: UUID, actor: { userId: UUID; name: string }): Promise<ServiceResult<Company>> {
+  return transitionCompanyStatus(companyId, 'ACTIVATE', actor);
 }
 
 export interface TeamMember {

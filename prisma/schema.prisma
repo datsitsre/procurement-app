@@ -72,6 +72,18 @@ enum CreditTerm {
   NET_60
 }
 
+/// A company's own operational status (Phase 28 follow-up - Company Organization Management),
+/// distinct from CompanyMembership.status (one person's membership) and from
+/// SupplierVerificationStatus (a supplier's own onboarding/quality-control decision, unchanged).
+/// SUSPENDED is enforced centrally in resolveTenant (server/auth/context.ts) - a suspended
+/// company's own members lose their working tenant for ordinary transactional routes, the same
+/// fail-closed shape a non-ACTIVE CompanyMembership already produces; platform administrators
+/// are unaffected (they never resolve tenant through this path - see CROSS_TENANT_ROLES).
+enum CompanyStatus {
+  ACTIVE
+  SUSPENDED
+}
+
 /// A registered platform user. Password hashes never leave this table - no API response may
 /// ever include `passwordHash` (see src/services DTO-mapping convention this schema is meant to
 /// replace the localStorage-backed half of).
@@ -155,6 +167,9 @@ model Company {
   creditAvailable    Decimal?   @db.Decimal(14, 2)
   isSupplier         Boolean    @default(false)
   isBuyer            Boolean    @default(false)
+  /// Existing companies default to ACTIVE (additive migration - no existing row's meaning
+  /// changes). See CompanyStatus's own doc comment for enforcement details.
+  status             CompanyStatus @default(ACTIVE)
   parentGroupId      String?
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt

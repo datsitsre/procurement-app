@@ -87,4 +87,26 @@ describe('GET /api/audit-log (platform-admin gate + cursor pagination security)'
     const page = await response.json();
     expect(page.items.length).toBeLessThanOrEqual(100);
   });
+
+  it('includes a real companyName for a company-transaction-shaped entry, via AuditLog\'s own company relation (Phase 27 - Activity Center)', async () => {
+    await recordAudit({ actorName: 'Audit Route Test', companyId: 'company-acme-gh', action: 'TEST_COMPANY_ACTION', entityType: 'TestEntity', entityId: 'audit-route-test-company' });
+    const created = await db.auditLog.findFirst({ where: { action: 'TEST_COMPANY_ACTION', entityId: 'audit-route-test-company' } });
+    if (created) createdIds.push(created.id);
+
+    const response = await listAuditLogRoute(requestFor('/api/audit-log?pageSize=100', platformAdminSessionToken));
+    const page = await response.json();
+    const entry = page.items.find((e: { entityId: string }) => e.entityId === 'audit-route-test-company');
+    expect(entry).toBeDefined();
+    expect(entry.companyId).toBe('company-acme-gh');
+    expect(entry.companyName).toBe('Acme Technologies Ghana');
+  });
+
+  it('leaves companyName unset for a platform-action entry with no companyId', async () => {
+    const response = await listAuditLogRoute(requestFor('/api/audit-log?pageSize=100', platformAdminSessionToken));
+    const page = await response.json();
+    const entry = page.items.find((e: { entityType: string; entityId: string }) => e.entityType === 'TestEntity' && e.entityId.startsWith('audit-route-test-') && !e.entityId.endsWith('company'));
+    expect(entry).toBeDefined();
+    expect(entry.companyId).toBeUndefined();
+    expect(entry.companyName).toBeUndefined();
+  });
 });

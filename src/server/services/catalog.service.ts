@@ -267,6 +267,149 @@ export async function listAllSuppliers(): Promise<ServiceResult<SupplierProfile[
   return ok(suppliers.map(toSupplierProfileDto));
 }
 
+/** One row of the platform Suppliers management table (Phase 27 - Platform Command Center).
+ *  Deliberately a separate function/DTO from `listAllSuppliers`/`SupplierProfile` rather than
+ *  extending that shared type - those are consumed by buyer-facing catalog pages too, which have
+ *  no business reason to see a supplier's own member count. `joinedAt` comes from the supplier's
+ *  Company row (SupplierProfile itself has no createdAt) - the real date the supplier company
+ *  was created, not a fabricated one. */
+export interface PlatformSupplierRow extends SupplierProfile {
+  productCount: number;
+  memberCount: number;
+  joinedAt: string;
+}
+
+export async function listAllSuppliersForAdmin(): Promise<ServiceResult<PlatformSupplierRow[]>> {
+  const suppliers = await db.supplierProfile.findMany({
+    orderBy: { name: 'asc' },
+    include: {
+      _count: { select: { products: true } },
+      company: { select: { createdAt: true, _count: { select: { memberships: true } } } },
+    },
+  });
+
+  return ok(
+    suppliers.map((s) => ({
+      ...toSupplierProfileDto(s),
+      productCount: s._count.products,
+      memberCount: s.company._count.memberships,
+      joinedAt: s.company.createdAt.toISOString(),
+    })),
+  );
+}
+
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'supplier';
+}
+
+export interface NewPlatformSupplierInput {
+  name: string;
+  city: string;
+  country: string;
+  /** The supplier's own Company row needs a currency (a required, non-null column) even though
+   *  SupplierProfile itself has no currency field - a supplier is still a Company underneath. */
+  currency: string;
+  description: string;
+  logoUrl?: string;
+  categories?: string[];
+  certifications?: string[];
+}
+
+/** A platform administrator creating a new supplier directly (Phase 28, section 10) - a
+ *  SupplierProfile always belongs to its own Company (one-to-one, `companyId @unique`), so this
+ *  creates both together in one transaction: a fresh `isSupplier: true, isBuyer: false` Company,
+ *  then the SupplierProfile itself, starting at the same PENDING_VERIFICATION default every
+ *  self-registered supplier already gets - a platform admin creating the record isn't the same
+ *  as vouching for its quality, so it still goes through the existing verification queue.
+ *  `slug` is derived from `name`, not client-supplied (SupplierProfile.slug is unique and part of
+ *  every public product/supplier URL) - collisions are resolved with a numeric suffix. Creates no
+ *  User/CompanyMembership, for the same reason createCompanyAsPlatformAdmin doesn't (see its own
+ *  comment) - a genuine, honestly-scoped limitation. */
+export async function createSupplierAsPlatformAdmin(
+  input: NewPlatformSupplierInput,
+  actor: { userId: UUID; name: string },
+): Promise<ServiceResult<SupplierProfile>> {
+  const base = slugify(input.name);
+  let slug = base;
+  for (let suffix = 1; await db.supplierProfile.findUnique({ where: { slug } }); suffix++) {
+    slug = `${base}-${suffix}`;
+  }
+
+  const supplier = await db.$transaction(async (tx) => {
+    const company = await tx.company.create({
+      data: { name: input.name, country: input.country, currency: input.currency, isBuyer: false, isSupplier: true },
+    });
+    return tx.supplierProfile.create({
+      data: {
+        companyId: company.id,
+        name: input.name,
+        slug,
+        city: input.city,
+        country: input.country,
+        description: input.description,
+        logoUrl: input.logoUrl,
+        categories: input.categories ?? [],
+        certifications: input.certifications ?? [],
+      },
+    });
+  });
+
+  const { recordAudit } = await import('./audit.service');
+  await recordAudit({
+    actorId: actor.userId,
+    actorName: actor.name,
+    action: 'PLATFORM_SUPPLIER_CREATED',
+    entityType: 'SupplierProfile',
+    entityId: supplier.id,
+    newValue: { name: supplier.name, country: supplier.country },
+  });
+
+  return ok(toSupplierProfileDto(supplier));
+}
+
+export interface SupplierProfileUpdate {
+  name?: string;
+  city?: string;
+  country?: string;
+  description?: string;
+  logoUrl?: string;
+  categories?: string[];
+  certifications?: string[];
+}
+
+/** A platform administrator editing an existing supplier's profile metadata (Phase 28, section
+ *  11) - deliberately excludes `verification` (its own dedicated route/permission already
+ *  governs that decision, PATCH /api/suppliers/[supplierId]/verification) and every
+ *  user/membership/role field (no path here ever touches CompanyMembership). */
+export async function updateSupplierAsPlatformAdmin(
+  supplierId: UUID,
+  patch: SupplierProfileUpdate,
+  actor: { userId: UUID; name: string },
+): Promise<ServiceResult<SupplierProfile>> {
+  const before = await db.supplierProfile.findUnique({ where: { id: supplierId } });
+  if (!before) return fail('NOT_FOUND', 'That supplier could not be found.');
+
+  const supplier = await db.supplierProfile.update({ where: { id: supplierId }, data: patch });
+
+  const { recordAudit } = await import('./audit.service');
+  await recordAudit({
+    actorId: actor.userId,
+    actorName: actor.name,
+    action: 'PLATFORM_SUPPLIER_UPDATED',
+    entityType: 'SupplierProfile',
+    entityId: supplierId,
+    previousValue: { name: before.name, description: before.description },
+    newValue: patch,
+  });
+
+  return ok(toSupplierProfileDto(supplier));
+}
+
 export async function getSupplierBySlug(slug: string): Promise<ServiceResult<SupplierProfile>> {
   const supplier = await db.supplierProfile.findUnique({ where: { slug } });
   if (!supplier) return fail('NOT_FOUND', 'That supplier could not be found.');

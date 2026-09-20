@@ -40,6 +40,12 @@ export interface AuditEntry {
   newValue?: unknown;
   timestamp: ISODateTime;
   ipAddress?: string;
+  /** Set only on the platform-wide feed (GET /api/audit-log) - a company-transaction-shaped
+   *  entry's own company, resolved via AuditLog's existing `company` relation. Never set on the
+   *  already-company-scoped GET /api/companies/[companyId]/audit-log, since every row there
+   *  already belongs to the one company the caller asked about. */
+  companyId?: UUID;
+  companyName?: string;
 }
 
 /** Standard paginated list envelope every list-returning service method resolves to. */

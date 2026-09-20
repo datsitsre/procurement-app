@@ -53,6 +53,11 @@ export async function recordAudit(entry: NewAuditEntry): Promise<void> {
 export async function listAuditLog(
   pagination: CursorPaginationParams,
   scope: 'all' | 'platform' = 'all',
+  // Narrows the platform-wide feed to one company (Phase 28 - the Company Detail page's Activity
+  // tab). Deliberately ignored when scope === 'platform' - a PLATFORM_MANAGER's feed is already
+  // restricted to companyId: null entries, so a company filter on top of that would just be
+  // confusing (it could never match anything), not a new capability.
+  companyId?: string,
 ): Promise<ServiceResult<CursorPage<AuditEntry>>> {
   const cursorFilter = pagination.cursor
     ? {
@@ -62,11 +67,16 @@ export async function listAuditLog(
         ],
       }
     : {};
-  const where = scope === 'platform' ? { ...cursorFilter, companyId: null } : cursorFilter;
+  const where = scope === 'platform' ? { ...cursorFilter, companyId: null } : companyId ? { ...cursorFilter, companyId } : cursorFilter;
   const rows = await db.auditLog.findMany({
     where,
     orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
     take: pagination.take + 1,
+    // A friendly company name alongside the id (Phase 27 - Activity Center) - AuditLog already
+    // has a real `company` relation; this was simply never selected before because the one
+    // existing consumer (the platform-wide Audit Log page) never needed a display name, only the
+    // raw entityType/entityId. Never a new query - the same rows, one more column.
+    include: { company: { select: { name: true } } },
   });
   const page = toCursorPage(
     rows.map((r) => ({ ...r, createdAt: r.timestamp })),
@@ -85,6 +95,8 @@ export async function listAuditLog(
       newValue: r.newValue ?? undefined,
       timestamp: r.timestamp.toISOString(),
       ipAddress: r.ipAddress ?? undefined,
+      companyId: r.companyId ?? undefined,
+      companyName: r.company?.name,
     })),
   });
 }

@@ -50,6 +50,17 @@ async function requireAuthAndPermission(request: NextRequest, permission?: Permi
     return { ok: false, response: unauthorized() };
   }
 
+  // Checked before the permission gate below, so a suspended company's own user gets this
+  // specific, clear explanation rather than a generic "no permission" message regardless of
+  // which permission (if any) the route asked for (Phase 28 follow-up - Company Organization
+  // Management). Never true for a platform admin's own session (their tenant is their own
+  // platform-type company, resolved separately - see resolveTenant's own comment), so this can
+  // never block platform administration of the very company it's suspending.
+  if (auth.companySuspended) {
+    logger.warn('rejected request: company suspended', { requestId: reqId, route, method, userId: auth.userId });
+    return { ok: false, response: NextResponse.json({ error: 'Your organization has been suspended. Contact your platform administrator.' }, { status: 403 }) };
+  }
+
   if (permission && (!auth.role || !hasPermission(auth.role, permission))) {
     logger.warn('rejected request: missing permission', {
       requestId: reqId,

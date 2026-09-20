@@ -49,6 +49,11 @@ export interface Company {
    *  needs a second request (or a static, potentially-stale lookup) just to show a group label. */
   parentGroupName?: string;
   createdAt: ISODateTime;
+  /** A company's own operational status (Phase 28 follow-up) - ACTIVE unless a platform admin
+   *  has suspended it. Enforced server-side in resolveTenant (server/auth/context.ts), never a
+   *  client-side gate - see that function's own comment. */
+  status: 'ACTIVE' | 'SUSPENDED';
+  updatedAt: ISODateTime;
 }
 
 /**

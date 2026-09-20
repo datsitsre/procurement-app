@@ -105,6 +105,8 @@ export const demoCompanies: Company[] = [
     isSupplier: false,
     parentGroupId: 'group-acme',
     createdAt: '2024-11-02T09:00:00Z',
+    status: 'ACTIVE',
+    updatedAt: '2024-11-02T09:00:00Z',
   },
   {
     id: 'company-acme-ng',
@@ -129,6 +131,8 @@ export const demoCompanies: Company[] = [
     isSupplier: false,
     parentGroupId: 'group-acme',
     createdAt: '2025-01-10T09:00:00Z',
+    status: 'ACTIVE',
+    updatedAt: '2025-01-10T09:00:00Z',
   },
   {
     id: 'company-acme-ke',
@@ -151,6 +155,8 @@ export const demoCompanies: Company[] = [
     isSupplier: false,
     parentGroupId: 'group-acme',
     createdAt: '2025-03-18T09:00:00Z',
+    status: 'ACTIVE',
+    updatedAt: '2025-03-18T09:00:00Z',
   },
   // Supplier-side companies (Phase 5) - id matches the `companyId` each SupplierProfile in
   // lib/demo-data/catalog.ts already points to, so switching into the supplier workspace
@@ -170,6 +176,8 @@ export const demoCompanies: Company[] = [
     isSupplier: true,
     supplierProfileId: 'supplier-abc',
     createdAt: '2024-06-01T09:00:00Z',
+    status: 'ACTIVE',
+    updatedAt: '2024-06-01T09:00:00Z',
   },
   {
     id: 'supplier-company-prime',
@@ -186,6 +194,8 @@ export const demoCompanies: Company[] = [
     isSupplier: true,
     supplierProfileId: 'supplier-prime',
     createdAt: '2024-07-15T09:00:00Z',
+    status: 'ACTIVE',
+    updatedAt: '2024-07-15T09:00:00Z',
   },
   {
     id: 'supplier-company-aie',
@@ -203,6 +213,8 @@ export const demoCompanies: Company[] = [
     isSupplier: true,
     supplierProfileId: 'supplier-aie',
     createdAt: '2024-05-20T09:00:00Z',
+    status: 'ACTIVE',
+    updatedAt: '2024-05-20T09:00:00Z',
   },
   {
     id: 'supplier-company-wae',
@@ -219,6 +231,8 @@ export const demoCompanies: Company[] = [
     isSupplier: true,
     supplierProfileId: 'supplier-wae',
     createdAt: '2024-08-10T09:00:00Z',
+    status: 'ACTIVE',
+    updatedAt: '2024-08-10T09:00:00Z',
   },
   {
     id: 'supplier-company-kpp',
@@ -235,6 +249,8 @@ export const demoCompanies: Company[] = [
     isSupplier: true,
     supplierProfileId: 'supplier-kpp',
     createdAt: '2026-09-01T09:00:00Z',
+    status: 'ACTIVE',
+    updatedAt: '2026-09-01T09:00:00Z',
   },
   // Platform operator (Phase 6) - neither a buyer nor a supplier tenant; exists only so a
   // PLATFORM_ADMIN session has a CompanyUser membership to resolve, the same as every other
@@ -249,6 +265,8 @@ export const demoCompanies: Company[] = [
     isBuyer: false,
     isSupplier: false,
     createdAt: '2024-01-01T09:00:00Z',
+    status: 'ACTIVE',
+    updatedAt: '2024-01-01T09:00:00Z',
   },
 ];
 

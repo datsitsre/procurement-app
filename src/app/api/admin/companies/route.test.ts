@@ -3,7 +3,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NextRequest } from 'next/server';
 import { db } from '@/server/db';
 import { createSession } from '@/server/auth/session';
-import { GET as adminCompaniesRoute } from './route';
+import { GET as adminCompaniesRoute, POST as createCompanyRoute } from './route';
+import { PATCH as updateCompanyRoute } from './[companyId]/route';
+import { GET as companyMembersRoute } from './[companyId]/members/route';
 
 /**
  * Phase 26 follow-up - /admin/companies previously read from a frontend-only localStorage mock
@@ -37,6 +39,24 @@ function req(token: string) {
   return new NextRequest('http://localhost/api/admin/companies', { headers: new Headers({ cookie: `session_token=${token}` }) });
 }
 
+function postReq(token: string, body: unknown) {
+  return new NextRequest('http://localhost/api/admin/companies', {
+    method: 'POST',
+    headers: new Headers({ cookie: `session_token=${token}`, origin: 'http://localhost', 'content-type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+}
+
+function patchReq(url: string, token: string, body: unknown) {
+  return new NextRequest(`http://localhost${url}`, {
+    method: 'PATCH',
+    headers: new Headers({ cookie: `session_token=${token}`, origin: 'http://localhost', 'content-type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
+}
+
+const createdCompanyIds: string[] = [];
+
 beforeAll(async () => {
   await db.company.create({ data: { id: MANAGER_COMPANY_ID, name: 'Test Manager Co', country: 'GH', currency: 'GHS', isBuyer: false, isSupplier: false } });
   await db.company.create({ data: { id: SUPER_ADMIN_COMPANY_ID, name: 'Test Super Admin Co', country: 'GH', currency: 'GHS', isBuyer: false, isSupplier: false } });
@@ -62,12 +82,20 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await db.auditLog.deleteMany({ where: { entityType: 'Company', entityId: 'LIST', actorId: { in: [SUPER_ADMIN_USER_ID, LEGACY_ADMIN_USER_ID] } } });
+  await db.auditLog.deleteMany({
+    where: {
+      OR: [
+        { entityType: 'Company', entityId: 'LIST', actorId: { in: [SUPER_ADMIN_USER_ID, LEGACY_ADMIN_USER_ID] } },
+        { entityType: 'Company', entityId: { in: createdCompanyIds } },
+        { entityType: 'CompanyMembers' },
+      ],
+    },
+  });
   await db.companyMembership.deleteMany({ where: { companyId: { in: [MANAGER_COMPANY_ID, SUPER_ADMIN_COMPANY_ID, LEGACY_ADMIN_COMPANY_ID, BUYER_COMPANY_ID] } } });
   await db.user.deleteMany({ where: { id: { in: [MANAGER_USER_ID, SUPER_ADMIN_USER_ID, LEGACY_ADMIN_USER_ID, BUYER_USER_ID] } } });
   await db.company.deleteMany({
-    where: { id: { in: [MANAGER_COMPANY_ID, SUPER_ADMIN_COMPANY_ID, LEGACY_ADMIN_COMPANY_ID, BUYER_COMPANY_ID, PLATFORM_TYPE_COMPANY_ID, SUPPLIER_TYPE_COMPANY_ID] } } },
-  );
+    where: { id: { in: [MANAGER_COMPANY_ID, SUPER_ADMIN_COMPANY_ID, LEGACY_ADMIN_COMPANY_ID, BUYER_COMPANY_ID, PLATFORM_TYPE_COMPANY_ID, SUPPLIER_TYPE_COMPANY_ID, ...createdCompanyIds] } },
+  });
 });
 
 describe('GET /api/admin/companies', () => {
@@ -114,7 +142,7 @@ describe('GET /api/admin/companies', () => {
     const body: Record<string, unknown>[] = await response.json();
     const row = body.find((c) => c.id === BUYER_COMPANY_ID);
     expect(row).toBeDefined();
-    expect(Object.keys(row!).sort()).toEqual(['country', 'createdAt', 'creditTerms', 'currency', 'id', 'memberCount', 'name'].sort());
+    expect(Object.keys(row!).sort()).toEqual(['country', 'createdAt', 'creditTerms', 'currency', 'id', 'memberCount', 'name', 'status'].sort());
     expect(row).not.toHaveProperty('creditLimit');
     expect(row).not.toHaveProperty('creditAvailable');
     expect(row).not.toHaveProperty('taxId');
@@ -141,5 +169,128 @@ describe('GET /api/admin/companies', () => {
 
     const entry = await db.auditLog.findFirst({ where: { action: 'SUPER_ADMIN_CROSS_COMPANY_READ', entityType: 'Company', entityId: 'LIST', actorId: MANAGER_USER_ID } });
     expect(entry).toBeNull();
+  });
+});
+
+describe('POST /api/admin/companies (Phase 28 - platform company creation)', () => {
+  const newCompanyBody = { name: `Test Platform-Created Co ${Date.now()}`, country: 'GH', currency: 'GHS' };
+
+  it('PLATFORM_SUPER_ADMIN can create a new buyer company', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, newCompanyBody));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.name).toBe(newCompanyBody.name);
+    expect(body.isBuyer).toBe(true);
+    expect(body.isSupplier).toBe(false);
+    createdCompanyIds.push(body.id);
+
+    const audit = await db.auditLog.findFirst({ where: { action: 'PLATFORM_COMPANY_CREATED', entityId: body.id } });
+    expect(audit).not.toBeNull();
+    expect(audit?.actorId).toBe(SUPER_ADMIN_USER_ID);
+  });
+
+  it('PLATFORM_MANAGER cannot create a company', async () => {
+    const response = await createCompanyRoute(postReq(managerToken, { name: 'Should Not Be Created', country: 'GH', currency: 'GHS' }));
+    expect(response.status).toBe(403);
+  });
+
+  it('an ordinary company user cannot create a company', async () => {
+    const response = await createCompanyRoute(postReq(buyerToken, { name: 'Should Not Be Created', country: 'GH', currency: 'GHS' }));
+    expect(response.status).toBe(403);
+  });
+
+  it('rejects malformed input (missing required fields)', async () => {
+    const response = await createCompanyRoute(postReq(superAdminToken, { name: '' }));
+    expect(response.status).toBe(422);
+  });
+});
+
+describe('PATCH /api/admin/companies/[companyId] (Phase 28 - platform company editing)', () => {
+  it('PLATFORM_SUPER_ADMIN can update an existing company\'s profile', async () => {
+    const response = await updateCompanyRoute(
+      patchReq(`/api/admin/companies/${BUYER_COMPANY_ID}`, superAdminToken, { industry: 'Testing Industry' }),
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.industry).toBe('Testing Industry');
+
+    const audit = await db.auditLog.findFirst({ where: { action: 'PLATFORM_COMPANY_UPDATED', entityId: BUYER_COMPANY_ID } });
+    expect(audit).not.toBeNull();
+  });
+
+  it('PLATFORM_MANAGER cannot update a company', async () => {
+    const response = await updateCompanyRoute(
+      patchReq(`/api/admin/companies/${BUYER_COMPANY_ID}`, managerToken, { industry: 'Should Not Apply' }),
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('an ordinary company user cannot update another company (or even their own) through this platform-admin route', async () => {
+    const response = await updateCompanyRoute(
+      patchReq(`/api/admin/companies/${BUYER_COMPANY_ID}`, buyerToken, { industry: 'Should Not Apply' }),
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('never accepts id/ownership/role-shaped fields - the schema has no fields for them', async () => {
+    const response = await updateCompanyRoute(
+      patchReq(`/api/admin/companies/${BUYER_COMPANY_ID}`, superAdminToken, { id: 'hacked-id', isBuyer: false, parentGroupId: 'other-group' }),
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    // Zod's default parsing simply ignores unknown keys - the request still succeeds, but only
+    // real, allowed fields (none supplied here) are ever applied.
+    expect(response.status).toBe(200);
+    const company = await db.company.findUnique({ where: { id: BUYER_COMPANY_ID } });
+    expect(company?.id).toBe(BUYER_COMPANY_ID);
+    expect(company?.isBuyer).toBe(true);
+  });
+});
+
+describe('GET /api/admin/companies/[companyId]/members (Phase 28 - controlled member viewing)', () => {
+  it('PLATFORM_SUPER_ADMIN can view a specific company\'s members, with only safe fields', async () => {
+    const response = await companyMembersRoute(
+      req(superAdminToken) as unknown as NextRequest,
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.length).toBeGreaterThan(0);
+    const member = body.find((m: { userId: string }) => m.userId === BUYER_USER_ID);
+    expect(member).toBeDefined();
+    expect(member.role).toBe('OWNER');
+    expect(Object.keys(member).sort()).toEqual(['email', 'joinedAt', 'name', 'role', 'status', 'userId'].sort());
+    expect(member).not.toHaveProperty('passwordHash');
+  });
+
+  it('PLATFORM_MANAGER cannot view company members', async () => {
+    const response = await companyMembersRoute(
+      req(managerToken) as unknown as NextRequest,
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('an ordinary company user cannot enumerate another company\'s members through this platform route', async () => {
+    const response = await companyMembersRoute(
+      req(buyerToken) as unknown as NextRequest,
+      { params: Promise.resolve({ companyId: MANAGER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('records a cross-company member-read audit entry', async () => {
+    await db.auditLog.deleteMany({ where: { action: 'SUPER_ADMIN_CROSS_COMPANY_READ', entityType: 'CompanyMembers', entityId: BUYER_COMPANY_ID } });
+
+    const response = await companyMembersRoute(
+      req(superAdminToken) as unknown as NextRequest,
+      { params: Promise.resolve({ companyId: BUYER_COMPANY_ID }) },
+    );
+    expect(response.status).toBe(200);
+
+    const entry = await db.auditLog.findFirst({ where: { action: 'SUPER_ADMIN_CROSS_COMPANY_READ', entityType: 'CompanyMembers', entityId: BUYER_COMPANY_ID } });
+    expect(entry).not.toBeNull();
   });
 });

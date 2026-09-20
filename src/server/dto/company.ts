@@ -48,6 +48,8 @@ export function toCompanyDto(company: PrismaCompany & { addresses?: PrismaAddres
     parentGroupId: company.parentGroupId ?? undefined,
     parentGroupName: company.parentGroup?.name ?? undefined,
     createdAt: company.createdAt.toISOString(),
+    status: company.status,
+    updatedAt: company.updatedAt.toISOString(),
   };
 }
 
