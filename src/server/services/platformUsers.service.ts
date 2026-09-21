@@ -25,6 +25,33 @@ import type { ServiceResult, UUID } from '@/types/common';
  * mutation path.
  */
 
+/** PLATFORM COMPANY REGISTRATION APPROVAL WORKFLOW phase - what the approval queue needs to show
+ *  a reviewer the full picture of a public company self-registration (POST /api/auth/register or
+ *  /api/auth/register/company) without a second fetch. Present on every row (cheap - the same
+ *  Company/User records are already being joined), but only meaningful for PENDING_APPROVAL/
+ *  REJECTED rows - REJECTED is exclusively a former PENDING_APPROVAL registration decideRegistration
+ *  transitioned (confirmed: no other code path ever sets MembershipStatus.REJECTED), so every row
+ *  with either status is a company self-registration, never a team invite (those always create
+ *  ACTIVE memberships directly - see invitation.service.ts's own acceptInvitation) and never a
+ *  platform-role grant. Deliberately excludes bankName/bankAccountName/bankAccountNumber - this
+ *  is the platform's own moderation queue, not a place banking data belongs (see Company.bankName's
+ *  own schema comment); the query below simply never selects those columns; they cannot leak here. */
+export interface PlatformCompanyRegistrationDetail {
+  legalName?: string;
+  registrationNumber?: string;
+  companyType?: string;
+  businessRole: 'BUYER' | 'SUPPLIER' | 'BUYER_AND_SUPPLIER' | 'NONE';
+  email?: string;
+  phone?: string;
+  website?: string;
+  country: string;
+  currency: string;
+  creditTerms: string;
+  defaultPaymentMethod?: string;
+  addressLine1?: string;
+  administratorPhone?: string;
+}
+
 export interface PlatformUserRow {
   userId: UUID;
   userName: string;
@@ -35,6 +62,14 @@ export interface PlatformUserRow {
   status: string;
   joinedAt?: string;
   createdAt: string;
+  companyRegistration: PlatformCompanyRegistrationDetail;
+}
+
+function businessRoleOf(isBuyer: boolean, isSupplier: boolean): PlatformCompanyRegistrationDetail['businessRole'] {
+  if (isBuyer && isSupplier) return 'BUYER_AND_SUPPLIER';
+  if (isSupplier) return 'SUPPLIER';
+  if (isBuyer) return 'BUYER';
+  return 'NONE';
 }
 
 export async function listPlatformUsers(): Promise<ServiceResult<PlatformUserRow[]>> {
@@ -45,7 +80,30 @@ export async function listPlatformUsers(): Promise<ServiceResult<PlatformUserRow
         { role: { in: [...PLATFORM_ROLES] } },
       ],
     },
-    include: { user: true, company: { select: { id: true, name: true } } },
+    include: {
+      user: { select: { id: true, name: true, email: true, phone: true } },
+      company: {
+        select: {
+          id: true,
+          name: true,
+          legalName: true,
+          registrationNumber: true,
+          companyType: true,
+          isBuyer: true,
+          isSupplier: true,
+          email: true,
+          phone: true,
+          website: true,
+          country: true,
+          currency: true,
+          creditTerms: true,
+          defaultPaymentMethod: true,
+          addresses: { select: { line1: true }, take: 1, orderBy: { isDefault: 'desc' } },
+          // Deliberately never bankName/bankAccountName/bankAccountNumber - see this function's
+          // own comment above.
+        },
+      },
+    },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -60,6 +118,21 @@ export async function listPlatformUsers(): Promise<ServiceResult<PlatformUserRow
       status: m.status,
       joinedAt: m.joinedAt?.toISOString(),
       createdAt: m.createdAt.toISOString(),
+      companyRegistration: {
+        legalName: m.company.legalName ?? undefined,
+        registrationNumber: m.company.registrationNumber ?? undefined,
+        companyType: m.company.companyType ?? undefined,
+        businessRole: businessRoleOf(m.company.isBuyer, m.company.isSupplier),
+        email: m.company.email ?? undefined,
+        phone: m.company.phone ?? undefined,
+        website: m.company.website ?? undefined,
+        country: m.company.country,
+        currency: m.company.currency,
+        creditTerms: m.company.creditTerms,
+        defaultPaymentMethod: m.company.defaultPaymentMethod ?? undefined,
+        addressLine1: m.company.addresses[0]?.line1,
+        administratorPhone: m.user.phone ?? undefined,
+      },
     })),
   );
 }

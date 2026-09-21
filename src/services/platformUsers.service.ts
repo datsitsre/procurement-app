@@ -3,6 +3,27 @@ import type { Role } from '@/config/rbac';
 import type { ServiceResult, UUID } from '@/types/common';
 import type { CreatedInvitation } from './company.service';
 
+/** PLATFORM COMPANY REGISTRATION APPROVAL WORKFLOW phase - mirrors
+ *  server/services/platformUsers.service.ts's own PlatformCompanyRegistrationDetail exactly.
+ *  Deliberately excludes bankName/bankAccountName/bankAccountNumber - the server never selects
+ *  those columns for this endpoint, so there is nothing here for the client to accidentally
+ *  render even by mistake. */
+export interface PlatformCompanyRegistrationDetail {
+  legalName?: string;
+  registrationNumber?: string;
+  companyType?: string;
+  businessRole: 'BUYER' | 'SUPPLIER' | 'BUYER_AND_SUPPLIER' | 'NONE';
+  email?: string;
+  phone?: string;
+  website?: string;
+  country: string;
+  currency: string;
+  creditTerms: string;
+  defaultPaymentMethod?: string;
+  addressLine1?: string;
+  administratorPhone?: string;
+}
+
 export interface PlatformUserRow {
   userId: UUID;
   userName: string;
@@ -13,6 +34,7 @@ export interface PlatformUserRow {
   status: string;
   joinedAt?: string;
   createdAt: string;
+  companyRegistration: PlatformCompanyRegistrationDetail;
 }
 
 /** See server/services/platformUsers.service.ts's own comment for exactly which fields this is
