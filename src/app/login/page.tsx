@@ -225,7 +225,11 @@ export default function LoginPage() {
 
         <p className="mt-6 text-center text-caption">
           New company?{' '}
-          <Link href="/register" className="font-medium text-accent hover:underline">
+          {/* PUBLIC COMPANY REGISTRATION PAGE phase - points at the richer public registration
+              flow (company/address/commercial/banking/administrator), not the Super Admin's
+              authenticated Add Company dialog. The plain /register flow is unchanged and stays
+              reachable from the marketing landing page's own "Get started" buttons. */}
+          <Link href="/register/company" className="font-medium text-accent hover:underline">
             Create an account
           </Link>
         </p>

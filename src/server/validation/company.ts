@@ -23,8 +23,10 @@ export const NewPlatformCompanySchema = z.object({
 
 /** Loose but real phone-number validation (Add Company wizard) - digits, spaces, `+`, `-`,
  *  parentheses only, matching the free-text international formats already used throughout this
- *  app's own seed/demo data (e.g. "+233 30 123 4567") rather than a strict single-country format. */
-const PHONE_REGEX = /^[+()\d][\d\s\-()]{5,49}$/;
+ *  app's own seed/demo data (e.g. "+233 30 123 4567") rather than a strict single-country format.
+ *  Exported so the public company-registration schema (server/validation/auth.ts) can reuse the
+ *  exact same rule instead of a second, possibly-drifting copy. */
+export const PHONE_REGEX = /^[+()\d][\d\s\-()]{5,49}$/;
 
 /** The Super Admin Add Company wizard's full payload - a superset of NewPlatformCompanySchema
  *  above with several of that schema's optional fields now required (legalName,

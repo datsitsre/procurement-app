@@ -32,6 +32,47 @@ export interface RegistrationResult {
   message: string;
 }
 
+/** PUBLIC COMPANY REGISTRATION PAGE phase - POST /api/auth/register/company's request body.
+ *  Field-for-field the same vocabulary the Super Admin Add Company wizard already validates
+ *  against (see server/validation/company.ts's AddCompanyWizardSchema) - never a second,
+ *  drifting copy of company-type/business-role/payment-method options, just collected from a
+ *  public visitor instead of a platform admin. `administrator` describes the registrant
+ *  themselves, including the password they're choosing for their own new account. */
+export interface RegisterCompanyInput {
+  name: string;
+  legalName: string;
+  registrationNumber: string;
+  companyType: 'LIMITED_LIABILITY' | 'SOLE_PROPRIETORSHIP' | 'PARTNERSHIP' | 'PUBLIC_LIMITED' | 'NGO' | 'GOVERNMENT' | 'OTHER';
+  email: string;
+  phone: string;
+  website: string;
+  businessRole: 'BUYER' | 'SUPPLIER' | 'BUYER_AND_SUPPLIER';
+  addressLine1: string;
+  country: string;
+  currency: string;
+  creditTerms?: 'PREPAID' | 'NET_7' | 'NET_15' | 'NET_30' | 'NET_60';
+  defaultPaymentMethod?: 'CARD' | 'BANK_TRANSFER' | 'MTN_MOMO' | 'TELECEL_CASH' | 'AIRTELTIGO_MONEY' | 'WALLET' | 'CREDIT_TERMS';
+  bankName?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  administrator: {
+    name: string;
+    email: string;
+    phone?: string;
+    role: 'OWNER' | 'ADMIN';
+    password: string;
+  };
+}
+
+/** What POST /api/auth/register/company returns - deliberately no Session (see the route's own
+ *  comment on why no session is issued for this flow), just enough to render the confirmation
+ *  state: company name, the email that was registered, and the current registration status. */
+export interface RegisterCompanyResult {
+  company: { name: string; registeredEmail: string };
+  registrationStatus: 'PENDING_APPROVAL';
+  message: string;
+}
+
 export interface UserProfilePatch {
   name?: string;
   phone?: string;
@@ -43,6 +84,10 @@ export interface UserProfilePatch {
 export interface AuthService {
   login(email: string, password: string): Promise<ServiceResult<Session>>;
   register(input: RegisterInput): Promise<ServiceResult<RegistrationResult>>;
+  /** PUBLIC COMPANY REGISTRATION PAGE phase - POST /api/auth/register/company. Distinct from
+   *  `register` above (the plain company-name/country/currency flow) - see RegisterCompanyInput's
+   *  own comment. */
+  registerCompany(input: RegisterCompanyInput): Promise<ServiceResult<RegisterCompanyResult>>;
   logout(): Promise<void>;
   getSession(): Promise<ServiceResult<Session>>;
   switchCompany(companyId: UUID): Promise<ServiceResult<Session>>;
@@ -226,7 +271,11 @@ async function postJson<T>(path: string, body?: unknown): Promise<ServiceResult<
 
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    return fail(String(response.status), data?.error ?? 'Something went wrong.', data?.fieldErrors);
+    // Falls back to the HTTP status when the body carries no domain-specific `code` (most of this
+    // file's own endpoints never have - see registerCompany's own comment on why
+    // /api/auth/register/company does, so its UI can distinguish ACCOUNT_EXISTS from any other
+    // 409/422 without parsing the human-readable message text).
+    return fail(data?.code ?? String(response.status), data?.error ?? 'Something went wrong.', data?.fieldErrors);
   }
   return ok(data as T);
 }
@@ -252,6 +301,15 @@ class ApiAuthService implements AuthService {
     // 26's PENDING_APPROVAL gate) - there's no Session to mirror into the runtime cache here,
     // just a pending-approval acknowledgement to hand back as-is.
     return postJson<RegistrationResult>('/api/auth/register', input);
+  }
+
+  async registerCompany(input: RegisterCompanyInput): Promise<ServiceResult<RegisterCompanyResult>> {
+    // Also no Session to mirror in - registerCompanyPublicly deliberately issues none (see the
+    // route's own comment on why). A rejected result's `error.code` is 'ACCOUNT_EXISTS' when the
+    // administrator email already belongs to a User (SECURITY HARDENING phase) - the caller (the
+    // /register/company page) checks this specific code to show a "sign in to continue" action
+    // instead of a generic error banner.
+    return postJson<RegisterCompanyResult>('/api/auth/register/company', input);
   }
 
   async logout(): Promise<void> {

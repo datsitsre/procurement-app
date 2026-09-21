@@ -259,6 +259,131 @@ export async function createCompanyWithAdministrator(
   });
 }
 
+export interface PublicRegistrationAdministrator {
+  name: string;
+  email: string;
+  phone?: string;
+  role: 'OWNER' | 'ADMIN';
+  /** Hashed by the route (an auth-domain concern, kept there - see /api/auth/register/route.ts's
+   *  own inline hashPassword call for the precedent), never a raw password reaching this layer.
+   *  Ignored entirely when the email matches an existing User - their password is never touched. */
+  passwordHash: string;
+}
+
+export interface PublicCompanyRegistrationInput {
+  name: string;
+  legalName: string;
+  registrationNumber: string;
+  companyType: NonNullable<AddCompanyWizardInput['companyType']>;
+  email: string;
+  phone: string;
+  website: string;
+  businessRole: NonNullable<AddCompanyWizardInput['businessRole']>;
+  addressLine1: string;
+  country: string;
+  currency: string;
+  creditTerms?: 'PREPAID' | 'NET_7' | 'NET_15' | 'NET_30' | 'NET_60';
+  defaultPaymentMethod?: NonNullable<AddCompanyWizardInput['defaultPaymentMethod']>;
+  bankName?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  administrator: PublicRegistrationAdministrator;
+}
+
+export interface PublicCompanyRegistrationResult {
+  companyId: UUID;
+  companyName: string;
+  registeredEmail: string;
+  /** Always PENDING_APPROVAL - reuses the exact same MembershipStatus gate self-registration
+   *  (POST /api/auth/register, Phase 26) already relies on: resolveTenant/buildSessionPayload
+   *  already treat any non-ACTIVE membership as "no tenant, no role" - see decideRegistration
+   *  (platformUsers.service.ts) for how a platform admin later approves/rejects it. No new
+   *  approval mechanism, no Company-level status invented. */
+  registrationStatus: 'PENDING_APPROVAL';
+}
+
+/**
+ * PUBLIC COMPANY REGISTRATION PAGE phase - the real POST /api/auth/register/company handler.
+ * Deliberately its own function, not a reuse of createCompanyWithAdministrator above: that one
+ * is a platform admin vouching for a company on someone else's behalf (invites a *different*
+ * person via a secure link); this one is an unauthenticated visitor registering their own
+ * company and becoming its own administrator in the same request, following the exact same
+ * PENDING_APPROVAL lifecycle POST /api/auth/register already established. Both ultimately create
+ * a Company + User + CompanyMembership - the lifecycle and lockout mechanism are shared and
+ * never duplicated, only the entry point and required fields differ.
+ *
+ * SECURITY HARDENING phase - existing-account handling (section 10) changed from "reuse the
+ * account" to "refuse and point at /login". Reusing an existing User by email alone let anyone
+ * who merely *knew* someone else's email address attach a new PENDING_APPROVAL membership to
+ * their account without proving they owned it - a real, if low-severity, account-confusion risk
+ * (see this function's own git history for the prior behavior and its reasoning). Now: an
+ * `administrator.email` that already belongs to a User is rejected up front, before any
+ * database write - no Company, no Address, no CompanyMembership, no audit entry are created for
+ * that attempt at all. The existing User is never read for anything beyond the existence check
+ * itself (no password, role, membership, or status field is ever inspected or returned) and is
+ * never modified. A genuine account owner who wants to register a new company must sign in first
+ * - see ACCOUNT_EXISTS's own comment on the route for that flow. No new authentication system;
+ * this only redirects to the existing /login.
+ */
+export async function registerCompanyPublicly(
+  input: PublicCompanyRegistrationInput,
+): Promise<ServiceResult<PublicCompanyRegistrationResult>> {
+  const { administrator, businessRole, addressLine1, ...companyFields } = input;
+  const administratorEmail = administrator.email.toLowerCase();
+
+  // Checked first, before the registration-number check too - an anonymous visitor should learn
+  // nothing about whether a *company* detail collides until we've already established they're not
+  // trying to attach themselves to someone else's account.
+  const existingUser = await db.user.findUnique({ where: { email: administratorEmail }, select: { id: true } });
+  if (existingUser) {
+    return fail('ACCOUNT_EXISTS', 'An account already exists for this email. Sign in to continue.');
+  }
+
+  if (companyFields.registrationNumber.trim()) {
+    const duplicate = await db.company.findFirst({ where: { registrationNumber: companyFields.registrationNumber.trim() } });
+    if (duplicate) return fail('DUPLICATE_REGISTRATION_NUMBER', 'A company with this registration number already exists.');
+  }
+
+  const isBuyer = businessRole !== 'SUPPLIER';
+  const isSupplier = businessRole === 'SUPPLIER' || businessRole === 'BUYER_AND_SUPPLIER';
+
+  const created = await db.$transaction(async (tx) => {
+    const company = await tx.company.create({ data: { ...companyFields, isBuyer, isSupplier } });
+    if (addressLine1.trim()) {
+      await tx.address.create({
+        data: { companyId: company.id, label: 'Main Address', line1: addressLine1.trim(), country: company.country, isDefault: true },
+      });
+    }
+    // Always a brand-new User here - the ACCOUNT_EXISTS check above already returned early for
+    // any email that matches an existing account, so this create can never collide.
+    const user = await tx.user.create({ data: { name: administrator.name, email: administratorEmail, passwordHash: administrator.passwordHash } });
+    await tx.companyMembership.create({
+      data: { companyId: company.id, userId: user.id, role: administrator.role, status: 'PENDING_APPROVAL' },
+    });
+    return { company, user };
+  });
+
+  const { recordAudit } = await import('./audit.service');
+  await recordAudit({
+    actorId: created.user.id,
+    actorName: administrator.name,
+    companyId: created.company.id,
+    action: 'COMPANY_SELF_REGISTERED',
+    // Never bank details, never a password/hash here - the same safe field set every other
+    // company-creation audit entry in this app already records.
+    entityType: 'Company',
+    entityId: created.company.id,
+    newValue: { name: created.company.name, country: created.company.country, currency: created.company.currency },
+  });
+
+  return ok({
+    companyId: created.company.id,
+    companyName: created.company.name,
+    registeredEmail: administratorEmail,
+    registrationStatus: 'PENDING_APPROVAL',
+  });
+}
+
 /** A platform administrator editing an existing company's own profile metadata (Phase 28,
  *  section 6) - the same `updateCompanyProfile` a company's own OWNER/ADMIN uses on themselves,
  *  wrapped with an explicit audit entry this cross-company edit needs but the self-service path
